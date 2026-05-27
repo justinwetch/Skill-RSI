@@ -40,6 +40,8 @@ export async function callModel({
   jsonMode = false,
   tools = null,
   toolChoice = null,
+  include = null,
+  returnMetadata = false,
 }) {
   if (!provider || !PROVIDERS[provider]) {
     throw new Error(`Unable to infer provider for model "${model}"`);
@@ -47,12 +49,14 @@ export async function callModel({
   const resolvedApiKey = resolveApiKey({ provider, apiKey, apiKeys });
 
   if (provider === 'anthropic') {
-    return callAnthropic({ apiKey: resolvedApiKey, model, systemPrompt, messages, maxTokens });
+    const text = await callAnthropic({ apiKey: resolvedApiKey, model, systemPrompt, messages, maxTokens });
+    return returnMetadata ? { text, raw: null, provider } : text;
   }
   if (provider === 'openai') {
-    return callOpenAI({ apiKey: resolvedApiKey, model, systemPrompt, messages, maxTokens, jsonMode, tools, toolChoice });
+    return callOpenAI({ apiKey: resolvedApiKey, model, systemPrompt, messages, maxTokens, jsonMode, tools, toolChoice, include, returnMetadata });
   }
-  return callGemini({ apiKey: resolvedApiKey, model, systemPrompt, messages, maxTokens, jsonMode });
+  const text = await callGemini({ apiKey: resolvedApiKey, model, systemPrompt, messages, maxTokens, jsonMode });
+  return returnMetadata ? { text, raw: null, provider } : text;
 }
 
 async function callAnthropic({ apiKey, model, systemPrompt, messages, maxTokens }) {
@@ -76,7 +80,7 @@ async function callAnthropic({ apiKey, model, systemPrompt, messages, maxTokens 
   return extractAnthropicText(await parseResponse(response));
 }
 
-async function callOpenAI({ apiKey, model, systemPrompt, messages, maxTokens, jsonMode, tools, toolChoice }) {
+async function callOpenAI({ apiKey, model, systemPrompt, messages, maxTokens, jsonMode, tools, toolChoice, include, returnMetadata }) {
   const input = [];
   if (systemPrompt) input.push({ role: 'developer', content: systemPrompt });
   for (const message of messages) {
@@ -99,9 +103,20 @@ async function callOpenAI({ apiKey, model, systemPrompt, messages, maxTokens, js
       text: jsonMode ? { format: { type: 'json_object' } } : undefined,
       tools: Array.isArray(tools) && tools.length ? tools : undefined,
       tool_choice: toolChoice || undefined,
+      include: Array.isArray(include) && include.length ? include : undefined,
     }),
   });
-  return extractOpenAIText(await parseResponse(response));
+  const data = await parseResponse(response);
+  const text = extractOpenAIText(data);
+  if (!returnMetadata) return text;
+  return {
+    text,
+    raw: data,
+    provider: 'openai',
+    webSearchCalls: extractOpenAIWebSearchCalls(data),
+    sources: extractOpenAIWebSources(data),
+    citations: extractOpenAICitations(data),
+  };
 }
 
 async function callGemini({ apiKey, model, systemPrompt, messages, maxTokens, jsonMode }) {
@@ -154,6 +169,31 @@ function extractOpenAIText(data) {
     }
   }
   return '';
+}
+
+function extractOpenAIWebSearchCalls(data) {
+  return (data.output || []).filter(item => item.type === 'web_search_call');
+}
+
+function extractOpenAIWebSources(data) {
+  const sources = [];
+  for (const call of extractOpenAIWebSearchCalls(data)) {
+    const actionSources = call.action?.sources || call.sources || [];
+    if (Array.isArray(actionSources)) sources.push(...actionSources);
+  }
+  return sources;
+}
+
+function extractOpenAICitations(data) {
+  const citations = [];
+  for (const item of data.output || []) {
+    for (const content of item.content || []) {
+      for (const annotation of content.annotations || []) {
+        if (annotation.type === 'url_citation') citations.push(annotation);
+      }
+    }
+  }
+  return citations;
 }
 
 function extractGeminiText(data) {

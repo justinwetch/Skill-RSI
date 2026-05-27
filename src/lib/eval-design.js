@@ -190,6 +190,7 @@ export function designEvalBatch({
   outputType = 'text',
 }) {
   const outputContract = getOutputContract(outputType);
+  const promptBank = isPromptBankCompatible(previousBank, outputType) ? previousBank : null;
   const focusIds = experimentPlan.focusParameterIds.slice(0, 3);
   const qualityAxes = Array.isArray(ontology?.qualityAxes) && ontology.qualityAxes.length
     ? ontology.qualityAxes
@@ -199,9 +200,9 @@ export function designEvalBatch({
     : ['create a useful skill output', 'handle ambiguous requests', 'validate output quality'];
   const parameterLookup = new Map((parameterization?.parameters || []).map(parameter => [parameter.id, parameter]));
 
-  const reusedStable = Array.isArray(previousBank?.stablePrompts)
-    ? previousBank.stablePrompts
-      .filter(prompt => !isRetiredPrompt(previousBank, prompt.id))
+  const reusedStable = Array.isArray(promptBank?.stablePrompts)
+    ? promptBank.stablePrompts
+      .filter(prompt => !isRetiredPrompt(promptBank, prompt.id))
       .slice(0, stablePromptCount)
       .map(prompt => ({ ...prompt, bucket: 'stable', reusedFromBank: true }))
     : [];
@@ -226,8 +227,8 @@ export function designEvalBatch({
     }),
   ];
 
-  const activePriorProvisional = Array.isArray(previousBank?.provisionalPrompts)
-    ? previousBank.provisionalPrompts.filter(prompt => !isRetiredPrompt(previousBank, prompt.id))
+  const activePriorProvisional = Array.isArray(promptBank?.provisionalPrompts)
+    ? promptBank.provisionalPrompts.filter(prompt => !isRetiredPrompt(promptBank, prompt.id))
     : [];
   const reusedProvisional = activePriorProvisional
     .slice(0, explorationPromptCount)
@@ -258,10 +259,10 @@ export function designEvalBatch({
       exploratory: true,
     });
   });
-  const criteria = createCriteria({ qualityAxes, focusIds, parameterLookup, previousBank, runId, coreCriteria, outputType });
-  const criteriaVersion = getNextCriteriaVersion({ previousBank, criteria });
-  const retired = Array.isArray(previousBank?.retired) ? previousBank.retired : [];
-  const priorExploration = Array.isArray(previousBank?.explorationPrompts) ? previousBank.explorationPrompts : [];
+  const criteria = createCriteria({ qualityAxes, focusIds, parameterLookup, previousBank: promptBank, runId, coreCriteria, outputType });
+  const criteriaVersion = getNextCriteriaVersion({ previousBank: promptBank, criteria });
+  const retired = Array.isArray(promptBank?.retired) ? promptBank.retired : [];
+  const priorExploration = Array.isArray(promptBank?.explorationPrompts) ? promptBank.explorationPrompts : [];
 
   const design = validateEvalDesign({
     runId,
@@ -269,7 +270,7 @@ export function designEvalBatch({
     criteria,
     bank: {
       version: 3,
-      createdAt: previousBank?.createdAt || new Date().toISOString(),
+      createdAt: promptBank?.createdAt || new Date().toISOString(),
       updatedAt: new Date().toISOString(),
       currentRunId: runId,
       stablePromptCount,
@@ -282,10 +283,10 @@ export function designEvalBatch({
       provisionalPrompts: activePriorProvisional,
       explorationPrompts: [...priorExploration, ...exploration],
       retired,
-      promptEvidence: previousBank?.promptEvidence || {},
+      promptEvidence: promptBank?.promptEvidence || {},
       criteria,
       criteriaVersion,
-      criteriaVersions: updateCriteriaVersions({ previousBank, criteria, criteriaVersion, runId }),
+      criteriaVersions: updateCriteriaVersions({ previousBank: promptBank, criteria, criteriaVersion, runId }),
       designNotes: [
         'Stable prompts exercise recurring skill quality axes.',
         'Exploration prompts target the current experiment plan.',
@@ -302,6 +303,12 @@ function isRetiredPrompt(bank, promptId) {
   return Array.isArray(bank?.retired) && bank.retired.some(item => (
     typeof item === 'string' ? item === promptId : item?.id === promptId || item?.promptId === promptId
   ));
+}
+
+function isPromptBankCompatible(previousBank, outputType) {
+  if (!previousBank) return false;
+  const bankOutputType = previousBank.outputType || 'text';
+  return bankOutputType === outputType;
 }
 
 function createPrompt({

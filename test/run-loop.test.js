@@ -593,6 +593,17 @@ test('agentic mode runs real agent contracts with an injected model client', asy
   ), 'utf8');
   assert.match(candidateSkill, /Description-only tightening/);
 
+  const creatorContract = JSON.parse(await fs.readFile(path.join(
+    result.paths.runsDir,
+    runId,
+    'candidates',
+    'candidate-a',
+    'creator-contract.json',
+  ), 'utf8'));
+  assert.equal(creatorContract.agentName, 'creator');
+  assert.match(creatorContract.prompt, /Assigned experiment arm: candidateA/);
+  assert.match(creatorContract.prompt, /Expected user-output contract:/);
+
   const plan = JSON.parse(await fs.readFile(path.join(
     result.paths.runsDir,
     runId,
@@ -620,7 +631,12 @@ test('agentic first run persists research packet and quality-gated ontology arti
     modelClient: async request => {
       calls.push(request);
       const prompt = request.messages[0].content;
-      if (request.tools?.some(tool => tool.type === 'web_search')) return JSON.stringify(fakeResearchPacket());
+      if (request.tools?.some(tool => tool.type === 'web_search')) return {
+        text: JSON.stringify(fakeResearchPacket()),
+        webSearchCalls: [{ id: 'ws_1', type: 'web_search_call' }],
+        sources: [{ id: 's1', title: 'Design Source', url: 'https://example.com/design' }],
+        citations: [],
+      };
       if (prompt.includes('Ontology Agent')) {
         ontologyCalls += 1;
         return JSON.stringify(ontologyCalls === 1 ? fakeSloppyOntology() : fakeRichOntology());
@@ -657,7 +673,9 @@ test('agentic first run persists research packet and quality-gated ontology arti
   const deconstructionQuality = JSON.parse(await fs.readFile(path.join(result.paths.runsDir, runId, 'deconstruction', 'deconstruction-quality-report.json'), 'utf8'));
 
   assert.ok(calls.some(call => call.tools?.some(tool => tool.type === 'web_search')));
+  assert.ok(calls.some(call => call.returnMetadata === true));
   assert.equal(research.researchMode, 'sourced');
+  assert.equal(research.researchDiagnostics.used, true);
   assert.ok(research.authorityMap.some(authority => authority.name === 'Steve Jobs'));
   assert.equal(ontologyCalls, 2);
   assert.ok(ontologyQuality.revisedFrom);
@@ -1016,6 +1034,7 @@ function fakeExperimentPlan() {
 }
 
 function fakeCreator(candidateId, experimentArm, strategy) {
+  const slug = strategy.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '') || 'ux-design';
   return {
     candidateId,
     experimentArm,
@@ -1023,7 +1042,7 @@ function fakeCreator(candidateId, experimentArm, strategy) {
     changedParameterIds: ['p01'],
     files: [{
       path: 'SKILL.md',
-      content: `---\nname: ux-design-${candidateId}\ndescription: Use for UX design.\n---\n\n# UX Design ${candidateId}\n\nStrategy: ${strategy}\n`,
+      content: `---\nname: ux-design-${slug}\ndescription: Use when helping agents design better UX for production applications with scoped recommendations.\n---\n\n# UX Design\n\n## When to use\nUse for production UX requests.\n\n## Workflow\nStrategy: ${strategy}\n\nValidate the answer against the brief.\n`,
     }],
     rationale: `Uses ${strategy}.`,
     expectedAdvantages: ['clear behavior'],

@@ -455,6 +455,7 @@ ${formatContextBlock(context.managerPlan)}
 Turn the parameterization into a focused A/B experiment. Return JSON matching ABExperimentPlan:
 runId, experimentQuestion, focusParameterIds, controlledParameterIds, hypothesis, arms {candidateA, candidateB}, evalFocus, successMetrics, promotionRisks, reasonNotTestingOtherHighPriorityParameters.
 Select one to three related parameters and hold unrelated parameters constant.
+Default to an ablation-style/local-variation experiment: vary only the selected focus parameters, explicitly preserve the current champion's unrelated structure and behavior, and make the two arms narrow enough that the analyst can tell which deconstructed hypothesis moved the result.
 Honor manager guidance. Do not select avoid.parameterIds unless you explicitly cite new evidence in reasonNotTestingOtherHighPriorityParameters. If strategy.experimentFamily is "high_divergence_reset", plan a high-divergence/reset experiment instead of another small local mutation.
 
 Use this exact arm shape:
@@ -486,7 +487,7 @@ ${context.championSkill || 'No current champion skill exists yet.'}
 
 ${context.revision ? `Revision attempt: ${context.revision.attempt}
 
-You are revising a candidate that failed adversarial preflight. Produce a full replacement candidate package, not a patch. Preserve the assigned experiment arm and the experiment intent, but fix every blocking issue.
+You are revising a candidate that failed adversarial preflight. Produce a full replacement candidate package, not a patch. Preserve the assigned experiment arm and the experiment intent, but fix every blocking issue. Do not import the other arm's mechanism just because it seems useful; if a review recommendation conflicts with this arm's preserve/control instructions, keep the assigned arm faithful and only fix the actual blocking problem.
 
 Original creator artifact:
 ${formatContextBlock(context.revision.originalArtifact)}
@@ -496,6 +497,15 @@ ${formatContextBlock(context.revision.review)}
 ` : ''}
 
 Create one Agent Skill package candidate from the assigned experiment arm. Follow this internal flow: draft outline, adversarial self-critique, revise outline, then write package files.
+
+Experiment discipline:
+- If no current champion exists, create a complete first version.
+- If a current champion exists, generate a full package that is a localized ablation-style variation of that champion, not a wholesale reinvention.
+- Start from the champion's structure, activation policy, voice, file layout, and core workflow. Change only what the assigned experiment arm requires.
+- Preserve every unrelated section and behavior unless the active experiment plan explicitly calls for a high_divergence_reset.
+- Preserve the champion's instructional depth and specificity. Do not compress a rich existing skill into a short generic summary; if the champion is detailed, the candidate should remain comparably detailed while changing only the tested surface.
+- For a control/status-quo arm, it is acceptable for the package to be nearly identical to the champion except for safe spec cleanup; do not add the treatment arm's explicit mechanism.
+- Your rationale and selfCritique must identify what was intentionally preserved and what changed because of the selected parameters.
 
 You are writing a REAL, portable Agent Skill for end users — NOT a Skill RSI artifact. The package MUST conform to the Agent Skills standard below.
 
@@ -512,8 +522,8 @@ ${context.skillCreatorGuidance || '(skill creator guidance unavailable)'}
 Authoring rules for this package, on top of that standard:
 - Frontmatter: include the required name and description; add an optional key (license, compatibility, metadata, allowed-tools) only if it genuinely applies, and put extras like author/version INSIDE metadata. Never invent non-spec top-level keys such as id, status, audience, summary, or a top-level version.
 - name: a lowercase-hyphen slug reflecting the skill's purpose (e.g. "reddit-content-writer"), NEVER the Skill RSI candidate id.
-- description: specific and end-user facing (what it does + when to use it); it must NOT mention Skill RSI, evaluation, validation, test runs, or "vertical slice".
-- The package must contain NOTHING about Skill RSI's machinery anywhere in any file: no run ids, candidate ids, parameter ids, experiment/A-B/duel/eval/judge/scoring language, "Run Context" sections, or changed-parameter lists. It should read as if a skilled author wrote it for production use.
+- description: specific and end-user facing (what it does + when to use it); it must NOT mention Skill RSI, skill-rsi, evaluation runs, test runs, or "vertical slice".
+- The package must contain NOTHING about Skill RSI or its machinery anywhere in any file: no Skill RSI/skill-rsi names, Skill RSI authorship metadata, run ids, candidate ids, parameter ids, experiment/A-B/duel/eval/judge/scoring language, "Run Context" sections, or changed-parameter lists. It should read as if a skilled independent author wrote it for production use.
 
 If assigned candidateA, use candidateId "candidate-a" and experimentArm "candidateA". If assigned candidateB, use candidateId "candidate-b" and experimentArm "candidateB".
 Return JSON with candidateId, experimentArm, strategy, changedParameterIds, files [{path, content}], rationale, expectedAdvantages, expectedRisks, and selfCritique. candidateId/experimentArm/strategy/changedParameterIds are Skill RSI metadata returned in the JSON ONLY — they must NOT appear inside any package file.`;

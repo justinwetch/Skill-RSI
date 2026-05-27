@@ -1073,7 +1073,7 @@ function RunningLoop({ fallbackStage, elapsed, progress, totalLoops, baseRunCoun
           const state = i < stageIdx ? 'done' : i === stageIdx ? 'active' : 'upcoming';
           const subs = substepsByStage[s.key] || [];
           const details = progress?.stageDetails?.[s.key] || [];
-          const autoOpen = state === 'active' && details.length > 0 && !openStages.has(`closed:${s.key}`);
+          const autoOpen = details.length > 0 && !openStages.has(`closed:${s.key}`);
           const open = openStages.has(s.key) || autoOpen;
           const expandable = subs.length > 0 || details.length > 0;
           return (

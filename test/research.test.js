@@ -42,7 +42,10 @@ test('model-native research passes OpenAI web_search tools and normalizes author
     model: 'gpt-5.4-mini',
     modelClient: async request => {
       calls.push(request);
-      return JSON.stringify({
+      return {
+        text: JSON.stringify({
+        researchMode: 'web-sourced research packet',
+        provider: 'OpenAI API research agent',
         sources: [{ id: 's1', title: 'Apple HIG', url: 'https://developer.apple.com/design/human-interface-guidelines/' }],
         searchTrace: [{ query: 'Apple HIG UX design principles', rationale: 'find standards', resultCount: 1 }],
         evidenceClaims: [{ claim: 'Platform guidance matters.', evidenceBasis: 'sourced', sourceRefs: ['s1'] }],
@@ -57,14 +60,74 @@ test('model-native research passes OpenAI web_search tools and normalizes author
         }],
         openQuestions: ['Which platform is canonical?'],
         gaps: [],
-      });
+        }),
+        webSearchCalls: [{ id: 'ws_1', type: 'web_search_call' }],
+        sources: [{ id: 's1', title: 'Apple HIG', url: 'https://developer.apple.com/design/human-interface-guidelines/' }],
+        citations: [],
+      };
     },
   });
 
   assert.deepEqual(calls[0].tools, [{ type: 'web_search' }]);
   assert.equal(calls[0].toolChoice, 'auto');
+  assert.equal(calls[0].jsonMode, false);
+  assert.deepEqual(calls[0].include, ['web_search_call.action.sources']);
+  assert.equal(calls[0].returnMetadata, true);
   assert.equal(packet.researchMode, 'sourced');
+  assert.equal(packet.provider, 'openai');
+  assert.equal(packet.researchDiagnostics.used, true);
   assert.deepEqual(packet.authorityMap[0].misuseRisks, ['Do not overfit non-Apple interfaces to Apple conventions.']);
+});
+
+test('model-native research falls back when OpenAI returns no web-search evidence', async () => {
+  const packet = await buildResearchPacket({
+    runId: 'research-no-tool-evidence',
+    goal: 'Help agents design better UX.',
+    model: 'gpt-5.4-mini',
+    modelClient: async () => ({
+      text: JSON.stringify({
+        sources: [],
+        searchTrace: [],
+        evidenceClaims: [{ claim: 'Unsourced claim.', evidenceBasis: 'sourced', sourceRefs: [] }],
+        authorityMap: [],
+        openQuestions: [],
+        gaps: [],
+      }),
+      webSearchCalls: [],
+      sources: [],
+      citations: [],
+    }),
+  });
+
+  assert.equal(packet.researchMode, 'inference');
+  assert.equal(packet.researchDiagnostics.requested, true);
+  assert.equal(packet.researchDiagnostics.used, false);
+  assert.match(packet.gaps.join('\n'), /no tool-call or source evidence/);
+});
+
+test('required model-native research fails when OpenAI returns no web-search evidence', async () => {
+  await assert.rejects(
+    buildResearchPacket({
+      runId: 'research-required-no-tool-evidence',
+      goal: 'Help agents design better UX.',
+      model: 'gpt-5.4-mini',
+      config: { mode: 'required', provider: 'model_native' },
+      modelClient: async () => ({
+        text: JSON.stringify({
+          sources: [],
+          searchTrace: [],
+          evidenceClaims: [],
+          authorityMap: [],
+          openQuestions: [],
+          gaps: [],
+        }),
+        webSearchCalls: [],
+        sources: [],
+        citations: [],
+      }),
+    }),
+    /no tool-call or source evidence/,
+  );
 });
 
 test('unsupported model-native research falls back to inference labels', async () => {

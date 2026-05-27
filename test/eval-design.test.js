@@ -147,6 +147,44 @@ test('evaluation designer enforces UI-code output contract', () => {
   assert.ok(design.criteria.some(criterion => criterion.id === 'implemented_visual_output'));
 });
 
+test('evaluation designer resets stale prompt bank when output type changes', () => {
+  const textDesign = designEvalBatch({
+    runId: 'run-text',
+    goal: 'Help agents design better front-end UX.',
+    ontology: {
+      qualityAxes: ['visual direction'],
+      targetTasks: ['recommend a landing page direction'],
+    },
+    parameterization: {
+      parameters: [{ id: 'p01-output-contract', surface: 'output contract' }],
+    },
+    experimentPlan: { focusParameterIds: ['p01-output-contract'] },
+    outputType: 'text',
+  });
+
+  const codeDesign = designEvalBatch({
+    runId: 'run-code',
+    goal: 'Help agents design better front-end UX.',
+    ontology: {
+      qualityAxes: ['implementation readiness'],
+      targetTasks: ['implement a landing page'],
+    },
+    parameterization: {
+      parameters: [{ id: 'p01-output-contract', surface: 'output contract' }],
+    },
+    experimentPlan: { focusParameterIds: ['p01-output-contract'] },
+    previousBank: textDesign.bank,
+    outputType: 'code',
+  });
+
+  assert.equal(codeDesign.bank.outputType, 'code');
+  assert.notDeepEqual(codeDesign.bank.stablePromptIds, textDesign.bank.stablePromptIds);
+  assert.equal(codeDesign.prompts.filter(prompt => prompt.reusedFromBank).length, 0);
+  assert.ok(codeDesign.prompts.every(prompt => prompt.outputType === 'code'));
+  assert.match(codeDesign.prompts[0].text, /Return production-ready code or code files/);
+  assert.ok(codeDesign.criteria.some(criterion => criterion.id === 'implementation_readiness'));
+});
+
 test('naturalized prompts receive output contract instructions', async () => {
   const design = designEvalBatch({
     runId: 'run-naturalized-code',

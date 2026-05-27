@@ -342,6 +342,10 @@ test('creator prompt includes Agent Skills standard and Skill Creator guidance',
   assert.match(result.prompt, /Keep `SKILL\.md` concise/);
   assert.match(result.prompt, /Progressive disclosure/);
   assert.match(result.prompt, /Do not create auxiliary documentation/);
+  assert.match(result.prompt, /localized ablation-style variation/);
+  assert.match(result.prompt, /Preserve every unrelated section and behavior/);
+  assert.match(result.prompt, /Preserve the champion's instructional depth/);
+  assert.match(result.prompt, /control\/status-quo arm/);
 });
 
 test('creator prompt includes the project output contract', async () => {
@@ -549,6 +553,8 @@ test('experiment planner prompt receives explicit manager guidance', async () =>
   assert.match(result.prompt, /high_divergence_reset/);
   assert.match(result.prompt, /p01-activation_metadata/);
   assert.match(result.prompt, /Do not select avoid\.parameterIds/);
+  assert.match(result.prompt, /ablation-style\/local-variation experiment/);
+  assert.match(result.prompt, /preserve the current champion's unrelated structure and behavior/);
 });
 
 test('real analyst contract maps unimplemented edit_current to a new experiment', async () => {

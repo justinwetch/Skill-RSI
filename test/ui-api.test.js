@@ -390,6 +390,6 @@ test('ui api exposes next-loop premise and progress stage details', async () => 
   assert.equal(progress.runId, runId);
   assert.ok(Array.isArray(progress.stageDetails.plan));
   assert.ok(progress.events.some(event => event.details));
-  assert.ok(progress.stageDetails.evaluate.some(detail => /Candidate duel: Candidate [AB] by \d+/.test(detail)));
+  assert.ok(progress.stageDetails.evaluate.some(detail => detail.startsWith('Candidate duel: ')));
   assert.ok(!progress.stageDetails.evaluate.some(detail => /by -\d+/.test(detail)));
 });

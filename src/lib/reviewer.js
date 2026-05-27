@@ -22,6 +22,7 @@ export async function reviewCandidatePackage({
   apiKeys = {},
   modelClient = null,
   agentSkillsStandard = null,
+  championPackage = null,
 }) {
   const skillPackage = await loadSkillPackage(candidate.skillPath);
   const blockingIssues = [];
@@ -40,8 +41,10 @@ export async function reviewCandidatePackage({
   const entrypoint = skillPackage.files.find(file => file.path === 'SKILL.md');
   if (entrypoint) {
     reviewEntrypoint({ entrypoint, candidate, blockingIssues, recommendedEdits, maxSkillLines });
+    reviewInstructionalDepth({ entrypoint, championPackage, experimentPlan, blockingIssues, nonIssues });
   }
 
+  reviewInternalLeakage({ skillPackage, blockingIssues, nonIssues });
   if (skillPackage.files.length > maxPackageFiles) {
     recommendedEdits.push(issue({
       severity: 'recommended',
@@ -55,6 +58,7 @@ export async function reviewCandidatePackage({
 
   reviewScripts({ skillPackage, blockingIssues, recommendedEdits, nonIssues });
   reviewExperimentAlignment({ candidate, experimentPlan, recommendedEdits, nonIssues });
+  reviewArmFidelity({ skillPackage, candidate, experimentPlan, blockingIssues, nonIssues });
   reviewEvalLeakage({ skillPackage, evalDesign, blockingIssues, recommendedEdits, nonIssues });
 
   let overfittingRisk = estimateOverfittingRisk({ skillPackage, evalDesign, recommendedEdits });
@@ -93,6 +97,62 @@ export async function reviewCandidatePackage({
   });
 
   return review;
+}
+
+function reviewInstructionalDepth({ entrypoint, championPackage, experimentPlan, blockingIssues, nonIssues }) {
+  const championEntrypoint = championPackage?.files?.find(file => file.path === 'SKILL.md');
+  if (!championEntrypoint || isHighDivergenceExperiment(experimentPlan)) {
+    nonIssues.push('Champion instructional depth comparison was not applicable.');
+    return;
+  }
+  const championWords = wordCount(championEntrypoint.content);
+  const candidateWords = wordCount(entrypoint.content);
+  if (championWords >= 250 && candidateWords < Math.floor(championWords * 0.6)) {
+    blockingIssues.push(issue({
+      severity: 'blocking',
+      surface: 'instructional-depth',
+      message: `Candidate SKILL.md is much shorter than the current champion (${candidateWords} vs ${championWords} words) in a local ablation run.`,
+      recommendation: 'Preserve the champion’s instructional depth and specificity; make only the assigned parameter change instead of compressing the skill into a short summary.',
+    }));
+  } else {
+    nonIssues.push(`Candidate preserves enough instructional depth relative to champion (${candidateWords}/${championWords} words).`);
+  }
+}
+
+function isHighDivergenceExperiment(experimentPlan) {
+  const text = JSON.stringify(experimentPlan || {}).toLowerCase();
+  return text.includes('high_divergence') || text.includes('high-divergence') || text.includes('reset-control');
+}
+
+function wordCount(text) {
+  return (String(text || '').match(/\b[\w'-]+\b/g) || []).length;
+}
+
+function reviewInternalLeakage({ skillPackage, blockingIssues, nonIssues }) {
+  const content = skillPackage.files
+    .filter(file => file.kind === 'text')
+    .map(file => file.content)
+    .join('\n');
+
+  const leaks = [
+    { pattern: /\bSkill RSI\b/i, message: 'package mentions Skill RSI' },
+    { pattern: /\bskill-rsi\b/i, message: 'package mentions skill-rsi' },
+    { pattern: /\bcandidate-[ab]\b/i, message: 'package mentions candidate ids' },
+    { pattern: /\bchangedParameterIds\b|\bfocusParameterIds\b|\bparameter ids?\b/i, message: 'package mentions Skill RSI parameter metadata' },
+    { pattern: /\bRun Context\b/i, message: 'package includes a Run Context section' },
+    { pattern: /\bA\/B\b|\bduel\b|\beval prompt\b|\bjudge\/scoring\b/i, message: 'package mentions evaluation machinery' },
+  ].filter(({ pattern }) => pattern.test(content));
+
+  if (leaks.length) {
+    blockingIssues.push(issue({
+      severity: 'blocking',
+      surface: 'internal-leakage',
+      message: `Candidate package leaks internal Skill RSI metadata: ${leaks.map(leak => leak.message).join(', ')}.`,
+      recommendation: 'Regenerate the package so it reads as an independent end-user Agent Skill with no Skill RSI provenance or experiment language.',
+    }));
+  } else {
+    nonIssues.push('No Skill RSI internal metadata was found in the candidate package.');
+  }
 }
 
 function reviewEntrypoint({ entrypoint, candidate, blockingIssues, recommendedEdits, maxSkillLines }) {
@@ -205,6 +265,63 @@ function reviewExperimentAlignment({ candidate, experimentPlan, recommendedEdits
   } else {
     nonIssues.push(`Candidate metadata overlaps focus parameters: ${overlap.join(', ')}.`);
   }
+}
+
+function reviewArmFidelity({ skillPackage, candidate, experimentPlan, blockingIssues, nonIssues }) {
+  const arm = experimentPlan?.arms?.[candidate.experimentArm];
+  if (!arm) {
+    nonIssues.push('Experiment arm fidelity could not be checked because the assigned arm was unavailable.');
+    return;
+  }
+
+  const instructions = normalizeArmText([
+    arm.strategyName,
+    ...(Array.isArray(arm.mutationInstructions) ? arm.mutationInstructions : []),
+  ].join('\n'));
+  const content = normalizeArmText(skillPackage.files
+    .filter(file => file.kind === 'text')
+    .map(file => file.content)
+    .join('\n'));
+  const prohibited = extractProhibitedArmPhrases(instructions);
+  const violations = prohibited.filter(phrase => phrase && content.includes(phrase));
+
+  if (violations.length) {
+    blockingIssues.push(issue({
+      severity: 'blocking',
+      surface: 'arm-fidelity',
+      message: `Candidate package contradicts its assigned experiment arm by adding prohibited mechanism(s): ${violations.join(', ')}.`,
+      recommendation: 'Revise the candidate so it preserves the assigned arm exactly; do not import the opposing arm or treatment mechanism during preflight repair.',
+    }));
+  } else {
+    nonIssues.push('Candidate package does not contradict explicit arm preserve/control instructions.');
+  }
+}
+
+function extractProhibitedArmPhrases(text) {
+  const phrases = [];
+  const patterns = [
+    /\bno explicit ([^.;\n]+)/g,
+    /\bwithout ([^.;\n]+)/g,
+    /\bdo not (?:add|alter|change|introduce|use) ([^.;\n]+)/g,
+  ];
+  for (const pattern of patterns) {
+    for (const match of text.matchAll(pattern)) {
+      const phrase = normalizeProhibitedPhrase(match[1]);
+      if (phrase) phrases.push(phrase);
+    }
+  }
+  return [...new Set(phrases)];
+}
+
+function normalizeProhibitedPhrase(phrase) {
+  return normalizeArmText(String(phrase || '')
+    .replace(/\b(?:or|and)\b[\s\S]*$/i, '')
+    .replace(/\b(?:stronger|strong|clearer|small|short|same|the|a|an)\b/gi, ' ')
+    .trim());
+}
+
+function normalizeArmText(text) {
+  return String(text || '').toLowerCase().replace(/[^a-z0-9]+/g, ' ').replace(/\s+/g, ' ').trim();
 }
 
 function reviewEvalLeakage({ skillPackage, evalDesign, blockingIssues, recommendedEdits, nonIssues }) {

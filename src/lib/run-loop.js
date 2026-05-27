@@ -220,6 +220,7 @@ async function persistResearchPacket({
     runId,
     provider: validated.provider,
     researchMode: validated.researchMode,
+    diagnostics: validated.researchDiagnostics || null,
     rawModelText: validated.rawModelText || null,
   });
   await appendTimeline(runPaths.timelineJsonl, eventName, {
@@ -1119,10 +1120,11 @@ async function runAgenticLoop({
 
   let reviewA = await reuseJson(path.join(runPaths.candidateADir, 'review.json'));
   let reviewB = await reuseJson(path.join(runPaths.candidateBDir, 'review.json'));
+  const championPackageForReview = state.currentChampion ? await readChampionPackage(paths) : null;
   if (!reviewA || !reviewB) {
     [reviewA, reviewB] = await Promise.all([
-      reviewA || reviewCandidatePackage({ candidate: candidateA, experimentPlan, evalDesign, goal, model: agentModel, apiKeys, modelClient: agentClient, agentSkillsStandard }),
-      reviewB || reviewCandidatePackage({ candidate: candidateB, experimentPlan, evalDesign, goal, model: agentModel, apiKeys, modelClient: agentClient, agentSkillsStandard }),
+      reviewA || reviewCandidatePackage({ candidate: candidateA, experimentPlan, evalDesign, goal, model: agentModel, apiKeys, modelClient: agentClient, agentSkillsStandard, championPackage: championPackageForReview }),
+      reviewB || reviewCandidatePackage({ candidate: candidateB, experimentPlan, evalDesign, goal, model: agentModel, apiKeys, modelClient: agentClient, agentSkillsStandard, championPackage: championPackageForReview }),
     ]);
     await writeJson(path.join(runPaths.candidateADir, 'review.json'), reviewA);
     await writeJson(path.join(runPaths.candidateBDir, 'review.json'), reviewB);
@@ -1154,6 +1156,7 @@ async function runAgenticLoop({
       agentClient,
       agentSkillsStandard,
       outputType: evalOutputType,
+      championPackage: championPackageForReview,
     }));
   }
   for (let attempt = 1; attempt <= MAX_CANDIDATE_REVISIONS && !reviewB.approveForEval; attempt += 1) {
@@ -1177,6 +1180,7 @@ async function runAgenticLoop({
       agentClient,
       agentSkillsStandard,
       outputType: evalOutputType,
+      championPackage: championPackageForReview,
     }));
   }
   if (!reviewA.approveForEval || !reviewB.approveForEval) {
@@ -1372,6 +1376,8 @@ async function createAndMaterializeCandidate({
           maxTokens: modelParameters.creatorMaxTokens,
         });
         artifact = creatorResult.artifact;
+        await writeJson(path.join(candidateDir, `creator-contract-${String(attempt).padStart(3, '0')}.json`), creatorResult);
+        await writeJson(path.join(candidateDir, 'creator-contract.json'), creatorResult);
         const attemptPath = attempt === 1
           ? artifactPath
           : path.join(candidateDir, `creator-artifact-retry-${String(attempt - 1).padStart(3, '0')}.json`);
@@ -1890,6 +1896,7 @@ async function reviseBlockedCandidate({
   agentClient,
   agentSkillsStandard,
   outputType = 'text',
+  championPackage = null,
 }) {
   const suffix = String(attempt).padStart(3, '0');
   await appendTimeline(runPaths.timelineJsonl, 'candidate_revision.started', {
@@ -1917,6 +1924,7 @@ async function reviseBlockedCandidate({
     outputType,
     maxTokens: modelParameters.creatorMaxTokens,
   });
+  await writeJson(path.join(revisionDir, 'creator-contract.json'), revisionResult);
   await writeJson(path.join(revisionDir, 'creator-artifact.json'), revisionResult.artifact);
   const archivedCandidate = validateCandidate(await materializeCreatorArtifact({
     artifact: revisionResult.artifact,
@@ -1931,6 +1939,7 @@ async function reviseBlockedCandidate({
     apiKeys,
     modelClient: agentClient,
     agentSkillsStandard,
+    championPackage,
   });
   await writeJson(path.join(revisionDir, 'review.json'), revisedReview);
   const activeCandidate = validateCandidate(await materializeCreatorArtifact({

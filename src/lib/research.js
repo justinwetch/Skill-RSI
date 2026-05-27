@@ -31,20 +31,54 @@ export async function buildResearchPacket({
     if (mode === 'required') {
       throw new Error(`Research requires model-native web search, but provider "${provider || 'unknown'}" is unsupported`);
     }
-    return fallbackResearchPacket({ runId, goal, provider, reason: 'model-native web search unavailable for provider' });
+    return fallbackResearchPacket({
+      runId,
+      goal,
+      provider,
+      reason: 'model-native web search unavailable for provider',
+      diagnostics: {
+        requested: true,
+        providerSupported: false,
+        toolType: 'web_search',
+        toolChoice: 'auto',
+        used: false,
+        webSearchCallCount: 0,
+        sourceCount: 0,
+      },
+    });
   }
 
   try {
-    const rawModelText = await modelClient({
+    const modelResponse = await modelClient({
       model,
       apiKeys,
-      systemPrompt: 'You are the Skill RSI research agent. Use web search when useful. Return only valid JSON.',
+      systemPrompt: 'You are the Skill RSI research agent. Use web search before making domain or authority claims. Return only valid JSON.',
       messages: [{ role: 'user', content: buildResearchPrompt({ runId, goal }) }],
       maxTokens,
-      jsonMode: true,
+      jsonMode: false,
       tools: [{ type: 'web_search' }],
       toolChoice: 'auto',
+      include: ['web_search_call.action.sources'],
+      returnMetadata: true,
     });
+    const rawModelText = typeof modelResponse === 'string' ? modelResponse : modelResponse.text;
+    const diagnostics = createResearchDiagnostics({ provider, modelResponse });
+    if (!diagnostics.used) {
+      const message = 'model-native web search returned no tool-call or source evidence';
+      if (mode === 'required') {
+        const error = new Error(message);
+        error.rawModelText = rawModelText;
+        throw error;
+      }
+      return fallbackResearchPacket({
+        runId,
+        goal,
+        provider,
+        reason: message,
+        diagnostics,
+        rawModelText,
+      });
+    }
     const parsed = parseJson(rawModelText);
     const packet = normalizeResearchPacket(parsed, {
       runId,
@@ -52,6 +86,9 @@ export async function buildResearchPacket({
       provider,
       researchMode: 'sourced',
       rawModelText,
+      diagnostics,
+      apiSources: typeof modelResponse === 'string' ? [] : modelResponse.sources,
+      citations: typeof modelResponse === 'string' ? [] : modelResponse.citations,
     });
     return validateResearchPacket(packet);
   } catch (error) {
@@ -61,8 +98,18 @@ export async function buildResearchPacket({
       goal,
       provider,
       reason: `research failed: ${error.message}`,
+      diagnostics: {
+        requested: true,
+        providerSupported: true,
+        toolType: 'web_search',
+        toolChoice: 'auto',
+        used: false,
+        webSearchCallCount: 0,
+        sourceCount: 0,
+        error: error.message,
+      },
+      rawModelText: error.rawModelText || null,
     });
-    packet.rawModelText = error.rawModelText || null;
     return packet;
   }
 }
@@ -133,13 +180,20 @@ Run ID: ${runId}
 
 Find evidence that helps an agent build a strong first skill attempt. Include domain norms, common failure modes, contemporary and all-time authorities, institutions/standards, contrarian voices, adjacent domains, and open questions.
 
+Keep the packet compact and complete. Prefer the strongest evidence over volume:
+- 6-10 sources maximum
+- 6-10 evidenceClaims maximum
+- 4-8 authorityMap entries maximum
+- 3-6 searchTrace entries maximum
+- short arrays and sentence-length claims
+
 Return JSON with:
 runId, skillGoal, researchMode, provider, sources [{id, title, url, publisher, retrievedAt}], searchTrace [{query, rationale, resultCount}], evidenceClaims [{claim, evidenceBasis, sourceRefs, confidence, implicationsForSkill}], authorityMap [{name, authorityType, whyTheyMatter, strongOpinions, implicationsForSkill, misuseRisks, evidenceBasis, sourceRefs}], openQuestions, gaps.
 
 Every evidenceBasis must be "sourced", "inferred", or "speculative". Authority opinions must include implicationsForSkill and misuseRisks.`;
 }
 
-function fallbackResearchPacket({ runId, goal, provider, reason }) {
+function fallbackResearchPacket({ runId, goal, provider, reason, diagnostics = null, rawModelText = null }) {
   return validateResearchPacket({
     runId,
     skillGoal: goal,
@@ -166,26 +220,37 @@ function fallbackResearchPacket({ runId, goal, provider, reason }) {
     }],
     openQuestions: ['Which contemporary and canonical authorities should shape this skill domain?'],
     gaps: [reason],
-    rawModelText: null,
+    rawModelText,
+    researchDiagnostics: diagnostics || {
+      requested: false,
+      providerSupported: false,
+      toolType: 'web_search',
+      toolChoice: 'none',
+      used: false,
+      webSearchCallCount: 0,
+      sourceCount: 0,
+      error: reason,
+    },
   });
 }
 
-function normalizeResearchPacket(packet, { runId, goal, provider, researchMode, rawModelText }) {
+function normalizeResearchPacket(packet, { runId, goal, provider, researchMode, rawModelText, diagnostics = null, apiSources = [], citations = [] }) {
+  const normalizedSources = mergeResearchSources(normalizeArray(packet.sources), apiSources, citations);
   return {
     ...packet,
     runId: packet.runId || runId,
     skillGoal: packet.skillGoal || goal,
-    researchMode: packet.researchMode || researchMode,
-    provider: packet.provider || provider || 'unknown',
-    sources: normalizeArray(packet.sources),
-    evidenceClaims: normalizeArray(packet.evidenceClaims).map(claim => ({
+    researchMode: normalizeResearchMode(packet.researchMode, researchMode),
+    provider: normalizeProvider(packet.provider, provider),
+    sources: normalizedSources.slice(0, 20),
+    evidenceClaims: normalizeArray(packet.evidenceClaims).slice(0, 10).map(claim => ({
       ...claim,
       claim: claim.claim || claim.summary || 'Unspecified evidence claim',
       evidenceBasis: normalizeEvidenceBasis(claim.evidenceBasis),
       sourceRefs: normalizeArray(claim.sourceRefs),
       implicationsForSkill: normalizeArray(claim.implicationsForSkill),
     })),
-    authorityMap: normalizeArray(packet.authorityMap).map(authority => ({
+    authorityMap: normalizeArray(packet.authorityMap).slice(0, 8).map(authority => ({
       ...authority,
       name: authority.name || 'Unnamed authority',
       authorityType: authority.authorityType || 'unknown',
@@ -196,10 +261,65 @@ function normalizeResearchPacket(packet, { runId, goal, provider, researchMode, 
       evidenceBasis: normalizeEvidenceBasis(authority.evidenceBasis),
       sourceRefs: normalizeArray(authority.sourceRefs),
     })),
-    searchTrace: normalizeArray(packet.searchTrace),
+    searchTrace: normalizeArray(packet.searchTrace).slice(0, 6),
     openQuestions: normalizeArray(packet.openQuestions),
     gaps: normalizeArray(packet.gaps),
     rawModelText,
+    researchDiagnostics: diagnostics || null,
+  };
+}
+
+function createResearchDiagnostics({ provider, modelResponse }) {
+  if (typeof modelResponse === 'string') {
+    return {
+      requested: true,
+      providerSupported: provider === 'openai',
+      toolType: 'web_search',
+      toolChoice: 'auto',
+      used: false,
+      webSearchCallCount: 0,
+      sourceCount: 0,
+    };
+  }
+  const webSearchCallCount = Array.isArray(modelResponse.webSearchCalls) ? modelResponse.webSearchCalls.length : 0;
+  const sourceCount = Array.isArray(modelResponse.sources) ? modelResponse.sources.length : 0;
+  const citationCount = Array.isArray(modelResponse.citations) ? modelResponse.citations.length : 0;
+  return {
+    requested: true,
+    providerSupported: provider === 'openai',
+    toolType: 'web_search',
+    toolChoice: 'auto',
+    used: webSearchCallCount > 0 || sourceCount > 0 || citationCount > 0,
+    webSearchCallCount,
+    sourceCount,
+    citationCount,
+  };
+}
+
+function mergeResearchSources(modelSources, apiSources = [], citations = []) {
+  const byUrl = new Map();
+  for (const source of modelSources) {
+    const normalized = normalizeResearchSource(source, `s${byUrl.size + 1}`);
+    byUrl.set(normalized.url || normalized.id, normalized);
+  }
+  for (const source of apiSources) {
+    const normalized = normalizeResearchSource(source, `api-${byUrl.size + 1}`);
+    byUrl.set(normalized.url || normalized.id, normalized);
+  }
+  for (const citation of citations) {
+    const normalized = normalizeResearchSource(citation, `cite-${byUrl.size + 1}`);
+    byUrl.set(normalized.url || normalized.id, normalized);
+  }
+  return [...byUrl.values()];
+}
+
+function normalizeResearchSource(source, fallbackId) {
+  return {
+    id: source.id || fallbackId,
+    title: source.title || source.name || source.url || fallbackId,
+    url: source.url || source.uri || '',
+    publisher: source.publisher || source.domain || '',
+    retrievedAt: source.retrievedAt || new Date().toISOString(),
   };
 }
 
@@ -253,6 +373,14 @@ function hasSubstantiveList(list, placeholderFragments = []) {
 
 function normalizeEvidenceBasis(value) {
   return ['sourced', 'inferred', 'speculative'].includes(value) ? value : 'inferred';
+}
+
+function normalizeResearchMode(value, fallback) {
+  return ['sourced', 'inference'].includes(value) ? value : fallback;
+}
+
+function normalizeProvider(value, fallback) {
+  return ['openai', 'anthropic', 'gemini', 'unknown'].includes(value) ? value : (fallback || 'unknown');
 }
 
 function normalizeArray(value) {

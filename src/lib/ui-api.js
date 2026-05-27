@@ -169,7 +169,7 @@ export async function readRunDetail({ cwd, projectName, runId = null }) {
     experimentPlan,
     evalConfig,
     candidateDuel,
-    championGate,
+    challenge,
     promptBankUpdate,
     recommendation,
     timeline,
@@ -180,7 +180,7 @@ export async function readRunDetail({ cwd, projectName, runId = null }) {
     readJson(runPaths.experimentPlanJson, null),
     readJson(runPaths.evalConfigJson, null),
     readJson(runPaths.candidateDuelJson, null),
-    readJson(runPaths.championGateJson, null),
+    readJson(runPaths.challengeJson, null),
     readJson(runPaths.promptBankUpdateJson, null),
     readJson(runPaths.recommendationJson, null),
     pathExists(runPaths.timelineJsonl).then(exists => exists ? readTimeline(runPaths.timelineJsonl) : []),
@@ -200,7 +200,7 @@ export async function readRunDetail({ cwd, projectName, runId = null }) {
     reviews: await readCandidateReviews(runPaths),
     evals: {
       candidateDuel,
-      championGate,
+      challenge,
       promptBankUpdate,
     },
     recommendation,
@@ -213,8 +213,8 @@ export async function readRunDetail({ cwd, projectName, runId = null }) {
       managerJson: runPaths.managerJson,
       experimentPlanJson: runPaths.experimentPlanJson,
       evalConfigJson: runPaths.evalConfigJson,
-      candidateDuelJson: runPaths.candidateDuelJson,
-      championGateJson: runPaths.championGateJson,
+      candidateDuelJson: candidateDuel ? runPaths.candidateDuelJson : null,
+      challengeJson: challenge ? runPaths.challengeJson : null,
       recommendationJson: runPaths.recommendationJson,
       reportMd: runPaths.reportMd,
     },
@@ -224,13 +224,16 @@ export async function readRunDetail({ cwd, projectName, runId = null }) {
 export async function readRunComparison({ cwd, projectName, runId = null }) {
   const detail = await readRunDetail({ cwd, projectName, runId });
   const paths = getProjectPaths(cwd, projectName);
+  const runPaths = getRunPaths(paths, detail.runId);
   const candidateDuel = detail.evals.candidateDuel;
-  const championGate = detail.evals.championGate;
+  const challenge = detail.evals.challenge;
+  const competitionMode = detail.experimentPlan?.competitionMode || detail.run?.competitionMode || 'cold_start_duel';
 
   return {
     schemaVersion: 1,
     projectId: detail.projectId,
     runId: detail.runId,
+    competitionMode,
     experimentQuestion: detail.experimentPlan?.experimentQuestion || null,
     focusParameterIds: detail.experimentPlan?.focusParameterIds || [],
     sides: {
@@ -249,6 +252,17 @@ export async function readRunComparison({ cwd, projectName, runId = null }) {
         candidate: null,
         skillPath: await pathExists(path.join(paths.championSkillDir, 'SKILL.md')) ? paths.championSkillDir : null,
       }),
+      champion: await summarizeComparableSkill({
+        label: 'champion',
+        candidate: null,
+        skillPath: await pathExists(path.join(runPaths.championDir, 'SKILL.md')) ? runPaths.championDir
+          : await pathExists(path.join(paths.championSkillDir, 'SKILL.md')) ? paths.championSkillDir : null,
+      }),
+      challenger: await summarizeComparableSkill({
+        label: 'challenger',
+        candidate: detail.candidates.challenger,
+        skillPath: detail.candidates.challenger?.skillPath,
+      }),
     },
     evalSummary: {
       candidateDuel: candidateDuel ? {
@@ -260,13 +274,13 @@ export async function readRunComparison({ cwd, projectName, runId = null }) {
           ties: candidateDuel.stats.ties,
         },
       } : null,
-      championGate: championGate ? {
-        winner: championGate.stats.winner,
-        scoreDelta: championGate.stats.scoreDelta,
+      challenge: challenge ? {
+        winner: challenge.stats.winner,
+        scoreDelta: challenge.stats.scoreDelta,
         wins: {
-          skillA: championGate.stats.skillAWins,
-          skillB: championGate.stats.skillBWins,
-          ties: championGate.stats.ties,
+          skillA: challenge.stats.skillAWins,
+          skillB: challenge.stats.skillBWins,
+          ties: challenge.stats.ties,
         },
       } : null,
     },
@@ -317,6 +331,7 @@ export async function readRunProgress({ cwd, projectName }) {
     projectId: paths.projectId,
     runId,
     runNumber: run?.runNumber ?? null,
+    competitionMode: run?.competitionMode || run?.experimentPlan?.competitionMode || null,
     status: completed ? 'completed' : (run?.status || 'running'),
     startedAt: run?.startedAt || null,
     completedAt: run?.completedAt || null,
@@ -470,8 +485,9 @@ async function summarizeProgressArtifacts(runPaths) {
     experimentPlan,
     reviewA,
     reviewB,
+    reviewChallenger,
     candidateDuel,
-    championGate,
+    challenge,
     recommendation,
   ] = await Promise.all([
     readJson(runPaths.researchPacketJson, null),
@@ -482,10 +498,12 @@ async function summarizeProgressArtifacts(runPaths) {
     readJson(runPaths.experimentPlanJson, null),
     readJson(path.join(runPaths.candidateADir, 'review.json'), null),
     readJson(path.join(runPaths.candidateBDir, 'review.json'), null),
+    readJson(path.join(runPaths.challengerDir, 'review.json'), null),
     readJson(runPaths.candidateDuelJson, null),
-    readJson(runPaths.championGateJson, null),
+    readJson(runPaths.challengeJson, null),
     readJson(runPaths.recommendationJson, null),
   ]);
+  const coldStart = experimentPlan?.competitionMode === 'cold_start_duel';
 
   return {
     deconstruct: [
@@ -497,25 +515,31 @@ async function summarizeProgressArtifacts(runPaths) {
     plan: [
       manager?.nextLoopPremise?.notes?.length ? `Premise: ${manager.nextLoopPremise.notes.join(' | ')}` : null,
       manager?.strategy ? `Strategy: ${manager.strategy.posture}; ${manager.strategy.experimentFamily}` : null,
+      experimentPlan?.competitionMode ? `Competition: ${experimentPlan.competitionMode}` : null,
       experimentPlan ? `Question: ${experimentPlan.experimentQuestion}` : null,
-      experimentPlan ? `Arms: ${experimentPlan.arms?.candidateA?.strategyName || 'A'} vs ${experimentPlan.arms?.candidateB?.strategyName || 'B'}` : null,
+      experimentPlan ? (coldStart
+        ? `Arms: ${experimentPlan.arms?.candidateA?.strategyName || 'A'} vs ${experimentPlan.arms?.candidateB?.strategyName || 'B'}`
+        : `Challenge: ${experimentPlan.arms?.challenger?.strategyName || 'planned'} vs current champion`) : null,
     ].filter(Boolean),
     generate: [
-      experimentPlan ? `Candidate A: ${experimentPlan.arms?.candidateA?.strategyName || 'planned'}` : null,
-      experimentPlan ? `Candidate B: ${experimentPlan.arms?.candidateB?.strategyName || 'planned'}` : null,
+      experimentPlan ? (coldStart
+        ? `Candidate A: ${experimentPlan.arms?.candidateA?.strategyName || 'planned'}`
+        : `Challenger: ${experimentPlan.arms?.challenger?.strategyName || 'planned'}`) : null,
+      experimentPlan && coldStart ? `Candidate B: ${experimentPlan.arms?.candidateB?.strategyName || 'planned'}` : null,
     ].filter(Boolean),
     review: [
       reviewA ? `Candidate A review: ${reviewA.approveForEval ? 'approved' : 'blocked'}; ${reviewA.blockingIssues?.length || 0} blocking issue(s)` : null,
       reviewB ? `Candidate B review: ${reviewB.approveForEval ? 'approved' : 'blocked'}; ${reviewB.blockingIssues?.length || 0} blocking issue(s)` : null,
+      reviewChallenger ? `Challenger review: ${reviewChallenger.approveForEval ? 'approved' : 'blocked'}; ${reviewChallenger.blockingIssues?.length || 0} blocking issue(s)` : null,
     ].filter(Boolean),
     evaluate: [
       candidateDuel ? `Candidate duel: ${formatEvalOutcome(candidateDuel, {
         skillA: 'Candidate A',
         skillB: 'Candidate B',
       })}` : null,
-      championGate ? `Champion gate: ${formatEvalOutcome(championGate, {
-        skillA: 'challenger',
-        skillB: 'current champion',
+      challenge ? `Champion challenge: ${formatEvalOutcome(challenge, {
+        skillA: 'Challenger',
+        skillB: 'Current champion',
       })}` : null,
     ].filter(Boolean),
     decide: [
@@ -553,16 +577,24 @@ export async function readSkillContent({ cwd, projectName, source = 'champion', 
   let resolvedRunId = null;
 
   if (source === 'champion') {
-    skillDir = paths.championSkillDir;
-  } else if (source === 'candidate-a' || source === 'candidate-b') {
+    if (runId) {
+      resolvedRunId = runId;
+      const runPaths = getRunPaths(paths, resolvedRunId);
+      skillDir = await pathExists(path.join(runPaths.championDir, 'SKILL.md'))
+        ? runPaths.championDir
+        : paths.championSkillDir;
+    } else {
+      skillDir = paths.championSkillDir;
+    }
+  } else if (source === 'candidate-a' || source === 'candidate-b' || source === 'challenger') {
     const state = await readRequiredJson(paths.stateJson, `Project "${paths.projectId}" has not been initialized`);
     resolvedRunId = runId || state.lastRunId;
     if (!resolvedRunId) throw new Error(`Project "${paths.projectId}" has no runs`);
     const runPaths = getRunPaths(paths, resolvedRunId);
-    const candidateDir = source === 'candidate-a' ? runPaths.candidateADir : runPaths.candidateBDir;
+    const candidateDir = source === 'challenger' ? runPaths.challengerDir : source === 'candidate-a' ? runPaths.candidateADir : runPaths.candidateBDir;
     skillDir = path.join(candidateDir, 'skill');
   } else {
-    throw badRequest('source must be champion, candidate-a, or candidate-b');
+    throw badRequest('source must be champion, challenger, candidate-a, or candidate-b');
   }
 
   if (!(await pathExists(path.join(skillDir, 'SKILL.md')))) {
@@ -653,15 +685,18 @@ function summarizeRunCandidates(run) {
   return {
     candidateA: candidates.find(candidate => candidate.candidateId === 'candidate-a') || null,
     candidateB: candidates.find(candidate => candidate.candidateId === 'candidate-b') || null,
+    challenger: run?.challenger || candidates.find(candidate => candidate.candidateId === 'challenger') || null,
   };
 }
 
 async function readCandidateReviews(runPaths) {
   const candidateAReview = await readJson(path.join(runPaths.candidateADir, 'review.json'), null);
   const candidateBReview = await readJson(path.join(runPaths.candidateBDir, 'review.json'), null);
+  const challengerReview = await readJson(path.join(runPaths.challengerDir, 'review.json'), null);
   return {
     candidateA: candidateAReview,
     candidateB: candidateBReview,
+    challenger: challengerReview,
   };
 }
 

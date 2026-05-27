@@ -18,6 +18,8 @@ function requireArray(label, object, key) {
   }
 }
 
+export const COMPETITION_MODES = ['cold_start_duel', 'champion_challenge', 'high_divergence_reset'];
+
 export function validateProjectConfig(config) {
   const label = 'Project config';
   if (!isObject(config)) fail(label, 'must be an object');
@@ -169,6 +171,9 @@ export function validateExperimentPlan(plan) {
   const label = 'Experiment plan';
   if (!isObject(plan)) fail(label, 'must be an object');
   requireString(label, plan, 'runId');
+  if (!COMPETITION_MODES.includes(plan.competitionMode)) {
+    fail(label, 'competitionMode must be cold_start_duel, champion_challenge, or high_divergence_reset');
+  }
   requireString(label, plan, 'experimentQuestion');
   requireString(label, plan, 'hypothesis');
   requireArray(label, plan, 'focusParameterIds');
@@ -177,13 +182,22 @@ export function validateExperimentPlan(plan) {
   if (plan.focusParameterIds.length < 1 || plan.focusParameterIds.length > 3) {
     fail(label, 'focusParameterIds must contain one to three parameters');
   }
-  if (!isObject(plan.arms) || !isObject(plan.arms.candidateA) || !isObject(plan.arms.candidateB)) {
-    fail(label, 'arms.candidateA and arms.candidateB are required');
+  if (!isObject(plan.arms)) fail(label, 'arms must be an object');
+  if (plan.competitionMode === 'cold_start_duel') {
+    if (!isObject(plan.arms.candidateA) || !isObject(plan.arms.candidateB)) {
+      fail(label, 'arms.candidateA and arms.candidateB are required for cold_start_duel');
+    }
+    requireString(label, plan.arms.candidateA, 'strategyName');
+    requireString(label, plan.arms.candidateB, 'strategyName');
+    requireArray(label, plan.arms.candidateA, 'mutationInstructions');
+    requireArray(label, plan.arms.candidateB, 'mutationInstructions');
+  } else {
+    if (!isObject(plan.arms.challenger)) {
+      fail(label, 'arms.challenger is required for champion-present competition modes');
+    }
+    requireString(label, plan.arms.challenger, 'strategyName');
+    requireArray(label, plan.arms.challenger, 'mutationInstructions');
   }
-  requireString(label, plan.arms.candidateA, 'strategyName');
-  requireString(label, plan.arms.candidateB, 'strategyName');
-  requireArray(label, plan.arms.candidateA, 'mutationInstructions');
-  requireArray(label, plan.arms.candidateB, 'mutationInstructions');
   return plan;
 }
 
@@ -194,8 +208,8 @@ export function validateEvalResult(result) {
   requireString(label, result, 'phase');
   requireArray(label, result, 'prompts');
   requireArray(label, result, 'scores');
-  if (!['candidate-a', 'candidate-b', 'current'].includes(result.winner)) {
-    fail(label, 'winner must be candidate-a, candidate-b, or current');
+  if (!['candidate-a', 'candidate-b', 'challenger', 'current'].includes(result.winner)) {
+    fail(label, 'winner must be candidate-a, candidate-b, challenger, or current');
   }
   return result;
 }

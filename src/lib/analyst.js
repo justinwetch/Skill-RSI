@@ -8,6 +8,7 @@ const ALLOWED_CONFIDENCE = ['low', 'medium', 'high'];
 function candidateLabel(id) {
   if (id === 'candidate-a') return 'Candidate A';
   if (id === 'candidate-b') return 'Candidate B';
+  if (id === 'challenger') return 'the challenger';
   return id || 'the candidate';
 }
 function duelWinnerLabel(winner) {
@@ -30,8 +31,9 @@ export async function analyzeRun({
   experimentPlan,
   candidateA,
   candidateB,
+  challenger = null,
   candidateDuel,
-  championGate = null,
+  challenge = null,
   model = null,
   apiKeys = {},
   modelClient = callModel,
@@ -41,9 +43,10 @@ export async function analyzeRun({
     runId,
     state,
     candidateDuel,
-    championGate,
+    challenge,
     candidateA,
     candidateB,
+    challenger,
     experimentPlan,
     promotion,
   });
@@ -67,8 +70,9 @@ export async function analyzeRun({
         experimentPlan,
         candidateA,
         candidateB,
+        challenger,
         candidateDuel,
-        championGate,
+        challenge,
         policy,
       }),
     }],
@@ -81,6 +85,7 @@ export async function analyzeRun({
     policy,
     candidateA,
     candidateB,
+    challenger,
   });
   return mergePolicyAndAnalyst({ policy, analyst });
 }
@@ -89,18 +94,21 @@ export function createPolicyRecommendation({
   runId,
   state,
   candidateDuel,
-  championGate = null,
+  challenge = null,
   candidateA,
   candidateB,
+  challenger = null,
   experimentPlan,
   promotion = null,
 }) {
-  const decisiveEval = championGate || candidateDuel;
-  const duelWinnerCandidateId = getCandidateWinnerId(candidateDuel, candidateDuel.stats.winner);
-  const candidateWinnerId = championGate
-    ? (championGate.stats.winner === 'skillA' ? duelWinnerCandidateId : null)
+  const activeChallenge = challenge || null;
+  const decisiveEval = activeChallenge || candidateDuel;
+  const challengeMode = experimentPlan?.competitionMode !== 'cold_start_duel' && activeChallenge;
+  const duelWinnerCandidateId = candidateDuel ? getCandidateWinnerId(candidateDuel, candidateDuel.stats.winner) : null;
+  const candidateWinnerId = challengeMode
+    ? (activeChallenge.stats.winner === 'skillA' ? 'challenger' : null)
     : duelWinnerCandidateId;
-  const scoreDelta = championGate
+  const scoreDelta = activeChallenge
     ? Math.max(0, decisiveEval.stats.scoreDelta || 0)
     : Math.abs(decisiveEval.stats.scoreDelta || 0);
   const winDelta = Math.abs((decisiveEval.stats.skillAWins || 0) - (decisiveEval.stats.skillBWins || 0));
@@ -111,8 +119,8 @@ export function createPolicyRecommendation({
     maxStablePromptRegression: promotion?.maxStablePromptRegression ?? 2,
     minEvalCompletionRate: promotion?.minEvalCompletionRate ?? 0.8,
   };
-  const criticalRegressions = championGate
-    ? findStablePromptRegressions(championGate, thresholds.maxStablePromptRegression)
+  const criticalRegressions = activeChallenge
+    ? findStablePromptRegressions(activeChallenge, thresholds.maxStablePromptRegression)
     : [];
   const completionRate = decisiveEval.stats?.confidence?.completionRate ?? 1;
   // First run (no champion yet) uses a lenient gate; later runs use the configured margins.
@@ -138,9 +146,11 @@ export function createPolicyRecommendation({
         ? 'No new version beat the current champion by a clear enough margin, so the current champion stays.'
         : 'Neither version was a clear enough winner to crown a champion yet.'),
     observations: [
-      `In the A/B test, ${duelWinnerLabel(candidateDuel.stats.winner)} scored higher.`,
-      championGate
-        ? `Against the current champion, ${championGate.stats.winner === 'skillA' ? 'the new version came out ahead' : championGate.stats.winner === 'skillB' ? 'the current champion held its lead' : 'it was a tie'}.`
+      candidateDuel
+        ? `In the cold-start head-to-head test, ${duelWinnerLabel(candidateDuel.stats.winner)} scored higher.`
+        : `In the challenger test, ${activeChallenge?.stats?.winner === 'skillA' ? 'the challenger scored higher' : activeChallenge?.stats?.winner === 'skillB' ? 'the current champion scored higher' : 'the result was tied'}.`,
+      activeChallenge
+        ? `Against the current champion, ${activeChallenge.stats.winner === 'skillA' ? 'the challenger came out ahead' : activeChallenge.stats.winner === 'skillB' ? 'the current champion held its lead' : 'it was a tie'}.`
         : 'There was no current champion to compare against yet.',
       criticalRegressions.length
         ? `Stable-prompt regression blocked promotion on ${criticalRegressions.length} prompt(s).`
@@ -155,7 +165,7 @@ export function createPolicyRecommendation({
     nextRoundGuidance: {
       vary: promotedCandidateId ? 'next highest-priority untested parameter' : 'evaluation batch or experiment arm contrast',
       preserve: promotedCandidateId
-        ? promotedCandidateId === 'candidate-a' ? candidateA.strategy : candidateB.strategy
+        ? promotedCandidateId === 'challenger' ? challenger.strategy : promotedCandidateId === 'candidate-a' ? candidateA.strategy : candidateB.strategy
         : 'current champion and validated package structure',
       investigate: promotedCandidateId
         ? 'whether the promoted parameter improvement holds against stable prompts'
@@ -184,7 +194,7 @@ export function createPolicyRecommendation({
     historySummary: promotedCandidateId
       ? `Promoted ${candidateLabel(promotedCandidateId)} as the new champion.`
       : 'Kept the current champion; no clear winner this round.',
-    promptBankRecommendations: diagnosePromptBank(candidateDuel),
+    promptBankRecommendations: diagnosePromptBank(activeChallenge || candidateDuel),
   });
 }
 
@@ -251,8 +261,9 @@ function buildAnalystPrompt({
   experimentPlan,
   candidateA,
   candidateB,
+  challenger,
   candidateDuel,
-  championGate,
+  challenge,
   policy,
 }) {
   return `Interpret this Skill RSI run and recommend the next state.
@@ -271,7 +282,7 @@ Experiment plan:
 ${formatBlock(experimentPlan)}
 
 Candidates:
-${formatBlock({ candidateA, candidateB })}
+${formatBlock(experimentPlan?.competitionMode === 'cold_start_duel' ? { candidateA, candidateB } : { champion: state.currentChampion, challenger })}
 
 History summary:
 ${formatBlock({
@@ -279,11 +290,11 @@ ${formatBlock({
   parameterLog: history?.parameterLog?.slice(-16) || [],
 })}
 
-Candidate duel summary:
+Cold-start duel summary:
 ${formatBlock(summarizeEval(candidateDuel))}
 
-Champion gate summary:
-${formatBlock(championGate ? summarizeEval(championGate) : null)}
+Champion challenge summary:
+${formatBlock(challenge ? summarizeEval(challenge) : null)}
 
 Deterministic policy recommendation:
 ${formatBlock(policy)}
@@ -295,15 +306,16 @@ Rules:
 - Use decision promote only when evidence is meaningful and no critical regression is visible.
 - Prefer keep_current or request_new_experiment when results are close, noisy, or prompt quality looks suspect.
 - Do not use edit_current; surgical editing is not an implemented run branch yet.
-- recommendedChampionCandidateId must be candidate-a or candidate-b only when decision is promote.
-- Write reasoning, historySummary, and every observation for a non-technical reader who has not seen any of the internals. Use plain language: say what happened and what it means. Refer to the two versions as "Candidate A" and "Candidate B", the existing best as "the current champion", and the comparison as "the head-to-head test". Never use internal terms such as "policy gate", "deterministic policy", "duel", "champion gate", "skillA"/"skillB", "raw scores", "promotion signal", "parameter ids", or content hashes. Keep reasoning to 1-3 sentences.`;
+- recommendedChampionCandidateId must be challenger for champion-present runs, or candidate-a/candidate-b for cold-start runs, only when decision is promote.
+- Write reasoning, historySummary, and every observation for a non-technical reader who has not seen any of the internals. Use plain language: say what happened and what it means. In cold-start runs, refer to the two versions as "Candidate A" and "Candidate B". In champion-present runs, refer to them as "the challenger" and "the current champion". Never use internal terms such as "policy gate", "deterministic policy", "duel", "champion gate", "skillA"/"skillB", "raw scores", "promotion signal", "parameter ids", or content hashes. Keep reasoning to 1-3 sentences.`;
 }
 
-function normalizeAnalystRecommendation(value, { runId, policy, candidateA, candidateB }) {
+function normalizeAnalystRecommendation(value, { runId, policy, candidateA, candidateB, challenger }) {
   const decision = ALLOWED_DECISIONS.includes(value?.decision) ? value.decision : policy.decision;
   const confidence = ALLOWED_CONFIDENCE.includes(value?.confidence) ? value.confidence : 'low';
   let recommendedChampionCandidateId = value?.recommendedChampionCandidateId || null;
-  if (![candidateA.candidateId, candidateB.candidateId].includes(recommendedChampionCandidateId)) {
+  const allowedIds = [candidateA?.candidateId, candidateB?.candidateId, challenger?.candidateId].filter(Boolean);
+  if (!allowedIds.includes(recommendedChampionCandidateId)) {
     recommendedChampionCandidateId = decision === 'promote' ? policy.recommendedChampionCandidateId : null;
   }
 

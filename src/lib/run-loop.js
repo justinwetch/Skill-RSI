@@ -68,6 +68,22 @@ function estimateBudgetForOneLoop(config) {
   };
 }
 
+function competitionModeForState(state, managerArtifact = null) {
+  if (!state.currentChampion) return 'cold_start_duel';
+  if (managerArtifact?.strategy?.experimentFamily === 'high_divergence_reset') return 'high_divergence_reset';
+  return 'champion_challenge';
+}
+
+function isColdStartCompetition(experimentPlan) {
+  return experimentPlan?.competitionMode === 'cold_start_duel';
+}
+
+function armForPlan(experimentPlan, armName) {
+  const arm = experimentPlan?.arms?.[armName];
+  if (!arm) throw new Error(`Experiment plan missing ${armName} arm for ${experimentPlan?.competitionMode || 'unknown'} competition`);
+  return arm;
+}
+
 function enforceUnattendedBudget({ config, state, loops, triggerMode }) {
   if (config.budget.maxConcurrentRuns < 1) {
     throw new Error('Budget config invalid: maxConcurrentRuns must be at least 1');
@@ -159,6 +175,18 @@ async function prepareManager({
     experimentFamily: managerArtifact.strategy.experimentFamily,
   });
   return managerArtifact;
+}
+
+async function snapshotChampionAtRunStart({ paths, runPaths, state }) {
+  if (!state.currentChampion) return null;
+  if (await pathExists(path.join(runPaths.championDir, 'SKILL.md'))) return runPaths.championDir;
+  if (!(await pathExists(path.join(paths.championSkillDir, 'SKILL.md')))) return null;
+  await copyDir(paths.championSkillDir, runPaths.championDir);
+  await appendTimeline(runPaths.timelineJsonl, 'champion.snapshot_written', {
+    path: runPaths.championDir,
+    champion: state.currentChampion.skillHash,
+  });
+  return runPaths.championDir;
 }
 
 async function finishManager({ runPaths, managerArtifact, recommendation, nextState }) {
@@ -578,6 +606,7 @@ async function runStubLoop({
     budgetEstimate,
   };
   await writeJson(runPaths.runJson, runRecord);
+  await snapshotChampionAtRunStart({ paths, runPaths, state });
 
   const ontology = validateOntology(createStubOntology({ projectId, goal, runId }));
   await writeJson(paths.ontologyCurrent, ontology);
@@ -602,36 +631,60 @@ async function runStubLoop({
     parameterization,
     triggerContext,
   });
+  const competitionMode = competitionModeForState(state, managerArtifact);
   const experimentPlan = validateExperimentPlan(applyManagerGuidanceToPlan(
-    createStubExperimentPlan({ runId, runNumber, parameterization }),
+    createStubExperimentPlan({ runId, runNumber, parameterization, competitionMode }),
     managerArtifact,
     parameterization,
   ));
   await writeJson(runPaths.experimentPlanJson, experimentPlan);
   await appendTimeline(runPaths.timelineJsonl, 'experiment_plan.written', { path: runPaths.experimentPlanJson });
 
-  const candidateA = validateCandidate(await writeStubCandidate({
-    candidateDir: runPaths.candidateADir,
-    candidateId: 'candidate-a',
-    arm: experimentPlan.arms.candidateA,
-    projectId,
-    goal,
-    runId,
-    changedParameterIds: experimentPlan.focusParameterIds,
-  }));
-  const candidateB = validateCandidate(await writeStubCandidate({
-    candidateDir: runPaths.candidateBDir,
-    candidateId: 'candidate-b',
-    arm: experimentPlan.arms.candidateB,
-    projectId,
-    goal,
-    runId,
-    changedParameterIds: experimentPlan.focusParameterIds,
-  }));
-  await appendTimeline(runPaths.timelineJsonl, 'candidates.written', {
-    candidateA: candidateA.skillPath,
-    candidateB: candidateB.skillPath,
-  });
+  const coldStart = isColdStartCompetition(experimentPlan);
+  let candidateA = null;
+  let candidateB = null;
+  let challenger = null;
+
+  if (coldStart) {
+    candidateA = validateCandidate(await writeStubCandidate({
+      candidateDir: runPaths.candidateADir,
+      candidateId: 'candidate-a',
+      arm: armForPlan(experimentPlan, 'candidateA'),
+      projectId,
+      goal,
+      runId,
+      changedParameterIds: experimentPlan.focusParameterIds,
+    }));
+    candidateB = validateCandidate(await writeStubCandidate({
+      candidateDir: runPaths.candidateBDir,
+      candidateId: 'candidate-b',
+      arm: armForPlan(experimentPlan, 'candidateB'),
+      projectId,
+      goal,
+      runId,
+      changedParameterIds: experimentPlan.focusParameterIds,
+    }));
+    await appendTimeline(runPaths.timelineJsonl, 'candidates.written', {
+      competitionMode: experimentPlan.competitionMode,
+      candidateA: candidateA.skillPath,
+      candidateB: candidateB.skillPath,
+    });
+  } else {
+    challenger = validateCandidate(await writeStubCandidate({
+      candidateDir: runPaths.challengerDir,
+      candidateId: 'challenger',
+      arm: armForPlan(experimentPlan, 'challenger'),
+      projectId,
+      goal,
+      runId,
+      changedParameterIds: experimentPlan.focusParameterIds,
+    }));
+    await appendTimeline(runPaths.timelineJsonl, 'challenger.written', {
+      competitionMode: experimentPlan.competitionMode,
+      challenger: challenger.skillPath,
+      champion: paths.championSkillDir,
+    });
+  }
 
   const evalDesign = designEvalBatch({
     runId,
@@ -662,35 +715,42 @@ async function runStubLoop({
   await appendTimeline(runPaths.timelineJsonl, 'eval_config.written', { path: runPaths.evalConfigJson });
   const prompts = evalDesign.prompts;
 
-  const candidateDuel = validateEvalResult(createStubEvalResult({
+  const candidateDuel = coldStart ? validateEvalResult(createStubEvalResult({
     runId,
     phase: 'candidate_duel',
     prompts,
     winner: runNumber % 2 === 0 ? 'candidate-a' : 'candidate-b',
     scoreOffset: runNumber,
-  }));
-  await writeJson(runPaths.candidateDuelJson, candidateDuel);
-  await appendTimeline(runPaths.timelineJsonl, 'candidate_duel.completed', { winner: candidateDuel.winner });
+  })) : null;
+  if (candidateDuel) {
+    await writeJson(runPaths.candidateDuelJson, candidateDuel);
+    await appendTimeline(runPaths.timelineJsonl, 'candidate_duel.completed', { winner: candidateDuel.winner });
+  }
 
-  const promotedCandidateId = runNumber % 2 === 0 ? null : candidateDuel.winner;
-  const championGate = validateEvalResult(createStubEvalResult({
+  const challenge = !coldStart ? validateEvalResult(createStubEvalResult({
     runId,
-    phase: 'champion_gate',
+    phase: 'challenge',
     prompts,
-    winner: promotedCandidateId || 'current',
+    winner: runNumber % 2 === 0 ? 'current' : 'challenger',
     scoreOffset: runNumber + 1,
-  }));
-  await writeJson(runPaths.championGateJson, championGate);
-  await appendTimeline(runPaths.timelineJsonl, 'champion_gate.completed', { winner: championGate.winner });
+  })) : null;
+  if (challenge) {
+    await writeJson(runPaths.challengeJson, challenge);
+    await appendTimeline(runPaths.timelineJsonl, 'challenge.completed', { winner: challenge.winner });
+  }
+
+  const promotedCandidateId = coldStart
+    ? (runNumber % 2 === 0 ? null : candidateDuel.winner)
+    : (challenge.winner === 'challenger' ? 'challenger' : null);
 
   const recommendation = validateRecommendation(createStubRecommendation({
     runId,
     promotedCandidateId,
     candidateDuel,
-    championGate,
+    challenge,
   }));
   await writeJson(runPaths.recommendationJson, recommendation);
-  await writeText(runPaths.reportMd, renderReport({ runId, recommendation, candidateDuel, championGate }));
+  await writeText(runPaths.reportMd, renderReport({ runId, recommendation, candidateDuel, challenge, experimentPlan }));
   await appendTimeline(runPaths.timelineJsonl, 'analysis.written', { decision: recommendation.decision });
 
   const nextState = await applyDecision({
@@ -701,6 +761,7 @@ async function runStubLoop({
     runNumber,
     candidateA,
     candidateB,
+    challenger,
     promotedCandidateId,
     budgetEstimate,
   });
@@ -709,7 +770,9 @@ async function runStubLoop({
     ...runRecord,
     status: 'completed',
     completedAt: new Date().toISOString(),
-    candidates: [candidateA, candidateB],
+    competitionMode: experimentPlan.competitionMode,
+    candidates: coldStart ? [candidateA, candidateB] : [],
+    challenger,
     experimentPlan,
     recommendation,
   };
@@ -725,7 +788,7 @@ async function runStubLoop({
     runRecord: completedRunRecord,
     recommendation,
     parameterization,
-    scoreDelta: championGate.scores[0]?.delta ?? null,
+    scoreDelta: (challenge || candidateDuel)?.scores?.[0]?.delta ?? null,
   });
   await appendTimeline(runPaths.timelineJsonl, 'run.completed', { status: 'completed' });
 
@@ -797,6 +860,7 @@ async function runAgenticLoop({
     budgetEstimate,
   };
   await writeJson(runPaths.runJson, runRecord);
+  await snapshotChampionAtRunStart({ paths, runPaths, state });
 
   const agentClient = modelClient || undefined;
   const agentSkillsStandard = await readAgentSkillsStandard(path.dirname(paths.rootDir));
@@ -1028,47 +1092,93 @@ async function runAgenticLoop({
     });
   }
 
-  const candidateAResult = await createAndMaterializeCandidate({
-    paths,
-    runPaths,
-    projectId,
-    runId,
-    candidateDir: runPaths.candidateADir,
-    candidateId: 'candidate-a',
-    experimentArm: 'candidateA',
-    agentModel,
-    modelParameters,
-    apiKeys,
-    agentClient,
-    outputType: evalOutputType,
-    taskContract,
-  });
-  let creatorAArtifact = candidateAResult.artifact;
-  let candidateA = candidateAResult.candidate;
+  const coldStart = isColdStartCompetition(experimentPlan);
+  const championComparable = state.currentChampion ? {
+    candidateId: 'current',
+    experimentArm: 'champion',
+    strategy: 'current champion',
+    skillPath: paths.championSkillDir,
+    changedParameterIds: [],
+  } : null;
+  let creatorAArtifact = null;
+  let creatorBArtifact = null;
+  let creatorChallengerArtifact = null;
+  let candidateA = null;
+  let candidateB = null;
+  let challenger = null;
 
-  const candidateBResult = await createAndMaterializeCandidate({
-    paths,
-    runPaths,
-    projectId,
-    runId,
-    candidateDir: runPaths.candidateBDir,
-    candidateId: 'candidate-b',
-    experimentArm: 'candidateB',
-    agentModel,
-    modelParameters,
-    apiKeys,
-    agentClient,
-    outputType: evalOutputType,
-    taskContract,
-  });
-  let creatorBArtifact = candidateBResult.artifact;
-  let candidateB = candidateBResult.candidate;
-  await appendTimeline(runPaths.timelineJsonl, 'candidates.written', {
-    mode: 'real',
-    model: agentModel,
-    candidateA: candidateA.skillPath,
-    candidateB: candidateB.skillPath,
-  });
+  if (coldStart) {
+    const candidateAResult = await createAndMaterializeCandidate({
+      paths,
+      runPaths,
+      projectId,
+      runId,
+      candidateDir: runPaths.candidateADir,
+      candidateId: 'candidate-a',
+      experimentArm: 'candidateA',
+      agentModel,
+      modelParameters,
+      apiKeys,
+      agentClient,
+      outputType: evalOutputType,
+      taskContract,
+    });
+    creatorAArtifact = candidateAResult.artifact;
+    candidateA = candidateAResult.candidate;
+
+    const candidateBResult = await createAndMaterializeCandidate({
+      paths,
+      runPaths,
+      projectId,
+      runId,
+      candidateDir: runPaths.candidateBDir,
+      candidateId: 'candidate-b',
+      experimentArm: 'candidateB',
+      agentModel,
+      modelParameters,
+      apiKeys,
+      agentClient,
+      outputType: evalOutputType,
+      taskContract,
+    });
+    creatorBArtifact = candidateBResult.artifact;
+    candidateB = candidateBResult.candidate;
+    await appendTimeline(runPaths.timelineJsonl, 'candidates.written', {
+      mode: 'real',
+      competitionMode: experimentPlan.competitionMode,
+      model: agentModel,
+      candidateA: candidateA.skillPath,
+      candidateB: candidateB.skillPath,
+    });
+  } else {
+    if (!state.currentChampion) {
+      throw new Error(`${experimentPlan.competitionMode} requires a current champion`);
+    }
+    const challengerResult = await createAndMaterializeCandidate({
+      paths,
+      runPaths,
+      projectId,
+      runId,
+      candidateDir: runPaths.challengerDir,
+      candidateId: 'challenger',
+      experimentArm: 'challenger',
+      agentModel,
+      modelParameters,
+      apiKeys,
+      agentClient,
+      outputType: evalOutputType,
+      taskContract,
+    });
+    creatorChallengerArtifact = challengerResult.artifact;
+    challenger = challengerResult.candidate;
+    await appendTimeline(runPaths.timelineJsonl, 'challenger.written', {
+      mode: 'real',
+      competitionMode: experimentPlan.competitionMode,
+      model: agentModel,
+      challenger: challenger.skillPath,
+      champion: paths.championSkillDir,
+    });
+  }
 
   // Reuse the persisted eval config on resume (skips the criteria + prompt generation calls).
   let evalDesign = await reuseJson(runPaths.evalConfigJson, cfg => ({ prompts: cfg.prompts, criteria: cfg.criteria, bank: cfg.bank }));
@@ -1083,8 +1193,8 @@ async function runAgenticLoop({
     if (!lockedCore.length) {
       coreCriteria = await generateEvalCriteria({
         goal,
-        candidateA,
-        candidateB,
+        candidateA: coldStart ? candidateA : challenger,
+        candidateB: coldStart ? candidateB : championComparable,
         model: judgeModel || agentModel,
         apiKeys,
         modelClient: agentClient,
@@ -1174,10 +1284,11 @@ async function runAgenticLoop({
     await appendTimeline(runPaths.timelineJsonl, 'eval_config.written', { path: runPaths.evalConfigJson });
   }
 
-  let reviewA = await reuseJson(path.join(runPaths.candidateADir, 'review.json'));
-  let reviewB = await reuseJson(path.join(runPaths.candidateBDir, 'review.json'));
+  let reviewA = coldStart ? await reuseJson(path.join(runPaths.candidateADir, 'review.json')) : null;
+  let reviewB = coldStart ? await reuseJson(path.join(runPaths.candidateBDir, 'review.json')) : null;
+  let reviewChallenger = coldStart ? null : await reuseJson(path.join(runPaths.challengerDir, 'review.json'));
   const championPackageForReview = state.currentChampion ? await readChampionPackage(paths) : null;
-  if (!reviewA || !reviewB) {
+  if (coldStart && (!reviewA || !reviewB)) {
     [reviewA, reviewB] = await Promise.all([
       reviewA || reviewCandidatePackage({ candidate: candidateA, experimentPlan, evalDesign, goal, model: agentModel, apiKeys, modelClient: agentClient, agentSkillsStandard, championPackage: championPackageForReview }),
       reviewB || reviewCandidatePackage({ candidate: candidateB, experimentPlan, evalDesign, goal, model: agentModel, apiKeys, modelClient: agentClient, agentSkillsStandard, championPackage: championPackageForReview }),
@@ -1189,9 +1300,27 @@ async function runAgenticLoop({
       candidateB: reviewB.approveForEval,
     });
   }
+  if (!coldStart && !reviewChallenger) {
+    reviewChallenger = await reviewCandidatePackage({
+      candidate: challenger,
+      experimentPlan,
+      evalDesign,
+      goal,
+      model: agentModel,
+      apiKeys,
+      modelClient: agentClient,
+      agentSkillsStandard,
+      championPackage: championPackageForReview,
+    });
+    await writeJson(path.join(runPaths.challengerDir, 'review.json'), reviewChallenger);
+    await appendTimeline(runPaths.timelineJsonl, 'challenger_review.completed', {
+      challenger: reviewChallenger.approveForEval,
+      blockingIssues: reviewChallenger.blockingIssues?.length || 0,
+    });
+  }
   // Autonomous repair: keep fixing a candidate that fails the deterministic safety/spec gate,
   // up to MAX_CANDIDATE_REVISIONS attempts, rather than giving up after one.
-  for (let attempt = 1; attempt <= MAX_CANDIDATE_REVISIONS && !reviewA.approveForEval; attempt += 1) {
+  for (let attempt = 1; coldStart && attempt <= MAX_CANDIDATE_REVISIONS && !reviewA.approveForEval; attempt += 1) {
     ({ artifact: creatorAArtifact, candidate: candidateA, review: reviewA } = await reviseBlockedCandidate({
       paths,
       runPaths,
@@ -1216,7 +1345,7 @@ async function runAgenticLoop({
       championPackage: championPackageForReview,
     }));
   }
-  for (let attempt = 1; attempt <= MAX_CANDIDATE_REVISIONS && !reviewB.approveForEval; attempt += 1) {
+  for (let attempt = 1; coldStart && attempt <= MAX_CANDIDATE_REVISIONS && !reviewB.approveForEval; attempt += 1) {
     ({ artifact: creatorBArtifact, candidate: candidateB, review: reviewB } = await reviseBlockedCandidate({
       paths,
       runPaths,
@@ -1241,7 +1370,32 @@ async function runAgenticLoop({
       championPackage: championPackageForReview,
     }));
   }
-  if (!reviewA.approveForEval || !reviewB.approveForEval) {
+  for (let attempt = 1; !coldStart && attempt <= MAX_CANDIDATE_REVISIONS && !reviewChallenger.approveForEval; attempt += 1) {
+    ({ artifact: creatorChallengerArtifact, candidate: challenger, review: reviewChallenger } = await reviseBlockedCandidate({
+      paths,
+      runPaths,
+      projectId,
+      runId,
+      goal,
+      attempt,
+      candidateDir: runPaths.challengerDir,
+      candidate: challenger,
+      originalArtifact: creatorChallengerArtifact,
+      review: reviewChallenger,
+      experimentArm: 'challenger',
+      experimentPlan,
+      evalDesign,
+      agentModel,
+      modelParameters,
+      apiKeys,
+      agentClient,
+      agentSkillsStandard,
+      outputType: evalOutputType,
+      taskContract,
+      championPackage: championPackageForReview,
+    }));
+  }
+  if ((coldStart && (!reviewA.approveForEval || !reviewB.approveForEval)) || (!coldStart && !reviewChallenger.approveForEval)) {
     return completeReviewBlockedRun({
       paths,
       runPaths,
@@ -1252,17 +1406,20 @@ async function runAgenticLoop({
       runNumber,
       candidateA,
       candidateB,
+      challenger,
       experimentPlan,
       parameterization,
       reviewA,
       reviewB,
+      reviewChallenger,
       managerArtifact,
       budgetEstimate,
     });
   }
 
-  let candidateDuel = await reuseJson(runPaths.candidateDuelJson);
-  if (!candidateDuel) {
+  let candidateDuel = coldStart ? await reuseJson(runPaths.candidateDuelJson) : null;
+  let challenge = coldStart ? null : await reuseJson(runPaths.challengeJson);
+  if (coldStart && !candidateDuel) {
     candidateDuel = await runHeadlessEval({
       skillAPath: candidateA.skillPath,
       skillBPath: candidateB.skillPath,
@@ -1284,38 +1441,26 @@ async function runAgenticLoop({
     await appendTimeline(runPaths.timelineJsonl, 'candidate_duel.completed', { winner: candidateDuel.stats.winner });
   }
 
-  const promotedCandidateId = candidateDuel.stats.winner === 'skillA'
-    ? 'candidate-a'
-    : candidateDuel.stats.winner === 'skillB' ? 'candidate-b' : null;
-  const duelWinnerCandidate = promotedCandidateId === 'candidate-a'
-    ? candidateA
-    : promotedCandidateId === 'candidate-b' ? candidateB : null;
-
-  let championGate = await reuseJson(runPaths.championGateJson);
-  if (!championGate) {
-    if (state.currentChampion && duelWinnerCandidate) {
-      championGate = await runHeadlessEval({
-        skillAPath: duelWinnerCandidate.skillPath,
-        skillBPath: paths.championSkillDir,
-        promptsPath: paths.promptBankPrompts,
-        criteriaPath: paths.promptBankCriteria,
-        outputPath: runPaths.championGateJson,
-        mode: evalMode,
-        runId: `${runId}-champion-gate`,
-        generationModel,
-        judgeModel,
-        outputType: evalOutputType,
-        taskContract,
-        maxTokens: modelParameters.generationMaxTokens,
-        judgeMaxTokens: modelParameters.judgeMaxTokens,
-        retryPolicy: evalRetryPolicy,
-        apiKeys,
-        modelClient: agentClient,
-      });
-      await appendTimeline(runPaths.timelineJsonl, 'champion_gate.completed', { winner: championGate.stats.winner });
-    } else {
-      await appendTimeline(runPaths.timelineJsonl, 'champion_gate.skipped', { reason: 'no current champion or no duel winner' });
-    }
+  if (!coldStart && !challenge) {
+    challenge = await runHeadlessEval({
+      skillAPath: challenger.skillPath,
+      skillBPath: paths.championSkillDir,
+      promptsPath: paths.promptBankPrompts,
+      criteriaPath: paths.promptBankCriteria,
+      outputPath: runPaths.challengeJson,
+      mode: evalMode,
+      runId: `${runId}-challenge`,
+      generationModel,
+      judgeModel,
+      outputType: evalOutputType,
+      taskContract,
+      maxTokens: modelParameters.generationMaxTokens,
+      judgeMaxTokens: modelParameters.judgeMaxTokens,
+      retryPolicy: evalRetryPolicy,
+      apiKeys,
+      modelClient: agentClient,
+    });
+    await appendTimeline(runPaths.timelineJsonl, 'challenge.completed', { winner: challenge.stats.winner });
   }
 
   let recommendation = await reuseJson(runPaths.recommendationJson, validateRecommendation);
@@ -1331,8 +1476,9 @@ async function runAgenticLoop({
       experimentPlan,
       candidateA,
       candidateB,
+      challenger,
       candidateDuel,
-      championGate,
+      challenge,
       model: agentModel,
       apiKeys,
       modelClient: agentClient,
@@ -1341,7 +1487,7 @@ async function runAgenticLoop({
     const promptBankUpdate = applyPromptBankUpdates({
       bank: evalDesign.bank,
       candidateDuel,
-      championGate,
+      challenge,
       recommendation,
       runId,
     });
@@ -1353,7 +1499,7 @@ async function runAgenticLoop({
       retired: promptBankUpdate.update.retiredPromptIds.length,
     });
     await writeJson(runPaths.recommendationJson, recommendation);
-    await writeText(runPaths.reportMd, renderMockReport({ runId, recommendation, candidateDuel, championGate }));
+    await writeText(runPaths.reportMd, renderMockReport({ runId, recommendation, candidateDuel, challenge, experimentPlan }));
     await appendTimeline(runPaths.timelineJsonl, 'analysis.written', { decision: recommendation.decision });
   }
 
@@ -1365,6 +1511,7 @@ async function runAgenticLoop({
     runNumber,
     candidateA,
     candidateB,
+    challenger,
     promotedCandidateId: recommendation.recommendedChampionCandidateId,
     budgetEstimate,
   });
@@ -1373,11 +1520,13 @@ async function runAgenticLoop({
     ...runRecord,
     status: 'completed',
     completedAt: new Date().toISOString(),
-    candidates: [candidateA, candidateB],
+    competitionMode: experimentPlan.competitionMode,
+    candidates: coldStart ? [candidateA, candidateB] : [],
+    challenger,
     experimentPlan,
     recommendation,
-    evaluatorRunId: candidateDuel.runId,
-    championGateRunId: championGate?.runId || null,
+    evaluatorRunId: (candidateDuel || challenge)?.runId || null,
+    challengeRunId: challenge?.runId || null,
   };
   await writeJson(runPaths.runJson, completedRunRecord);
   await writeJson(paths.stateJson, nextState);
@@ -1393,7 +1542,7 @@ async function runAgenticLoop({
     runRecord: completedRunRecord,
     recommendation,
     parameterization,
-    scoreDelta: championGate?.stats.scoreDelta ?? candidateDuel.stats.scoreDelta,
+    scoreDelta: (challenge || candidateDuel)?.stats.scoreDelta ?? null,
   });
   await appendTimeline(runPaths.timelineJsonl, 'run.completed', { status: 'completed' });
 
@@ -1487,7 +1636,7 @@ async function createAndMaterializeCandidate({
 }
 
 function creatorContractRunId(runId, candidateId, attempt) {
-  const suffix = candidateId === 'candidate-b' ? 'b' : 'a';
+  const suffix = candidateId === 'challenger' ? 'challenger' : candidateId === 'candidate-b' ? 'b' : 'a';
   const base = `${runId}-creator-${suffix}`;
   return attempt === 1 ? base : `${base}-retry-${String(attempt - 1).padStart(3, '0')}`;
 }
@@ -1611,6 +1760,7 @@ async function runMockLoop({
     budgetEstimate,
   };
   await writeJson(runPaths.runJson, runRecord);
+  await snapshotChampionAtRunStart({ paths, runPaths, state });
 
   const ontology = validateOntology(createStubOntology({ projectId, goal, runId }));
   await writeJson(paths.ontologyCurrent, ontology);
@@ -1635,36 +1785,59 @@ async function runMockLoop({
     parameterization,
     triggerContext,
   });
+  const competitionMode = competitionModeForState(state, managerArtifact);
   const experimentPlan = validateExperimentPlan(applyManagerGuidanceToPlan(
-    createStubExperimentPlan({ runId, runNumber, parameterization }),
+    createStubExperimentPlan({ runId, runNumber, parameterization, competitionMode }),
     managerArtifact,
     parameterization,
   ));
   await writeJson(runPaths.experimentPlanJson, experimentPlan);
   await appendTimeline(runPaths.timelineJsonl, 'experiment_plan.written', { path: runPaths.experimentPlanJson });
 
-  const candidateA = validateCandidate(await writeStubCandidate({
-    candidateDir: runPaths.candidateADir,
-    candidateId: 'candidate-a',
-    arm: experimentPlan.arms.candidateA,
-    projectId,
-    goal,
-    runId,
-    changedParameterIds: experimentPlan.focusParameterIds,
-  }));
-  const candidateB = validateCandidate(await writeStubCandidate({
-    candidateDir: runPaths.candidateBDir,
-    candidateId: 'candidate-b',
-    arm: experimentPlan.arms.candidateB,
-    projectId,
-    goal,
-    runId,
-    changedParameterIds: experimentPlan.focusParameterIds,
-  }));
-  await appendTimeline(runPaths.timelineJsonl, 'candidates.written', {
-    candidateA: candidateA.skillPath,
-    candidateB: candidateB.skillPath,
-  });
+  const coldStart = isColdStartCompetition(experimentPlan);
+  let candidateA = null;
+  let candidateB = null;
+  let challenger = null;
+  if (coldStart) {
+    candidateA = validateCandidate(await writeStubCandidate({
+      candidateDir: runPaths.candidateADir,
+      candidateId: 'candidate-a',
+      arm: armForPlan(experimentPlan, 'candidateA'),
+      projectId,
+      goal,
+      runId,
+      changedParameterIds: experimentPlan.focusParameterIds,
+    }));
+    candidateB = validateCandidate(await writeStubCandidate({
+      candidateDir: runPaths.candidateBDir,
+      candidateId: 'candidate-b',
+      arm: armForPlan(experimentPlan, 'candidateB'),
+      projectId,
+      goal,
+      runId,
+      changedParameterIds: experimentPlan.focusParameterIds,
+    }));
+    await appendTimeline(runPaths.timelineJsonl, 'candidates.written', {
+      competitionMode: experimentPlan.competitionMode,
+      candidateA: candidateA.skillPath,
+      candidateB: candidateB.skillPath,
+    });
+  } else {
+    challenger = validateCandidate(await writeStubCandidate({
+      candidateDir: runPaths.challengerDir,
+      candidateId: 'challenger',
+      arm: armForPlan(experimentPlan, 'challenger'),
+      projectId,
+      goal,
+      runId,
+      changedParameterIds: experimentPlan.focusParameterIds,
+    }));
+    await appendTimeline(runPaths.timelineJsonl, 'challenger.written', {
+      competitionMode: experimentPlan.competitionMode,
+      challenger: challenger.skillPath,
+      champion: paths.championSkillDir,
+    });
+  }
 
   const evalDesign = designEvalBatch({
     runId,
@@ -1696,7 +1869,7 @@ async function runMockLoop({
   });
   await appendTimeline(runPaths.timelineJsonl, 'eval_config.written', { path: runPaths.evalConfigJson });
 
-  const candidateDuel = await runHeadlessEval({
+  const candidateDuel = coldStart ? await runHeadlessEval({
     skillAPath: candidateA.skillPath,
     skillBPath: candidateB.skillPath,
     promptsPath: paths.promptBankPrompts,
@@ -1713,78 +1886,49 @@ async function runMockLoop({
     retryPolicy: evalRetryPolicy,
     apiKeys,
     modelClient: modelClient || undefined,
-  });
-  await appendTimeline(runPaths.timelineJsonl, 'candidate_duel.completed', { winner: candidateDuel.stats.winner });
+  }) : null;
+  if (candidateDuel) await appendTimeline(runPaths.timelineJsonl, 'candidate_duel.completed', { winner: candidateDuel.stats.winner });
 
-  const promotedCandidateId = candidateDuel.stats.winner === 'skillA'
-    ? 'candidate-a'
-    : candidateDuel.stats.winner === 'skillB' ? 'candidate-b' : null;
-  const duelWinnerCandidate = promotedCandidateId === 'candidate-a'
-    ? candidateA
-    : promotedCandidateId === 'candidate-b' ? candidateB : null;
+  const challenge = !coldStart ? await runHeadlessEval({
+    skillAPath: challenger.skillPath,
+    skillBPath: paths.championSkillDir,
+    promptsPath: paths.promptBankPrompts,
+    criteriaPath: paths.promptBankCriteria,
+    outputPath: runPaths.challengeJson,
+    mode: evalMode,
+    runId: `${runId}-challenge`,
+    generationModel,
+    judgeModel,
+    outputType: evalOutputType,
+    taskContract,
+    maxTokens: modelParameters.generationMaxTokens,
+    judgeMaxTokens: modelParameters.judgeMaxTokens,
+    retryPolicy: evalRetryPolicy,
+    apiKeys,
+    modelClient: modelClient || undefined,
+  }) : null;
+  if (challenge) await appendTimeline(runPaths.timelineJsonl, 'challenge.completed', { winner: challenge.stats.winner });
 
-  let championGate = null;
-  let finalPromotedCandidateId = promotedCandidateId;
-  let decision = promotedCandidateId ? 'promote' : 'request_new_experiment';
-
-  if (state.currentChampion && duelWinnerCandidate) {
-    championGate = await runHeadlessEval({
-      skillAPath: duelWinnerCandidate.skillPath,
-      skillBPath: paths.championSkillDir,
-      promptsPath: paths.promptBankPrompts,
-      criteriaPath: paths.promptBankCriteria,
-      outputPath: runPaths.championGateJson,
-      mode: evalMode,
-      runId: `${runId}-champion-gate`,
-      generationModel,
-      judgeModel,
-      outputType: evalOutputType,
-      taskContract,
-      maxTokens: modelParameters.generationMaxTokens,
-      judgeMaxTokens: modelParameters.judgeMaxTokens,
-      retryPolicy: evalRetryPolicy,
-      apiKeys,
-      modelClient: modelClient || undefined,
-    });
-    await appendTimeline(runPaths.timelineJsonl, 'champion_gate.completed', { winner: championGate.stats.winner });
-
-    if (championGate.stats.winner === 'skillA') {
-      finalPromotedCandidateId = promotedCandidateId;
-      decision = 'promote';
-    } else {
-      finalPromotedCandidateId = null;
-      decision = 'keep_current';
-    }
-  } else {
-    await appendTimeline(runPaths.timelineJsonl, 'champion_gate.skipped', { reason: 'no current champion or no duel winner' });
-  }
-
-  const recommendation = validateRecommendation({
+  const recommendation = validateRecommendation(await analyzeRun({
+    mode: 'policy',
     runId,
-    decision,
-    recommendedChampionCandidateId: finalPromotedCandidateId,
-    confidence: finalPromotedCandidateId ? 'medium' : 'low',
-    reasoning: createMockRecommendationReasoning({
-      promotedCandidateId: finalPromotedCandidateId,
-      duelWinnerCandidateId: promotedCandidateId,
-      hasChampion: Boolean(state.currentChampion),
-      championGate,
-    }),
-    observations: [
-      `Headless duel winner: ${candidateDuel.stats.winner}`,
-      `Score delta skillA-skillB: ${candidateDuel.stats.scoreDelta}`,
-      championGate ? `Champion gate winner: ${championGate.stats.winner}` : 'Champion gate skipped: no current champion',
-    ],
-    nextRoundGuidance: {
-      vary: 'replace mock agents with model-backed agents',
-      preserve: 'headless evaluator artifact shape',
-      investigate: 'real candidate generation quality',
-    },
-  });
+    goal,
+    state,
+    history,
+    ontology,
+    parameterization,
+    experimentPlan,
+    candidateA,
+    candidateB,
+    challenger,
+    candidateDuel,
+    challenge,
+    promotion,
+  }));
   const promptBankUpdate = applyPromptBankUpdates({
     bank: await readJson(paths.promptBankIndex, null),
     candidateDuel,
-    championGate,
+    challenge,
     recommendation,
     runId,
   });
@@ -1796,7 +1940,7 @@ async function runMockLoop({
     retired: promptBankUpdate.update.retiredPromptIds.length,
   });
   await writeJson(runPaths.recommendationJson, recommendation);
-  await writeText(runPaths.reportMd, renderMockReport({ runId, recommendation, candidateDuel, championGate }));
+  await writeText(runPaths.reportMd, renderMockReport({ runId, recommendation, candidateDuel, challenge, experimentPlan }));
   await appendTimeline(runPaths.timelineJsonl, 'analysis.written', { decision: recommendation.decision });
 
   const nextState = await applyDecision({
@@ -1807,7 +1951,8 @@ async function runMockLoop({
     runNumber,
     candidateA,
     candidateB,
-    promotedCandidateId: finalPromotedCandidateId,
+    challenger,
+    promotedCandidateId: recommendation.recommendedChampionCandidateId,
     budgetEstimate,
   });
 
@@ -1815,11 +1960,13 @@ async function runMockLoop({
     ...runRecord,
     status: 'completed',
     completedAt: new Date().toISOString(),
-    candidates: [candidateA, candidateB],
+    competitionMode: experimentPlan.competitionMode,
+    candidates: coldStart ? [candidateA, candidateB] : [],
+    challenger,
     experimentPlan,
     recommendation,
-    evaluatorRunId: candidateDuel.runId,
-    championGateRunId: championGate?.runId || null,
+    evaluatorRunId: (candidateDuel || challenge).runId,
+    challengeRunId: challenge?.runId || null,
   };
   await writeJson(runPaths.runJson, completedRunRecord);
   await writeJson(paths.stateJson, nextState);
@@ -1835,7 +1982,7 @@ async function runMockLoop({
     runRecord: completedRunRecord,
     recommendation,
     parameterization,
-    scoreDelta: championGate?.stats.scoreDelta ?? candidateDuel.stats.scoreDelta,
+    scoreDelta: (challenge || candidateDuel).stats.scoreDelta,
   });
   await appendTimeline(runPaths.timelineJsonl, 'run.completed', { status: 'completed' });
 
@@ -1852,24 +1999,36 @@ async function completeReviewBlockedRun({
   runNumber,
   candidateA,
   candidateB,
+  challenger = null,
   experimentPlan,
   parameterization,
-  reviewA,
-  reviewB,
+  reviewA = null,
+  reviewB = null,
+  reviewChallenger = null,
   managerArtifact = null,
   budgetEstimate = null,
 }) {
+  const coldStart = isColdStartCompetition(experimentPlan);
+  const blockingIssues = coldStart
+    ? [
+      ...reviewA.blockingIssues.map(issue => `candidate-a: ${issue.surface}: ${issue.message}`),
+      ...reviewB.blockingIssues.map(issue => `candidate-b: ${issue.surface}: ${issue.message}`),
+    ]
+    : (reviewChallenger?.blockingIssues || []).map(issue => `challenger: ${issue.surface}: ${issue.message}`);
   const recommendation = validateRecommendation({
     runId,
     decision: 'request_new_experiment',
     recommendedChampionCandidateId: null,
     confidence: 'high',
-    reasoning: createReviewBlockedReasoning({ reviewA, reviewB }),
-    observations: [
+    reasoning: createReviewBlockedReasoning({ reviewA, reviewB, reviewChallenger, coldStart }),
+    observations: coldStart ? [
       `candidate-a review approved: ${reviewA.approveForEval}`,
       `candidate-b review approved: ${reviewB.approveForEval}`,
       `candidate-a blocking issues: ${reviewA.blockingIssues.length}`,
       `candidate-b blocking issues: ${reviewB.blockingIssues.length}`,
+    ] : [
+      `challenger review approved: ${reviewChallenger.approveForEval}`,
+      `challenger blocking issues: ${reviewChallenger.blockingIssues.length}`,
     ],
     nextRoundGuidance: {
       vary: 'candidate generation constraints and preflight repair instructions',
@@ -1881,8 +2040,7 @@ async function completeReviewBlockedRun({
       meanScore: {},
       scoreDelta: 0,
       criticalRegressions: [
-        ...reviewA.blockingIssues.map(issue => `candidate-a: ${issue.surface}: ${issue.message}`),
-        ...reviewB.blockingIssues.map(issue => `candidate-b: ${issue.surface}: ${issue.message}`),
+        ...blockingIssues,
       ],
     },
     signalAssessment: {
@@ -1902,7 +2060,7 @@ async function completeReviewBlockedRun({
   });
 
   await writeJson(runPaths.recommendationJson, recommendation);
-  await writeText(runPaths.reportMd, renderReviewBlockedReport({ runId, recommendation, reviewA, reviewB }));
+  await writeText(runPaths.reportMd, renderReviewBlockedReport({ runId, recommendation, reviewA, reviewB, reviewChallenger, coldStart }));
   await appendTimeline(runPaths.timelineJsonl, 'analysis.written', { decision: recommendation.decision, reason: 'candidate_review_blocked' });
 
   const nextState = validateRunState(applyBudgetUsage({
@@ -1919,11 +2077,13 @@ async function completeReviewBlockedRun({
     ...runRecord,
     status: 'completed',
     completedAt: new Date().toISOString(),
-    candidates: [candidateA, candidateB],
+    competitionMode: experimentPlan.competitionMode,
+    candidates: coldStart ? [candidateA, candidateB] : [],
+    challenger,
     experimentPlan,
     recommendation,
     evaluatorRunId: null,
-    championGateRunId: null,
+    challengeRunId: null,
     reviewBlocked: true,
   };
   await writeJson(runPaths.runJson, completedRunRecord);
@@ -2068,7 +2228,7 @@ function createStubCriteria() {
 function createStubEvalResult({ runId, phase, prompts, winner, scoreOffset }) {
   const scores = prompts.map((prompt, index) => {
     const base = 7 + index;
-    const winnerBonus = winner === 'candidate-a' ? 2 : winner === 'candidate-b' ? -2 : 0;
+    const winnerBonus = winner === 'candidate-a' || winner === 'challenger' ? 2 : winner === 'candidate-b' ? -2 : 0;
     const scoreA = base + scoreOffset + winnerBonus;
     const scoreB = base + scoreOffset - winnerBonus;
     const scoreCurrent = base + scoreOffset + (winner === 'current' ? 3 : -1);
@@ -2077,7 +2237,7 @@ function createStubEvalResult({ runId, phase, prompts, winner, scoreOffset }) {
       scoreA,
       scoreB,
       scoreCurrent,
-      delta: winner === 'candidate-a' ? scoreA - scoreCurrent : winner === 'candidate-b' ? scoreB - scoreCurrent : 0,
+      delta: winner === 'candidate-a' || winner === 'challenger' ? scoreA - scoreCurrent : winner === 'candidate-b' ? scoreB - scoreCurrent : 0,
     };
   });
 
@@ -2091,7 +2251,7 @@ function createStubEvalResult({ runId, phase, prompts, winner, scoreOffset }) {
   };
 }
 
-function createStubRecommendation({ runId, promotedCandidateId, candidateDuel, championGate }) {
+function createStubRecommendation({ runId, promotedCandidateId, candidateDuel = null, challenge = null }) {
   const decision = promotedCandidateId ? 'promote' : 'keep_current';
   return {
     runId,
@@ -2099,12 +2259,12 @@ function createStubRecommendation({ runId, promotedCandidateId, candidateDuel, c
     recommendedChampionCandidateId: promotedCandidateId,
     confidence: 'medium',
     reasoning: promotedCandidateId
-      ? `${promotedCandidateId} passed the stub champion gate.`
-      : 'Current champion remains best in the stub champion gate.',
+      ? `${promotedCandidateId} passed the stub competition.`
+      : 'Current champion remains best in the stub competition.',
     observations: [
-      `Candidate duel winner: ${candidateDuel.winner}`,
-      `Champion gate winner: ${championGate.winner}`,
-    ],
+      candidateDuel ? `Candidate duel winner: ${candidateDuel.winner}` : null,
+      challenge ? `Challenge winner: ${challenge.winner}` : null,
+    ].filter(Boolean),
     nextRoundGuidance: {
       vary: 'continue testing the focused parameters',
       preserve: 'workspace layout and schema validity',
@@ -2113,11 +2273,14 @@ function createStubRecommendation({ runId, promotedCandidateId, candidateDuel, c
   };
 }
 
-async function applyDecision({ paths, runPaths, state, runId, runNumber, candidateA, candidateB, promotedCandidateId, budgetEstimate = null }) {
+async function applyDecision({ paths, runPaths, state, runId, runNumber, candidateA = null, candidateB = null, challenger = null, promotedCandidateId, budgetEstimate = null }) {
   let currentChampion = state.currentChampion;
 
   if (promotedCandidateId) {
-    const candidate = promotedCandidateId === 'candidate-a' ? candidateA : candidateB;
+    const candidate = promotedCandidateId === 'challenger'
+      ? challenger
+      : promotedCandidateId === 'candidate-a' ? candidateA : candidateB;
+    if (!candidate) throw new Error(`Cannot promote missing candidate "${promotedCandidateId}"`);
     await copyDir(candidate.skillPath, paths.championSkillDir);
     await copyDir(candidate.skillPath, runPaths.promotedSkillDir);
     const skillHash = await hashDirectory(paths.championSkillDir);
@@ -2140,20 +2303,19 @@ async function applyDecision({ paths, runPaths, state, runId, runNumber, candida
   }, budgetEstimate));
 }
 
-function renderReport({ runId, recommendation, candidateDuel, championGate }) {
+function renderReport({ runId, recommendation, candidateDuel = null, challenge = null, experimentPlan = null }) {
   return `# Stub Run Report
 
 Run: ${runId}
 Decision: ${recommendation.decision}
 Confidence: ${recommendation.confidence}
 
-## Candidate Duel
+## Competition
 
-Winner: ${candidateDuel.winner}
+Mode: ${experimentPlan?.competitionMode || (candidateDuel ? 'cold_start_duel' : 'champion_challenge')}
 
-## Champion Gate
-
-Winner: ${championGate.winner}
+${candidateDuel ? `Cold-start duel winner: ${candidateDuel.winner}` : ''}
+${challenge ? `Challenge winner: ${challenge.winner}` : ''}
 
 ## Reasoning
 
@@ -2161,24 +2323,21 @@ ${recommendation.reasoning}
 `;
 }
 
-function renderMockReport({ runId, recommendation, candidateDuel, championGate = null }) {
+function renderMockReport({ runId, recommendation, candidateDuel = null, challenge = null, experimentPlan = null }) {
+  const activeChallenge = challenge;
+  const coldStart = experimentPlan?.competitionMode === 'cold_start_duel' || Boolean(candidateDuel);
   return `# Mock-Agent Run Report
 
 Run: ${runId}
 Decision: ${recommendation.decision}
 Confidence: ${recommendation.confidence}
 
-## Headless Candidate Duel
+## Competition
 
-Evaluator run: ${candidateDuel.runId}
-Winner: ${candidateDuel.stats.winner}
-Score delta: ${candidateDuel.stats.scoreDelta}
+Mode: ${experimentPlan?.competitionMode || (coldStart ? 'cold_start_duel' : 'champion_challenge')}
 
-## Champion Gate
-
-${championGate ? `Evaluator run: ${championGate.runId}
-Winner: ${championGate.stats.winner}
-Score delta: ${championGate.stats.scoreDelta}` : 'Skipped because no current champion existed at run start.'}
+${candidateDuel ? `Cold-start duel: ${candidateDuel.runId}, winner=${candidateDuel.stats.winner}, scoreDelta=${candidateDuel.stats.scoreDelta}` : ''}
+${activeChallenge ? `Champion challenge: ${activeChallenge.runId}, winner=${activeChallenge.stats.winner}, scoreDelta=${activeChallenge.stats.scoreDelta}` : ''}
 
 ## Reasoning
 
@@ -2186,7 +2345,13 @@ ${recommendation.reasoning}
 `;
 }
 
-function renderReviewBlockedReport({ runId, recommendation, reviewA, reviewB }) {
+function renderReviewBlockedReport({ runId, recommendation, reviewA = null, reviewB = null, reviewChallenger = null, coldStart = true }) {
+  const reviews = coldStart
+    ? [
+      ['candidate-a', reviewA],
+      ['candidate-b', reviewB],
+    ]
+    : [['challenger', reviewChallenger]];
   return `# Review-Blocked Run Report
 
 Run: ${runId}
@@ -2195,22 +2360,15 @@ Confidence: ${recommendation.confidence}
 
 ## Candidate Reviews
 
-candidate-a approved: ${reviewA.approveForEval}
-candidate-b approved: ${reviewB.approveForEval}
+${reviews.map(([id, review]) => `${id} approved: ${review?.approveForEval}`).join('\n')}
 
 ## Blocking Issues
 
-${[
-    ...reviewA.blockingIssues.map(issue => `- candidate-a / ${issue.surface}: ${issue.message}`),
-    ...reviewB.blockingIssues.map(issue => `- candidate-b / ${issue.surface}: ${issue.message}`),
-  ].join('\n') || 'None'}
+${reviews.flatMap(([id, review]) => (review?.blockingIssues || []).map(issue => `- ${id} / ${issue.surface}: ${issue.message}`)).join('\n') || 'None'}
 
 ## Recommended Edits
 
-${[
-    ...reviewA.recommendedEdits.map(issue => `- candidate-a / ${issue.surface}: ${issue.message}`),
-    ...reviewB.recommendedEdits.map(issue => `- candidate-b / ${issue.surface}: ${issue.message}`),
-  ].join('\n') || 'None'}
+${reviews.flatMap(([id, review]) => (review?.recommendedEdits || []).map(issue => `- ${id} / ${issue.surface}: ${issue.message}`)).join('\n') || 'None'}
 
 ## Reasoning
 
@@ -2218,25 +2376,27 @@ ${recommendation.reasoning}
 `;
 }
 
-function createReviewBlockedReasoning({ reviewA, reviewB }) {
-  const blocked = [
-    reviewA.approveForEval ? null : `candidate-a failed preflight with ${reviewA.blockingIssues.length} blocking issue(s)`,
-    reviewB.approveForEval ? null : `candidate-b failed preflight with ${reviewB.blockingIssues.length} blocking issue(s)`,
+function createReviewBlockedReasoning({ reviewA = null, reviewB = null, reviewChallenger = null, coldStart = true }) {
+  const blocked = coldStart ? [
+    reviewA?.approveForEval ? null : `candidate-a failed preflight with ${reviewA?.blockingIssues?.length || 0} blocking issue(s)`,
+    reviewB?.approveForEval ? null : `candidate-b failed preflight with ${reviewB?.blockingIssues?.length || 0} blocking issue(s)`,
+  ].filter(Boolean) : [
+    reviewChallenger?.approveForEval ? null : `challenger failed preflight with ${reviewChallenger?.blockingIssues?.length || 0} blocking issue(s)`,
   ].filter(Boolean);
   return `${blocked.join('; ')}. Evaluation was skipped to avoid spending judge calls on invalid or unsafe candidates.`;
 }
 
-function createMockRecommendationReasoning({ promotedCandidateId, duelWinnerCandidateId, hasChampion, championGate }) {
+function createMockRecommendationReasoning({ promotedCandidateId, duelWinnerCandidateId, hasChampion, challenge = null }) {
   if (!duelWinnerCandidateId) {
-    return 'Mock headless candidate duel tied; request a new experiment.';
+    return hasChampion ? 'Mock headless challenger did not beat the current champion.' : 'Mock headless candidate duel tied; request a new experiment.';
   }
   if (!hasChampion) {
     return `${duelWinnerCandidateId} won the mock headless candidate duel and becomes the initial champion.`;
   }
   if (promotedCandidateId) {
-    return `${promotedCandidateId} won the mock champion gate against the current champion.`;
+    return `${promotedCandidateId} won the mock champion challenge against the current champion.`;
   }
-  return `Current champion beat ${duelWinnerCandidateId} in the mock champion gate.`;
+  return `Current champion beat ${duelWinnerCandidateId} in the mock champion challenge.`;
 }
 
 function getStopReason({ history, stopRules = {} }) {

@@ -27,6 +27,10 @@ export async function appendHistory({ paths, history, state, runRecord, recommen
     artifacts,
   });
   const doNotRepeat = updateDoNotRepeat(history.doNotRepeat || [], parameterLog, failedStrategyLog);
+  const decisiveEval = artifacts.challenge || artifacts.candidateDuel;
+  const promotionScoreDelta = recommendation.decision === 'promote' && Number.isFinite(scoreDelta)
+    ? Math.abs(scoreDelta)
+    : null;
 
   const nextHistory = {
     ...history,
@@ -37,14 +41,16 @@ export async function appendHistory({ paths, history, state, runRecord, recommen
         runId: runRecord.runId,
         decision: recommendation.decision,
         winner: recommendation.recommendedChampionCandidateId || 'current',
-        scoreDelta,
+        scoreDelta: promotionScoreDelta,
+        evalScoreDelta: scoreDelta,
+        evalWinner: decisiveEval?.stats?.winner || null,
         parameterTested: tested,
         hypothesisHeld: recommendation.decision === 'promote' ? true : null,
         summary: recommendation.reasoning,
         confidence: recommendation.confidence,
         reviewBlocked: Boolean(runRecord.reviewBlocked),
         evaluatorRunId: runRecord.evaluatorRunId || null,
-        championGateRunId: runRecord.championGateRunId || null,
+        challengeRunId: runRecord.challengeRunId || null,
       },
     ],
     parameterLog,
@@ -79,25 +85,28 @@ export async function appendHistory({ paths, history, state, runRecord, recommen
 }
 
 async function collectHistoryArtifacts(runPaths) {
-  const [candidateDuel, championGate, promptBankUpdate, reviewA, reviewB] = await Promise.all([
+  const [candidateDuel, challenge, promptBankUpdate, reviewA, reviewB, reviewChallenger] = await Promise.all([
     readJson(runPaths.candidateDuelJson, null),
-    readJson(runPaths.championGateJson, null),
+    readJson(runPaths.challengeJson, null),
     readJson(runPaths.promptBankUpdateJson, null),
     readJson(path.join(runPaths.candidateADir, 'review.json'), null),
     readJson(path.join(runPaths.candidateBDir, 'review.json'), null),
+    readJson(path.join(runPaths.challengerDir, 'review.json'), null),
   ]);
 
   return {
     candidateDuel,
-    championGate,
+    challenge,
     promptBankUpdate,
     reviews: {
       candidateA: reviewA,
       candidateB: reviewB,
+      challenger: reviewChallenger,
     },
     creatorFailures: [
       ...(await collectCreatorFailures(runPaths.candidateADir, 'candidate-a')),
       ...(await collectCreatorFailures(runPaths.candidateBDir, 'candidate-b')),
+      ...(await collectCreatorFailures(runPaths.challengerDir, 'challenger')),
     ],
   };
 }
@@ -169,7 +178,7 @@ function updateParameterLog(existing, tested, recommendation, { runRecord, param
 }
 
 function createParameterEvidence({ parameterId, parameter, runRecord, recommendation, scoreDelta, artifacts }) {
-  const decisiveEval = artifacts.championGate || artifacts.candidateDuel;
+  const decisiveEval = artifacts.challenge || artifacts.candidateDuel;
   const reviewBlocked = Boolean(runRecord.reviewBlocked);
   const weakSignals = normalizeList(recommendation.signalAssessment?.weakSignals);
   const likelyNoise = normalizeList(recommendation.signalAssessment?.likelyNoise);
@@ -186,7 +195,7 @@ function createParameterEvidence({ parameterId, parameter, runRecord, recommenda
     scoreDelta,
     evalWinner: decisiveEval?.stats?.winner || null,
     candidateDuelWinner: artifacts.candidateDuel?.stats?.winner || null,
-    championGateWinner: artifacts.championGate?.stats?.winner || null,
+    challengeWinner: artifacts.challenge?.stats?.winner || null,
     reviewBlocked,
     hypothesisHeld: recommendation.decision === 'promote' ? true : recommendation.decision === 'request_new_experiment' ? null : false,
     summary,
@@ -221,7 +230,7 @@ function updateFailedStrategyLog(existing, { runRecord, recommendation, artifact
 
   for (const [candidateKey, review] of Object.entries(artifacts.reviews || {})) {
     if (!review || review.approveForEval) continue;
-    const candidateId = candidateKey === 'candidateA' ? 'candidate-a' : 'candidate-b';
+    const candidateId = candidateKey === 'candidateA' ? 'candidate-a' : candidateKey === 'candidateB' ? 'candidate-b' : 'challenger';
     for (const issue of review.blockingIssues || []) {
       next.push({
         runId: runRecord.runId,
@@ -331,6 +340,7 @@ function formatValue(value) {
 
 function renderDetailedRun({ paths, runRecord, recommendation, parameterization, artifacts, parameterLog, scoreDelta }) {
   const tested = Array.isArray(runRecord.experimentPlan?.focusParameterIds) ? runRecord.experimentPlan.focusParameterIds : [];
+  const coldStart = runRecord.experimentPlan?.competitionMode === 'cold_start_duel';
   const testedLog = tested
     .map(id => parameterLog.find(item => item.parameterId === id))
     .filter(Boolean);
@@ -346,8 +356,9 @@ Score delta: ${scoreDelta ?? 'n/a'}
 Question: ${runRecord.experimentPlan?.experimentQuestion || 'not recorded'}
 Hypothesis: ${runRecord.experimentPlan?.hypothesis || 'not recorded'}
 
-Candidate A: ${runRecord.experimentPlan?.arms?.candidateA?.strategyName || 'not recorded'}
-Candidate B: ${runRecord.experimentPlan?.arms?.candidateB?.strategyName || 'not recorded'}
+${coldStart
+    ? `Candidate A: ${runRecord.experimentPlan?.arms?.candidateA?.strategyName || 'not recorded'}\nCandidate B: ${runRecord.experimentPlan?.arms?.candidateB?.strategyName || 'not recorded'}`
+    : `Champion: current best at run start\nChallenger: ${runRecord.experimentPlan?.arms?.challenger?.strategyName || 'not recorded'}`}
 
 ## Parameters Tested
 
@@ -361,8 +372,9 @@ ${parameterization.summary}
 
 ## Evaluation Summary
 
-Candidate duel: ${formatEvalStats(artifacts.candidateDuel)}
-Champion gate: ${formatEvalStats(artifacts.championGate)}
+${coldStart
+    ? `Candidate duel: ${formatEvalStats(artifacts.candidateDuel)}`
+    : `Champion challenge: ${formatEvalStats(artifacts.challenge)}`}
 
 ## Prompt Bank Changes
 
@@ -370,8 +382,9 @@ ${formatPromptBankUpdate(artifacts.promptBankUpdate)}
 
 ## Candidate Reviews
 
-${formatReviewSummary('candidate-a', artifacts.reviews.candidateA)}
-${formatReviewSummary('candidate-b', artifacts.reviews.candidateB)}
+${coldStart
+    ? `${formatReviewSummary('candidate-a', artifacts.reviews.candidateA)}\n${formatReviewSummary('candidate-b', artifacts.reviews.candidateB)}`
+    : formatReviewSummary('challenger', artifacts.reviews.challenger)}
 
 ## Failure And Recovery Notes
 
@@ -391,10 +404,11 @@ ${formatList(summarizeNextExperimentNotes(recommendation))}
 - Timeline: runs/${runRecord.runId}/timeline.jsonl
 - Experiment plan: runs/${runRecord.runId}/deconstruction/experiment-plan.json
 - Parameterization: runs/${runRecord.runId}/deconstruction/parameterization.json
-- Candidate duel: runs/${runRecord.runId}/eval/candidate-duel.json
-- Champion gate: runs/${runRecord.runId}/eval/champion-gate.json
+${coldStart
+    ? `- Candidate duel: runs/${runRecord.runId}/eval/candidate-duel.json`
+    : `- Challenge: runs/${runRecord.runId}/eval/challenge.json\n- Champion at run start: runs/${runRecord.runId}/champion\n- Challenger: runs/${runRecord.runId}/challenger`}
 - Recommendation: runs/${runRecord.runId}/analysis/recommendation.json
-- Champion skill: ${statefulChampionPath(paths)}
+- Current champion pointer: ${statefulChampionPath(paths)}
 `;
 }
 
@@ -435,7 +449,7 @@ function formatFailureNotes(artifacts, runRecord) {
   }
   for (const [candidateKey, review] of Object.entries(artifacts.reviews || {})) {
     if (!review || review.approveForEval) continue;
-    const candidateId = candidateKey === 'candidateA' ? 'candidate-a' : 'candidate-b';
+    const candidateId = candidateKey === 'candidateA' ? 'candidate-a' : candidateKey === 'candidateB' ? 'candidate-b' : 'challenger';
     for (const issue of review.blockingIssues || []) {
       notes.push(`${candidateId} review blocked eval: ${issue.surface}: ${issue.message}`);
     }

@@ -11,7 +11,7 @@ test('prompt diagnostics make useful duel prompts provisional and keep stable ti
   assert.ok(diagnostics.retirePromptIds.includes('explore-no-parameter'));
 });
 
-test('prompt bank update requires champion-gate evidence before stable promotion', () => {
+test('prompt bank update requires challenge evidence before stable promotion', () => {
   const bank = {
     stablePromptCount: 6,
     stablePromptIds: ['s1', 's2', 's3', 's4', 's5', 's6'],
@@ -45,7 +45,7 @@ test('prompt bank update requires champion-gate evidence before stable promotion
   assert.equal(next.promptEvidence['explore-strong'].status, 'provisional');
 });
 
-test('champion gate promotes provisional prompts to stable', () => {
+test('challenge promotes provisional prompts to stable', () => {
   const bank = {
     stablePromptCount: 6,
     stablePromptIds: ['s1', 's2', 's3', 's4', 's5', 's6'],
@@ -60,7 +60,7 @@ test('champion gate promotes provisional prompts to stable', () => {
   const { bank: next, update } = applyPromptBankUpdates({
     bank,
     candidateDuel: fakeEvalRun(),
-    championGate: fakeChampionGate(),
+    challenge: fakeChampionGate(),
     recommendation: { decision: 'promote', promptBankRecommendations: {} },
     runId: 'run-003',
   });
@@ -69,7 +69,7 @@ test('champion gate promotes provisional prompts to stable', () => {
   assert.ok(!next.provisionalPromptIds.includes('explore-strong'));
   assert.ok(update.promotedPromptIds.includes('explore-strong'));
   assert.equal(next.promptEvidence['explore-strong'].status, 'stable');
-  assert.equal(next.promptEvidence['explore-strong'].stableReason, 'champion_gate_confirmed');
+  assert.equal(next.promptEvidence['explore-strong'].stableReason, 'challenge_confirmed');
 });
 
 function fakeEvalRun() {
@@ -95,7 +95,7 @@ function fakeChampionGate() {
       prompt('explore-strong', 'provisional', ['p02']),
     ],
     evaluations: [
-      evaluation('explore-strong', 'provisional', ['p02'], 'skillA', 5, 2, 'Strong gate signal.'),
+      evaluation('explore-strong', 'provisional', ['p02'], 'skillA', 5, 2, 'Strong challenge signal.'),
     ],
   };
 }

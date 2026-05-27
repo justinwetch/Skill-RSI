@@ -128,7 +128,7 @@ test('run loop persists configured eval retry and promotion reliability policy',
   assert.equal(runRecord.promotionPolicy.minEvalCompletionRate, 0.9);
 });
 
-test('mock mode later loops run a champion gate', async () => {
+test('mock mode later loops run a champion challenge', async () => {
   const cwd = await fs.mkdtemp(path.join(os.tmpdir(), 'skill-rsi-mock-later-'));
 
   const result = await runProject({
@@ -142,18 +142,21 @@ test('mock mode later loops run a champion gate', async () => {
   assert.equal(result.state.runCount, 3);
   assert.equal(result.history.trajectory.length, 3);
 
-  const gatedRun = result.completedRuns.find(run => run.championGateRunId);
-  assert.ok(gatedRun);
+  const challengeRun = result.completedRuns.find(run => run.challengeRunId);
+  assert.ok(challengeRun);
+  assert.equal(challengeRun.competitionMode, 'champion_challenge');
+  assert.equal(challengeRun.candidates.length, 0);
+  assert.ok(challengeRun.challenger);
 
-  const gate = JSON.parse(await fs.readFile(path.join(
+  const challenge = JSON.parse(await fs.readFile(path.join(
     result.paths.runsDir,
-    gatedRun.runId,
+    challengeRun.runId,
     'eval',
-    'champion-gate.json',
+    'challenge.json',
   ), 'utf8'));
 
-  assert.equal(gate.mode, 'mock');
-  assert.equal(gate.stats.totalEvals, 10);
+  assert.equal(challenge.mode, 'mock');
+  assert.equal(challenge.stats.totalEvals, 10);
 });
 
 test('history tracks multi-run parameter provenance and detailed artifacts', async () => {
@@ -209,7 +212,7 @@ test('runs write and finalize a manager artifact', async () => {
   const timeline = await fs.readFile(path.join(result.paths.runsDir, runId, 'timeline.jsonl'), 'utf8');
 
   assert.equal(manager.runId, runId);
-  assert.equal(manager.strategy.experimentFamily, 'standard_focused_ab');
+  assert.equal(manager.strategy.experimentFamily, 'cold_start_duel');
   assert.equal(manager.finalAction.decision, result.completedRuns[0].recommendation.decision);
   assert.ok(Array.isArray(manager.experimentIntent.plannerInstructions));
   assert.match(timeline, /manager_plan\.written/);
@@ -294,6 +297,20 @@ test('manager detects local maxima and switches to high-divergence reset plannin
     loops: 1,
     mode: 'mock',
   });
+  const state = JSON.parse(await fs.readFile(first.paths.stateJson, 'utf8'));
+  if (!state.currentChampion) {
+    await fs.mkdir(first.paths.championSkillDir, { recursive: true });
+    await fs.writeFile(path.join(first.paths.championSkillDir, 'SKILL.md'), '# Seed champion\n\nUsed to test local-maxima planning.\n', 'utf8');
+    await fs.writeFile(first.paths.stateJson, `${JSON.stringify({
+      ...state,
+      currentChampion: {
+        runId: 'seed-champion',
+        candidateId: 'seed',
+        skillHash: 'seedhash',
+        skillPath: first.paths.championSkillDir,
+      },
+    }, null, 2)}\n`, 'utf8');
+  }
   const history = JSON.parse(await fs.readFile(first.paths.historyIndex, 'utf8'));
   await fs.writeFile(first.paths.historyIndex, `${JSON.stringify({
     ...history,
@@ -328,9 +345,9 @@ test('manager detects local maxima and switches to high-divergence reset plannin
 
   assert.equal(manager.localMaxima.detected, true);
   assert.equal(manager.strategy.experimentFamily, 'high_divergence_reset');
+  assert.equal(plan.competitionMode, 'high_divergence_reset');
   assert.match(plan.experimentQuestion, /High-divergence reset/);
-  assert.match(plan.arms.candidateA.strategyName, /^high-divergence-/);
-  assert.match(plan.arms.candidateB.strategyName, /^reset-control-/);
+  assert.match(plan.arms.challenger.strategyName, /^high-divergence-/);
 });
 
 test('manager respects configured hook focus fields', async () => {
@@ -580,6 +597,7 @@ test('agentic mode runs real agent contracts with an injected model client', asy
 
   assert.equal(result.completedRuns.length, 1);
   assert.equal(result.completedRuns[0].mode, 'agentic');
+  assert.equal(result.completedRuns[0].competitionMode, 'cold_start_duel');
   assert.ok(calls.length >= 5);
 
   const runId = result.completedRuns[0].runId;
@@ -805,13 +823,12 @@ Follow the existing workflow.
         assert.match(prompt, /Baseline Skill/);
         return JSON.stringify(fakeRichParameterization());
       }
-      if (prompt.includes('Experiment Planner')) return JSON.stringify(fakeExperimentPlan());
-      if (prompt.includes('Assigned experiment arm: candidateB')) return JSON.stringify(fakeCreator('candidate-b', 'candidateB', 'Embedded boundary policy'));
-      if (prompt.includes('Assigned experiment arm: candidateA')) return JSON.stringify(fakeCreator('candidate-a', 'candidateA', 'Description-only tightening'));
+      if (prompt.includes('Experiment Planner')) return JSON.stringify(fakeChallengeExperimentPlan());
+      if (prompt.includes('Assigned experiment arm: challenger')) return JSON.stringify(fakeCreator('challenger', 'challenger', 'Description-only tightening'));
       if (prompt.includes('Interpret this Skill RSI run')) return JSON.stringify({
         runId: 'analyst',
         decision: 'promote',
-        recommendedChampionCandidateId: 'candidate-a',
+        recommendedChampionCandidateId: 'challenger',
         confidence: 'medium',
         reasoning: 'Candidate A improved the uploaded baseline.',
         observations: ['Baseline was deconstructed directly.'],
@@ -825,6 +842,9 @@ Follow the existing workflow.
   const runId = result.completedRuns[0].runId;
   const timeline = await fs.readFile(path.join(result.paths.runsDir, runId, 'timeline.jsonl'), 'utf8');
   assert.match(timeline, /ontology\.skipped_for_baseline/);
+  assert.equal(result.completedRuns[0].competitionMode, 'champion_challenge');
+  assert.ok(result.completedRuns[0].challenger);
+  assert.equal(result.completedRuns[0].candidates.length, 0);
 });
 
 test('agentic mode completes cleanly when candidate review blocks evaluation', async () => {
@@ -1110,6 +1130,27 @@ function fakeExperimentPlan() {
       candidateB: {
         strategyName: 'Embedded boundary policy',
         mutationInstructions: ['add when-to-use rules'],
+      },
+    },
+    evalFocus: ['workflow clarity'],
+    successMetrics: ['mock score'],
+    promotionRisks: ['overfitting'],
+    reasonNotTestingOtherHighPriorityParameters: ['keep focused'],
+  };
+}
+
+function fakeChallengeExperimentPlan() {
+  return {
+    runId: 'planner',
+    competitionMode: 'champion_challenge',
+    experimentQuestion: 'Does tightening activation boundaries beat the champion?',
+    focusParameterIds: ['p01'],
+    controlledParameterIds: ['p02'],
+    hypothesis: 'A localized boundary change improves behavior without regressing the baseline.',
+    arms: {
+      challenger: {
+        strategyName: 'Description-only tightening',
+        mutationInstructions: ['tighten the description while preserving the champion workflow'],
       },
     },
     evalFocus: ['workflow clarity'],

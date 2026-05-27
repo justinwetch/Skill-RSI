@@ -438,7 +438,7 @@ export function designEvalBatch({
       bucket: 'provisional',
       status: 'provisional',
       reusedFromBank: true,
-      verificationTarget: 'champion_gate',
+      verificationTarget: 'challenge',
     }));
 
   const freshExplorationCount = Math.max(0, explorationPromptCount - reusedProvisional.length);

@@ -104,7 +104,7 @@ test('evaluation designer reuses stable prompts and appends exploration history'
   assert.ok(second.bank.criteriaVersions.length >= 2);
 });
 
-test('evaluation designer reuses provisional prompts for champion-gate confirmation', () => {
+test('evaluation designer reuses provisional prompts for challenge confirmation', () => {
   const previousBank = {
     outputType: 'text',
     taskContractId: 'text_standalone',

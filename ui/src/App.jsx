@@ -56,6 +56,7 @@ const STAGE_KEYS = STAGES.map(s => s.key);
 const EVENT_STAGE = {
   'run.started': 'deconstruct',
   'run.resumed': 'deconstruct',
+  'champion.snapshot_written': 'deconstruct',
   'research_packet.written': 'deconstruct', 'research_packet.reused': 'deconstruct', 'research_packet.fallback_written': 'deconstruct',
   'ontology.written': 'deconstruct', 'ontology.reused': 'deconstruct', 'ontology.refreshed': 'deconstruct', 'ontology.skipped_for_baseline': 'deconstruct',
   'ontology_quality.revision_requested': 'deconstruct', 'ontology_quality.completed': 'deconstruct',
@@ -63,11 +64,11 @@ const EVENT_STAGE = {
   'parameterization.written': 'deconstruct', 'parameterization.seeded': 'deconstruct',
   'manager_plan.written': 'plan',
   'experiment_plan.written': 'plan',
-  'candidates.written': 'generate',
-  'candidate_reviews.completed': 'review', 'candidate_revision.started': 'review', 'candidate_revision.completed': 'review',
+  'candidates.written': 'generate', 'challenger.written': 'generate',
+  'candidate_reviews.completed': 'review', 'challenger_review.completed': 'review', 'candidate_revision.started': 'review', 'candidate_revision.completed': 'review',
   'criteria.generated': 'evaluate',
   'eval_prompts.generated': 'evaluate', 'eval_config.written': 'evaluate', 'candidate_duel.completed': 'evaluate',
-  'champion_gate.completed': 'evaluate', 'champion_gate.skipped': 'evaluate',
+  'challenge.completed': 'evaluate',
   'prompt_bank.updated': 'decide', 'analysis.written': 'decide', 'state.updated': 'decide', 'manager_plan.finalized': 'decide', 'run.completed': 'decide',
 };
 
@@ -75,6 +76,7 @@ const EVENT_STAGE = {
 const EVENT_LABEL = {
   'run.started': 'Loop started',
   'run.resumed': 'Resumed an interrupted loop',
+  'champion.snapshot_written': 'Saved the champion baseline for this loop',
   'research_packet.written': 'Built the research packet',
   'research_packet.reused': 'Reused the current research packet',
   'research_packet.fallback_written': 'Created an inference-labeled research packet',
@@ -90,16 +92,17 @@ const EVENT_LABEL = {
   'parameterization.seeded': 'Mapped the initial design space from the ontology',
   'manager_plan.written': 'Set the experiment strategy',
   'experiment_plan.written': 'Chose what to test this round',
-  'candidates.written': 'Wrote two competing versions',
-  'candidate_reviews.completed': 'Adversarially reviewed both versions',
+  'candidates.written': 'Wrote the two cold-start candidates',
+  'challenger.written': 'Wrote the challenger',
+  'candidate_reviews.completed': 'Adversarially reviewed both cold-start candidates',
+  'challenger_review.completed': 'Adversarially reviewed the challenger',
   'candidate_revision.started': 'Rewriting a flagged version',
   'candidate_revision.completed': 'Finished a rewrite',
   'criteria.generated': 'Generated the scoring criteria from the skills',
   'eval_prompts.generated': 'Wrote realistic test prompts',
   'eval_config.written': 'Prepared the evaluation',
-  'candidate_duel.completed': 'Judged the two versions head-to-head',
-  'champion_gate.completed': 'Ran the champion check — winner vs. the reigning champion',
-  'champion_gate.skipped': 'Champion check skipped — no reigning champion to beat yet',
+  'candidate_duel.completed': 'Judged the cold-start candidates head-to-head',
+  'challenge.completed': 'Judged the challenger against the champion',
   'prompt_bank.updated': 'Updated the prompt bank',
   'analysis.written': 'Analyzed the results',
   'state.updated': 'Recorded the decision',
@@ -313,19 +316,24 @@ export default function App() {
   }
 
   async function viewSkill(source) {
-    setSkillFrom(screen === 'evidence' ? 'evidence' : 'home');
+    const fromRunContext = screen === 'evidence' || skillFrom === 'evidence';
+    setSkillFrom(fromRunContext ? 'evidence' : 'home');
     setScreen('skill'); setSkillSource(source); setSkillFile(0);
     setSkillData(null); setCompareData(null); setSkillLoading(true);
     try {
       const runId = inspectRunId || summary?.state?.lastRunId || null;
       if (source === 'compare') {
+        const mode = (inspectRunId && inspectComparison ? inspectComparison : comparison)?.competitionMode;
+        const leftSource = mode === 'cold_start_duel' ? 'candidate-a' : 'champion';
+        const rightSource = mode === 'cold_start_duel' ? 'candidate-b' : 'challenger';
         const [a, b] = await Promise.all([
-          fetchSkill(selectedId, 'candidate-a', runId),
-          fetchSkill(selectedId, 'candidate-b', runId),
+          fetchSkill(selectedId, leftSource, runId),
+          fetchSkill(selectedId, rightSource, runId),
         ]);
-        setCompareData({ a, b });
+        setCompareData({ a, b, leftSource, rightSource });
       } else {
-        setSkillData(await fetchSkill(selectedId, source, source === 'champion' ? null : runId));
+        const skillRunId = source === 'champion' && !fromRunContext ? null : runId;
+        setSkillData(await fetchSkill(selectedId, source, skillRunId));
       }
     } catch (err) {
       setSkillData({ available: false, error: err.message });
@@ -980,10 +988,11 @@ function Project(props) {
         <SkillViewer source={skillSource} data={skillData} compareData={compareData} loading={skillLoading}
           activeFile={skillFile} setActiveFile={setSkillFile} onViewSkill={onViewSkill}
           strategies={{
-            a: skillCmp?.sides?.candidateA?.strategy,
-            b: skillCmp?.sides?.candidateB?.strategy,
-            aParams: skillCmp?.sides?.candidateA?.changedParameterIds,
-            bParams: skillCmp?.sides?.candidateB?.changedParameterIds,
+            competitionMode: skillCmp?.competitionMode || 'cold_start_duel',
+            a: skillCmp?.competitionMode === 'cold_start_duel' ? skillCmp?.sides?.candidateA?.strategy : skillCmp?.sides?.champion?.strategy,
+            b: skillCmp?.competitionMode === 'cold_start_duel' ? skillCmp?.sides?.candidateB?.strategy : skillCmp?.sides?.challenger?.strategy,
+            aParams: skillCmp?.competitionMode === 'cold_start_duel' ? skillCmp?.sides?.candidateA?.changedParameterIds : skillCmp?.sides?.champion?.changedParameterIds,
+            bParams: skillCmp?.competitionMode === 'cold_start_duel' ? skillCmp?.sides?.candidateB?.changedParameterIds : skillCmp?.sides?.challenger?.changedParameterIds,
           }} />
       )}
 
@@ -1215,6 +1224,7 @@ function getLoopIntent({ progress, stageIdx, stage0First, premise }) {
   const details = progress?.stageDetails || {};
   const planQuestion = findDetailValue(details.plan, 'Question:');
   const planArms = findDetailValue(details.plan, 'Arms:');
+  const planChallenge = findDetailValue(details.plan, 'Challenge:');
   const decision = findDetailValue(details.decide, 'Decision:');
   const tryNext = findDetailValue(details.decide, 'Try next:');
   const currentStage = STAGE_KEYS[Math.min(stageIdx, STAGE_KEYS.length - 1)] || 'deconstruct';
@@ -1223,17 +1233,25 @@ function getLoopIntent({ progress, stageIdx, stage0First, premise }) {
   if (currentStage === 'evaluate') {
     return planQuestion
       ? `Evaluating: ${planQuestion}`
-      : 'Evaluating candidate A vs. B against the prompt bank';
+      : progress?.competitionMode === 'cold_start_duel'
+        ? 'Evaluating candidate A vs. B against the prompt bank'
+        : 'Evaluating the challenger against the champion';
   }
   if (currentStage === 'review') {
     return planQuestion
-      ? `Reviewing candidates for: ${planQuestion}`
-      : 'Reviewing whether both candidates are valid enough to evaluate';
+      ? `Reviewing: ${planQuestion}`
+      : progress?.competitionMode === 'cold_start_duel'
+        ? 'Reviewing whether both candidates are valid enough to evaluate'
+        : 'Reviewing whether the challenger is valid enough to evaluate';
   }
   if (currentStage === 'generate') {
-    return planArms
-      ? `Generating variants: ${planArms}`
-      : 'Generating two focused candidate skill variants';
+    return planChallenge
+      ? `Generating challenger: ${planChallenge}`
+      : planArms
+        ? `Generating variants: ${planArms}`
+        : progress?.competitionMode === 'cold_start_duel'
+          ? 'Generating two first-pass candidate skills'
+          : 'Generating one focused challenger';
   }
   if (planQuestion) return `Testing: ${planQuestion}`;
   if (premise?.notes?.length) return `Premise: ${premise.notes[0]}`;
@@ -1266,6 +1284,7 @@ function Stage({ state, label, Icon, line, lineFilled }) {
 function Verdict({ summary, runDetail, comparison, busy, onStart, onEvidence }) {
   const rec = runDetail.recommendation;
   const duel = comparison?.evalSummary?.candidateDuel;
+  const challenge = comparison?.evalSummary?.challenge;
   const promoted = rec.decision === 'promote';
   const iteration = summary.state.runCount;
   const title = {
@@ -1274,8 +1293,9 @@ function Verdict({ summary, runDetail, comparison, busy, onStart, onEvidence }) 
     edit_current: `Iteration ${iteration} refined the champion`,
     request_new_experiment: `Iteration ${iteration} was inconclusive`,
   }[rec.decision] || `Iteration ${iteration} complete`;
-  const winLine = duel
-    ? `Winner won ${Math.max(duel.wins.skillA, duel.wins.skillB)} of ${duel.wins.skillA + duel.wins.skillB + duel.wins.ties} prompts · ${rec.confidence} confidence.`
+  const headToHead = challenge || duel;
+  const winLine = headToHead
+    ? `Winner won ${Math.max(headToHead.wins.skillA, headToHead.wins.skillB)} of ${headToHead.wins.skillA + headToHead.wins.skillB + headToHead.wins.ties} prompts · ${rec.confidence} confidence.`
     : `${rec.confidence} confidence.`;
   const guidance = rec.nextRoundGuidance || runDetail.run?.recommendation?.nextRoundGuidance;
   const observations = rec.observations || runDetail.run?.recommendation?.observations || [];
@@ -1291,7 +1311,7 @@ function Verdict({ summary, runDetail, comparison, busy, onStart, onEvidence }) 
         <button className="btn primary" disabled={busy} onClick={() => onStart(1)}>
           {busy ? <Loader2 size={16} className="spin" /> : <RefreshCw size={16} />} Run another loop
         </button>
-        {runDetail?.evals?.candidateDuel && (
+        {(runDetail?.evals?.candidateDuel || runDetail?.evals?.challenge) && (
           <button className="btn ghost" onClick={onEvidence}><FileText size={16} /> See the evidence <ArrowRight size={15} /></button>
         )}
       </div>
@@ -1332,7 +1352,7 @@ function ChampionCard({ summary, runDetail, comparison, onViewSkill }) {
     );
   }
   const recId = runDetail?.recommendation?.recommendedChampionCandidateId;
-  const matchKey = recId === 'candidate-a' ? 'candidateA' : recId === 'candidate-b' ? 'candidateB' : null;
+  const matchKey = recId === 'challenger' ? 'challenger' : recId === 'candidate-a' ? 'candidateA' : recId === 'candidate-b' ? 'candidateB' : null;
   const matchSide = matchKey ? comparison?.sides?.[matchKey] : null;
   const strategy = matchSide?.strategy;
   const params = matchSide?.changedParameterIds || [];
@@ -1492,12 +1512,16 @@ function SecondaryRow({ summary, runDetail }) {
 /* ---------------- evidence (SkillEval-style) ---------------- */
 
 function Evidence({ runDetail, comparison, openEval, setOpenEval, evTab, setEvTab, onViewSkill, iterLabel }) {
-  const duel = runDetail?.evals?.candidateDuel;
+  const mode = comparison?.competitionMode || runDetail?.experimentPlan?.competitionMode || 'cold_start_duel';
+  const duel = mode === 'cold_start_duel' ? runDetail?.evals?.candidateDuel : runDetail?.evals?.challenge;
   if (!duel) return <div className="empty">No evaluation was recorded for this run.</div>;
 
   const stats = duel.stats;
-  const aStrat = comparison?.sides?.candidateA?.strategy;
-  const bStrat = comparison?.sides?.candidateB?.strategy;
+  const labels = mode === 'cold_start_duel'
+    ? { a: 'Candidate A', b: 'Candidate B', aSource: 'candidate-a', bSource: 'candidate-b' }
+    : { a: 'Challenger', b: 'Champion', aSource: 'challenger', bSource: 'champion' };
+  const aStrat = mode === 'cold_start_duel' ? comparison?.sides?.candidateA?.strategy : comparison?.sides?.challenger?.strategy;
+  const bStrat = mode === 'cold_start_duel' ? comparison?.sides?.candidateB?.strategy : comparison?.sides?.champion?.strategy;
   const criteria = (duel.criteria || []).filter(c => !c.id.startsWith('parameter_'));
   const evals = duel.evaluations || [];
 
@@ -1507,15 +1531,15 @@ function Evidence({ runDetail, comparison, openEval, setOpenEval, evTab, setEvTa
       <div className="ev-cands">
         <div className="ev-cand">
           <div className="ev-cand-head">
-            <span className="ev-cand-name"><span className="dot" style={{ background: 'var(--color-skill-a)' }} /> Candidate A</span>
-            <button className="btn sm" onClick={() => onViewSkill('candidate-a')}><FileText size={13} /> View skill</button>
+            <span className="ev-cand-name"><span className="dot" style={{ background: 'var(--color-skill-a)' }} /> {labels.a}</span>
+            <button className="btn sm" onClick={() => onViewSkill(labels.aSource)}><FileText size={13} /> View skill</button>
           </div>
           {aStrat && <div className="ev-cand-strat">{aStrat}</div>}
         </div>
         <div className="ev-cand">
           <div className="ev-cand-head">
-            <span className="ev-cand-name"><span className="dot" style={{ background: 'var(--color-skill-b)' }} /> Candidate B</span>
-            <button className="btn sm" onClick={() => onViewSkill('candidate-b')}><FileText size={13} /> View skill</button>
+            <span className="ev-cand-name"><span className="dot" style={{ background: 'var(--color-skill-b)' }} /> {labels.b}</span>
+            <button className="btn sm" onClick={() => onViewSkill(labels.bSource)}><FileText size={13} /> View skill</button>
           </div>
           {bStrat && <div className="ev-cand-strat">{bStrat}</div>}
         </div>
@@ -1527,12 +1551,12 @@ function Evidence({ runDetail, comparison, openEval, setOpenEval, evTab, setEvTa
         <button className={`rtab ${evTab === 'prompts' ? 'active' : ''}`} onClick={() => setEvTab('prompts')}>Prompts</button>
       </div>
 
-      {evTab === 'summary' && <SummaryTab stats={stats} evals={evals} />}
-      {evTab === 'criteria' && <CriteriaTab criteria={criteria} evals={evals} />}
+      {evTab === 'summary' && <SummaryTab stats={stats} evals={evals} labels={labels} />}
+      {evTab === 'criteria' && <CriteriaTab criteria={criteria} evals={evals} labels={labels} />}
       {evTab === 'prompts' && (
         <div className="card" style={{ padding: '8px 16px' }}>
           {evals.map(ev => (
-            <PromptRow key={ev.id} ev={ev} criteria={criteria}
+            <PromptRow key={ev.id} ev={ev} criteria={criteria} labels={labels}
               open={openEval === ev.id}
               onToggle={() => setOpenEval(openEval === ev.id ? null : ev.id)} />
           ))}
@@ -1542,15 +1566,15 @@ function Evidence({ runDetail, comparison, openEval, setOpenEval, evTab, setEvTa
   );
 }
 
-function SummaryTab({ stats, evals }) {
+function SummaryTab({ stats, evals, labels = { a: 'Candidate A', b: 'Candidate B' } }) {
   return (
     <div className="card animate-slide-up">
       <div className="stat-row">
         <div className={`stat ${stats.skillAWins > stats.skillBWins ? 'a-win' : ''}`}>
-          <span className="num">{stats.skillAWins}</span><div className="lab">Candidate A wins</div>
+          <span className="num">{stats.skillAWins}</span><div className="lab">{labels.a} wins</div>
         </div>
         <div className={`stat ${stats.skillBWins > stats.skillAWins ? 'b-win' : ''}`}>
-          <span className="num">{stats.skillBWins}</span><div className="lab">Candidate B wins</div>
+          <span className="num">{stats.skillBWins}</span><div className="lab">{labels.b} wins</div>
         </div>
         <div className="stat"><span className="num">{stats.ties}</span><div className="lab">Ties</div></div>
       </div>
@@ -1578,7 +1602,7 @@ function SummaryTab({ stats, evals }) {
   );
 }
 
-function CriteriaTab({ criteria, evals }) {
+function CriteriaTab({ criteria, evals, labels = { a: 'A', b: 'B' } }) {
   const rows = criteria.map(c => {
     let aw = 0, bw = 0, t = 0, sa = 0, sb = 0, n = 0;
     for (const ev of evals) {
@@ -1595,8 +1619,8 @@ function CriteriaTab({ criteria, evals }) {
       <p className="card-label">Per-criterion summary</p>
       <table className="etable">
         <thead><tr>
-          <th>Criterion</th><th className="c">A wins</th><th className="c">B wins</th><th className="c">Ties</th>
-          <th className="r">Avg A</th><th className="r">Avg B</th><th className="c">Leader</th>
+          <th>Criterion</th><th className="c">{labels.a} wins</th><th className="c">{labels.b} wins</th><th className="c">Ties</th>
+          <th className="r">Avg {labels.a}</th><th className="r">Avg {labels.b}</th><th className="c">Leader</th>
         </tr></thead>
         <tbody>
           {rows.map(r => {
@@ -1619,7 +1643,7 @@ function CriteriaTab({ criteria, evals }) {
   );
 }
 
-function PromptRow({ ev, criteria, open, onToggle }) {
+function PromptRow({ ev, criteria, labels = { a: 'Candidate A', b: 'Candidate B' }, open, onToggle }) {
   const w = ev.judge?.winner;
   const winClass = w === 'skillA' ? 'a' : w === 'skillB' ? 'b' : '';
   const winLabel = w === 'skillA' ? 'A' : w === 'skillB' ? 'B' : 'tie';
@@ -1652,8 +1676,8 @@ function PromptRow({ ev, criteria, open, onToggle }) {
           )}
           {(out.a || out.b) && (
             <div className="outputs">
-              <div className="output-col a"><h5>Candidate A output</h5><pre className="output-pre">{out.a || '—'}</pre></div>
-              <div className="output-col b"><h5>Candidate B output</h5><pre className="output-pre">{out.b || '—'}</pre></div>
+              <div className="output-col a"><h5>{labels.a} output</h5><pre className="output-pre">{out.a || '—'}</pre></div>
+              <div className="output-col b"><h5>{labels.b} output</h5><pre className="output-pre">{out.b || '—'}</pre></div>
             </div>
           )}
         </div>
@@ -1667,11 +1691,15 @@ function PromptRow({ ev, criteria, open, onToggle }) {
 function SkillViewer({ source, data, compareData, loading, activeFile, setActiveFile, onViewSkill, strategies }) {
   const files = data?.files || [];
   const file = files[activeFile] || files[0] || null;
+  const mode = strategies?.competitionMode || 'cold_start_duel';
+  const tabs = mode === 'cold_start_duel'
+    ? [['champion', 'Champion'], ['candidate-a', 'Candidate A'], ['candidate-b', 'Candidate B'], ['compare', 'Compare A · B']]
+    : [['champion', 'Champion'], ['challenger', 'Challenger'], ['compare', 'Compare']];
   return (
     <div className="animate-slide-up">
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, flexWrap: 'wrap', marginBottom: 14 }}>
         <div className="seg">
-          {[['champion', 'Champion'], ['candidate-a', 'Candidate A'], ['candidate-b', 'Candidate B'], ['compare', 'Compare A · B']].map(([key, label]) => (
+          {tabs.map(([key, label]) => (
             <button key={key} className={source === key ? 'active' : ''} onClick={() => onViewSkill(key)}>{label}</button>
           ))}
         </div>
@@ -1716,11 +1744,15 @@ function SkillViewer({ source, data, compareData, loading, activeFile, setActive
 }
 
 function SkillCompare({ compareData, loading, strategies }) {
-  if (loading) return <div className="empty">Loading both candidates…</div>;
+  const mode = strategies?.competitionMode || 'cold_start_duel';
+  const labels = mode === 'cold_start_duel'
+    ? { a: 'Candidate A', b: 'Candidate B' }
+    : { a: 'Champion', b: 'Challenger' };
+  if (loading) return <div className="empty">Loading comparison…</div>;
   if (!compareData) return <div className="empty">Comparison isn’t available for this run.</div>;
   const { a, b } = compareData;
   if (!a?.available || !b?.available) {
-    return <div className="empty">Both candidate packages are needed to compare; one isn’t available for this run.</div>;
+    return <div className="empty">Both skill packages are needed to compare; one isn’t available for this run.</div>;
   }
   const aSkill = (a.files.find(f => f.path === 'SKILL.md') || a.files[0])?.text || '';
   const bSkill = (b.files.find(f => f.path === 'SKILL.md') || b.files[0])?.text || '';
@@ -1731,18 +1763,18 @@ function SkillCompare({ compareData, loading, strategies }) {
     <>
       <div className="diff-summary">
         <div className="diff-side">
-          <div className="diff-side-name"><span className="dot" style={{ background: 'var(--color-skill-a)' }} /> Candidate A</div>
+          <div className="diff-side-name"><span className="dot" style={{ background: 'var(--color-skill-a)' }} /> {labels.a}</div>
           {strategies?.a && <div className="diff-side-strat">{strategies.a}</div>}
           {strategies?.aParams?.length > 0 && <div className="diff-side-meta">changed: {strategies.aParams.map(cleanParam).join(', ')}</div>}
         </div>
         <div className="diff-side">
-          <div className="diff-side-name"><span className="dot" style={{ background: 'var(--color-skill-b)' }} /> Candidate B</div>
+          <div className="diff-side-name"><span className="dot" style={{ background: 'var(--color-skill-b)' }} /> {labels.b}</div>
           {strategies?.b && <div className="diff-side-strat">{strategies.b}</div>}
           {strategies?.bParams?.length > 0 && <div className="diff-side-meta">changed: {strategies.bParams.map(cleanParam).join(', ')}</div>}
         </div>
       </div>
       <div className="hint" style={{ marginTop: 0, marginBottom: 10 }}>
-        SKILL.md diff — <span style={{ color: 'var(--color-skill-b)' }}>{adds} line(s) only in B</span>, <span style={{ color: 'var(--color-skill-a)' }}>{removes} only in A</span>; shared lines are neutral.
+        SKILL.md diff — <span style={{ color: 'var(--color-skill-b)' }}>{adds} line(s) only in {labels.b}</span>, <span style={{ color: 'var(--color-skill-a)' }}>{removes} only in {labels.a}</span>; shared lines are neutral.
       </div>
       <pre className="skill-pre diff-pre">{diff.map((d, i) => (
         <div className={`diff-line ${d.type}`} key={i}>

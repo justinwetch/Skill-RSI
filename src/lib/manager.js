@@ -15,7 +15,10 @@ export function createManagerArtifact({
   const localMaxima = detectLocalMaxima(history);
   const hookFocus = deriveHookFocus({ triggerContext, parameterization });
   const nextLoopPremise = buildNextLoopPremise(history);
-  const experimentFamily = localMaxima.detected ? 'high_divergence_reset' : 'standard_focused_ab';
+  const hasChampion = Boolean(state.currentChampion);
+  const experimentFamily = !hasChampion
+    ? 'cold_start_duel'
+    : localMaxima.detected ? 'high_divergence_reset' : 'champion_challenge';
   const explorationLevel = localMaxima.detected ? 'high' : avoid.parameterIds.length ? 'guarded' : 'normal';
 
   return {
@@ -41,7 +44,9 @@ export function createManagerArtifact({
     experimentIntent: {
       focusHint: localMaxima.detected
         ? 'Plan a high-divergence or reset experiment instead of another small local mutation.'
-        : 'Plan a focused A/B experiment against the highest-leverage current parameter.',
+        : hasChampion
+          ? 'Plan one controlled challenger against the current champion.'
+          : 'Plan a focused cold-start duel to choose the first champion.',
       candidatePool: summarizeParameterPool(parameterization, avoid.parameterIds),
       plannerInstructions: buildPlannerInstructions({ avoid, localMaxima, hookFocus, nextLoopPremise }),
     },
@@ -90,40 +95,68 @@ export function applyManagerGuidanceToPlan(plan, managerArtifact, parameterizati
     ]),
   };
 
-  if (managerArtifact.strategy?.experimentFamily !== 'high_divergence_reset') {
-    return guidedPlan;
+  const competitionMode = managerArtifact.strategy?.experimentFamily || guidedPlan.competitionMode || 'champion_challenge';
+  const withMode = normalizePlanCompetitionMode(guidedPlan, competitionMode);
+
+  if (competitionMode !== 'high_divergence_reset') {
+    return withMode;
   }
 
   return {
-    ...guidedPlan,
-    experimentQuestion: startsWithLabel(guidedPlan.experimentQuestion, 'High-divergence reset')
-      ? guidedPlan.experimentQuestion
-      : `High-divergence reset: ${guidedPlan.experimentQuestion}`,
-    hypothesis: `A deliberately different structure or reset-to-baseline treatment may escape a local maximum. ${guidedPlan.hypothesis}`,
+    ...withMode,
+    experimentQuestion: startsWithLabel(withMode.experimentQuestion, 'High-divergence reset')
+      ? withMode.experimentQuestion
+      : `High-divergence reset: ${withMode.experimentQuestion}`,
+    hypothesis: `A deliberately different structure or reset-to-baseline treatment may escape a local maximum. ${withMode.hypothesis}`,
     arms: {
-      candidateA: {
-        ...guidedPlan.arms.candidateA,
-        strategyName: prefixStrategy(guidedPlan.arms.candidateA.strategyName, 'high-divergence'),
+      challenger: {
+        ...withMode.arms.challenger,
+        strategyName: prefixStrategy(withMode.arms.challenger.strategyName, 'high-divergence'),
         mutationInstructions: unique([
           'Use a substantially different skill structure, workflow order, or information architecture from the current champion.',
-          'Keep the package valid and portable, but do not preserve local wording unless it is essential.',
-          ...normalizeArray(guidedPlan.arms.candidateA.mutationInstructions),
-        ]),
-      },
-      candidateB: {
-        ...guidedPlan.arms.candidateB,
-        strategyName: prefixStrategy(guidedPlan.arms.candidateB.strategyName, 'reset-control'),
-        mutationInstructions: unique([
-          'Rebuild from the original goal and ontology with minimal assumptions from recent losing experiments.',
-          'Preserve only the proven champion constraints and explicitly avoid recently failed parameter treatments.',
-          ...normalizeArray(guidedPlan.arms.candidateB.mutationInstructions),
+          'Preserve proven champion constraints and explicitly avoid recently failed parameter treatments.',
+          'The current champion is the control; do not generate a separate control candidate.',
+          ...normalizeArray(withMode.arms.challenger.mutationInstructions),
         ]),
       },
     },
     promotionRisks: unique([
-      ...normalizeArray(guidedPlan.promotionRisks),
+      ...normalizeArray(withMode.promotionRisks),
       'High-divergence recovery can improve exploration but may regress stable champion behavior.',
     ]),
+  };
+}
+
+function normalizePlanCompetitionMode(plan, competitionMode) {
+  const mode = ['cold_start_duel', 'champion_challenge', 'high_divergence_reset'].includes(competitionMode)
+    ? competitionMode
+    : 'champion_challenge';
+  if (mode === 'cold_start_duel') {
+    return {
+      ...plan,
+      competitionMode: mode,
+      arms: {
+        candidateA: plan.arms?.candidateA || plan.arms?.challenger || defaultArm('candidate-a'),
+        candidateB: plan.arms?.candidateB || defaultArm('candidate-b'),
+      },
+    };
+  }
+
+  return {
+    ...plan,
+    competitionMode: mode,
+    arms: {
+      challenger: plan.arms?.challenger || plan.arms?.candidateA || defaultArm('challenger'),
+    },
+  };
+}
+
+function defaultArm(label) {
+  return {
+    strategyName: label === 'challenger' ? 'targeted-challenger' : label,
+    mutationInstructions: label === 'challenger'
+      ? ['Create one narrow, testable variation of the current champion.']
+      : ['Create a complete first champion candidate.'],
   };
 }
 
@@ -223,7 +256,7 @@ function buildPlannerInstructions({ avoid, localMaxima, hookFocus, nextLoopPremi
     instructions.push(`Avoid repeating these failed strategies: ${avoid.strategies.slice(0, 4).join(' | ')}.`);
   }
   if (localMaxima.detected) {
-    instructions.push('Use a high-divergence/reset experiment: one arm should break out structurally, and one should rebuild from the original goal plus proven constraints.');
+    instructions.push('Use a high-divergence/reset experiment: generate one structurally divergent challenger against the current champion.');
   }
   if (!instructions.length) {
     instructions.push('Choose one to three related high-priority parameters and keep the rest controlled.');

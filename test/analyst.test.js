@@ -30,7 +30,7 @@ test('real analyst recommendation cannot bypass deterministic policy block', asy
     candidateA: { candidateId: 'candidate-a', strategy: 'A' },
     candidateB: { candidateId: 'candidate-b', strategy: 'B' },
     candidateDuel: fakeEval({ winner: 'skillA', scoreDelta: 1, skillAWins: 5, skillBWins: 5 }),
-    championGate: fakeEval({ winner: 'skillA', scoreDelta: 1, skillAWins: 5, skillBWins: 5 }),
+    challenge: fakeEval({ winner: 'skillA', scoreDelta: 1, skillAWins: 5, skillBWins: 5 }),
     model: 'fake-analyst',
     modelClient: async () => JSON.stringify({
       decision: 'promote',
@@ -51,7 +51,7 @@ test('real analyst recommendation cannot bypass deterministic policy block', asy
   assert.match(recommendation.reasoning, /champion stays|clear enough margin/i);
 });
 
-test('policy analyst does not promote when current champion wins champion gate', () => {
+test('policy analyst does not promote when current champion wins challenge', () => {
   const recommendation = createPolicyRecommendation({
     runId: 'run-003',
     state: { currentChampion: { skillHash: 'abc' } },
@@ -59,7 +59,7 @@ test('policy analyst does not promote when current champion wins champion gate',
     candidateB: { candidateId: 'candidate-b', strategy: 'B' },
     experimentPlan: { focusParameterIds: ['p01'] },
     candidateDuel: fakeEval({ winner: 'skillA', scoreDelta: 10, skillAWins: 8, skillBWins: 2 }),
-    championGate: fakeEval({ winner: 'skillB', scoreDelta: -10, skillAWins: 2, skillBWins: 8 }),
+    challenge: fakeEval({ winner: 'skillB', scoreDelta: -10, skillAWins: 2, skillBWins: 8 }),
     promotion: { minScoreDelta: 4, minWinDelta: 2, maxStablePromptRegression: 2 },
   });
 
@@ -69,11 +69,11 @@ test('policy analyst does not promote when current champion wins champion gate',
 });
 
 test('policy analyst blocks promotion when stable prompts show critical regression', () => {
-  const championGate = fakeEval({ winner: 'skillA', scoreDelta: 10, skillAWins: 8, skillBWins: 2 });
-  championGate.evaluations[0] = {
-    ...championGate.evaluations[0],
+  const challenge = fakeEval({ winner: 'skillA', scoreDelta: 10, skillAWins: 8, skillBWins: 2 });
+  challenge.evaluations[0] = {
+    ...challenge.evaluations[0],
     prompt: {
-      ...championGate.evaluations[0].prompt,
+      ...challenge.evaluations[0].prompt,
       bucket: 'stable',
       id: 'stable-critical',
     },
@@ -92,7 +92,7 @@ test('policy analyst blocks promotion when stable prompts show critical regressi
     candidateB: { candidateId: 'candidate-b', strategy: 'B' },
     experimentPlan: { focusParameterIds: ['p01'] },
     candidateDuel: fakeEval({ winner: 'skillA', scoreDelta: 10, skillAWins: 8, skillBWins: 2 }),
-    championGate,
+    challenge,
     promotion: { minScoreDelta: 4, minWinDelta: 2, maxStablePromptRegression: 2 },
   });
 

@@ -78,15 +78,29 @@ export function createStubParameterization({ runId, championSkillHash }) {
   };
 }
 
-export function createStubExperimentPlan({ runId, runNumber, parameterization }) {
+export function createStubExperimentPlan({ runId, runNumber, parameterization, competitionMode = 'cold_start_duel' }) {
   const focus = parameterization.parameters.slice(0, Math.min(3, parameterization.parameters.length));
-  return {
+  const base = {
     runId,
+    competitionMode,
     experimentQuestion: `Stub run ${runNumber}: does targeted specificity beat the current baseline?`,
     focusParameterIds: focus.map(parameter => parameter.id),
     controlledParameterIds: parameterization.parameters.slice(3).map(parameter => parameter.id),
     hypothesis: 'A more explicit workflow and validation surface will score better in the stub harness.',
-    arms: {
+    evalFocus: {
+      promptTaxonomyTargets: ['easy direct request', 'edge case request'],
+      criteriaEmphasis: ['workflow clarity', 'validation usefulness'],
+      expectedObservableDifferences: ['candidate step ordering', 'validation detail'],
+    },
+    successMetrics: ['stub total score', 'no schema validation failure'],
+    promotionRisks: ['stub scores are deterministic placeholders'],
+    reasonNotTestingOtherHighPriorityParameters: ['vertical slice should keep the experiment small'],
+  };
+
+  if (competitionMode === 'cold_start_duel') {
+    return {
+      ...base,
+      arms: {
       candidateA: {
         strategyName: 'specific-workflow',
         mutationInstructions: ['make the workflow sequence more explicit', 'add a validation checklist'],
@@ -101,15 +115,23 @@ export function createStubExperimentPlan({ runId, runNumber, parameterization })
         expectedStrengths: ['better progressive disclosure'],
         expectedWeaknesses: ['more package complexity'],
       },
+      },
+    };
+  }
+
+  return {
+    ...base,
+    arms: {
+      challenger: {
+        strategyName: competitionMode === 'high_divergence_reset' ? 'high-divergence-reset' : 'targeted-challenger',
+        mutationInstructions: competitionMode === 'high_divergence_reset'
+          ? ['use a substantially different structure while preserving proven champion constraints']
+          : ['make a narrow challenger mutation against the current champion', 'preserve unrelated champion behavior'],
+        constraints: ['keep package shape valid'],
+        expectedStrengths: ['controlled improvement attempt'],
+        expectedWeaknesses: ['may not beat champion'],
+      },
     },
-    evalFocus: {
-      promptTaxonomyTargets: ['easy direct request', 'edge case request'],
-      criteriaEmphasis: ['workflow clarity', 'validation usefulness'],
-      expectedObservableDifferences: ['candidate step ordering', 'validation detail'],
-    },
-    successMetrics: ['stub total score', 'no schema validation failure'],
-    promotionRisks: ['stub scores are deterministic placeholders'],
-    reasonNotTestingOtherHighPriorityParameters: ['vertical slice should keep the experiment small'],
   };
 }
 

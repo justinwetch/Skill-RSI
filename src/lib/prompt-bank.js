@@ -4,7 +4,7 @@ export function applyPromptBankUpdates({
   bank = {},
   evalRun = null,
   candidateDuel = null,
-  championGate = null,
+  challenge = null,
   recommendation = {},
   runId,
   stablePromptCount = null,
@@ -14,9 +14,10 @@ export function applyPromptBankUpdates({
     ? stablePromptCount
     : (Number.isInteger(currentBank.stablePromptCount) ? currentBank.stablePromptCount : 6);
   const duelRun = candidateDuel || evalRun;
+  const challengeRun = challenge;
   const evaluatedRuns = [
     duelRun ? { evalRun: duelRun, comparisonType: 'candidate_duel' } : null,
-    championGate ? { evalRun: championGate, comparisonType: 'champion_gate' } : null,
+    challengeRun ? { evalRun: challengeRun, comparisonType: 'challenge' } : null,
   ].filter(Boolean);
 
   const promptById = collectPromptById(currentBank, evaluatedRuns.map(item => item.evalRun));
@@ -51,14 +52,14 @@ export function applyPromptBankUpdates({
     }
   }
 
-  const championConfirmedIds = new Set(diagnosticsByType.champion_gate?.promotePromptIds || []);
+  const championConfirmedIds = new Set(diagnosticsByType.challenge?.promotePromptIds || []);
   const provisionallyUsefulIds = new Set([
     ...(diagnosticsByType.candidate_duel?.provisionalPromptIds || []),
-    ...(diagnosticsByType.champion_gate?.provisionalPromptIds || []),
+    ...(diagnosticsByType.challenge?.provisionalPromptIds || []),
   ]);
   for (const promptId of analystRecommendations.promotePromptIds || []) {
     if (!promptById.has(promptId)) continue;
-    if (hasStrongEvidence(promptEvidence[promptId], 'champion_gate')) {
+    if (hasStrongEvidence(promptEvidence[promptId], 'challenge')) {
       championConfirmedIds.add(promptId);
     } else if (hasStrongEvidence(promptEvidence[promptId], 'candidate_duel')) {
       provisionallyUsefulIds.add(promptId);
@@ -97,14 +98,14 @@ export function applyPromptBankUpdates({
       ...prompt,
       bucket: 'stable',
       status: 'stable',
-      stableReason: 'champion_gate_confirmed',
+      stableReason: 'challenge_confirmed',
       promotedFrom: inferPromptStatus(currentBank, prompt),
       promotedAtRunId: runId,
     });
     promptEvidence[promptId] = {
       ...promptEvidence[promptId],
       status: 'stable',
-      stableReason: 'champion_gate_confirmed',
+      stableReason: 'challenge_confirmed',
     };
   }
 
@@ -127,7 +128,7 @@ export function applyPromptBankUpdates({
       bucket: 'provisional',
       status: 'provisional',
       provisionalAtRunId: runId,
-      needsChampionGateConfirmation: true,
+      needsChallengeConfirmation: true,
     });
     promptEvidence[promptId] = {
       ...promptEvidence[promptId],
@@ -236,12 +237,12 @@ export function diagnoseEvalPrompts(evalRun, { comparisonType = 'candidate_duel'
     evidenceRecords.push(evidence);
 
     if (evidence.strongSignal) {
-      if (comparisonType === 'champion_gate' && prompt.bucket !== 'stable') {
+      if (comparisonType === 'challenge' && prompt.bucket !== 'stable') {
         promotePromptIds.push(prompt.id);
-        promptBankNotes.push(`${prompt.id}: champion gate confirmed a stable measurement signal with score delta ${evidence.absScoreDelta}.`);
+        promptBankNotes.push(`${prompt.id}: champion challenge confirmed a stable measurement signal with score delta ${evidence.absScoreDelta}.`);
       } else if (prompt.bucket !== 'stable') {
         provisionalPromptIds.push(prompt.id);
-        promptBankNotes.push(`${prompt.id}: candidate duel produced provisional signal with score delta ${evidence.absScoreDelta}; needs champion-gate confirmation before becoming stable.`);
+        promptBankNotes.push(`${prompt.id}: cold-start duel produced provisional signal with score delta ${evidence.absScoreDelta}; needs champion-challenge confirmation before becoming stable.`);
       }
       continue;
     }
@@ -251,9 +252,9 @@ export function diagnoseEvalPrompts(evalRun, { comparisonType = 'candidate_duel'
       promptBankNotes.push(`${prompt.id}: retired because the prompt had weak signal, missing metadata, failed judging, or empty reasoning.`);
     } else if (prompt.bucket === 'stable' && (evidence.winner === 'tie' || evidence.absScoreDelta === 0)) {
       promptBankNotes.push(`${prompt.id}: stable prompt tied; kept as a neutral anchor rather than retired.`);
-    } else if (prompt.bucket === 'provisional' && comparisonType === 'champion_gate') {
+    } else if (prompt.bucket === 'provisional' && comparisonType === 'challenge') {
       retirePromptIds.push(prompt.id);
-      promptBankNotes.push(`${prompt.id}: provisional prompt failed champion-gate confirmation.`);
+      promptBankNotes.push(`${prompt.id}: provisional prompt failed champion-challenge confirmation.`);
     }
   }
 
@@ -395,7 +396,7 @@ function rankStablePrompts(prompts, promptEvidence) {
 
 function stablePromptScore(prompt, evidenceRecord) {
   const evidence = Array.isArray(evidenceRecord?.evidence) ? evidenceRecord.evidence : [];
-  const championSignals = evidence.filter(item => item.comparisonType === 'champion_gate' && item.strongSignal).length;
+  const championSignals = evidence.filter(item => item.comparisonType === 'challenge' && item.strongSignal).length;
   const duelSignals = evidence.filter(item => item.comparisonType === 'candidate_duel' && item.strongSignal).length;
   const seedBonus = prompt.stableReason === 'ontology_seed' || prompt.origin === 'ontology_seed' ? 1 : 0;
   return championSignals * 100 + duelSignals * 10 + seedBonus;

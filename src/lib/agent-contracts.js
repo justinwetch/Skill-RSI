@@ -162,13 +162,15 @@ async function createMockArtifact({ agentName, context }) {
       runId: context.runId,
       runNumber: context.state.runCount + 1,
       parameterization,
+      competitionMode: context.state.currentChampion ? 'champion_challenge' : 'cold_start_duel',
     }));
   }
 
   if (agentName === 'creator') {
+    const isChallenger = context.experimentArm === 'challenger';
     return {
-      candidateId: 'candidate-a',
-      experimentArm: 'candidateA',
+      candidateId: isChallenger ? 'challenger' : 'candidate-a',
+      experimentArm: isChallenger ? 'challenger' : 'candidateA',
       strategy: 'contract-mock',
       changedParameterIds: ['p01-activation_metadata'],
       files: [{
@@ -457,6 +459,8 @@ ${qualityFeedbackBlock(context)}`;
 }
 
 function buildExperimentPlannerPrompt(context) {
+  const hasChampion = Boolean(context.state?.currentChampion);
+  const mode = context.managerPlan?.strategy?.experimentFamily || (hasChampion ? 'champion_challenge' : 'cold_start_duel');
   return `You are the Experiment Planner for Skill RSI.
 
 Goal: ${context.goal}
@@ -474,18 +478,28 @@ ${formatContextBlock(context.managerPlan)}
 Task contract:
 ${formatContextBlock(taskContractSummary(context.taskContract))}
 
-Turn the parameterization into a focused A/B experiment. Return JSON matching ABExperimentPlan:
-runId, experimentQuestion, focusParameterIds, controlledParameterIds, hypothesis, arms {candidateA, candidateB}, evalFocus, successMetrics, promotionRisks, reasonNotTestingOtherHighPriorityParameters.
-Select one to three related parameters and hold unrelated parameters constant.
-Default to an ablation-style/local-variation experiment: vary only the selected focus parameters, explicitly preserve the current champion's unrelated structure and behavior, and make the two arms narrow enough that the analyst can tell which deconstructed hypothesis moved the result.
-State success metrics that are measurable under the task contract. Do not plan experiments whose effect would be invisible or impossible to score from the contract's prompt context and expected artifact.
-Honor manager guidance. Do not select avoid.parameterIds unless you explicitly cite new evidence in reasonNotTestingOtherHighPriorityParameters. If strategy.experimentFamily is "high_divergence_reset", plan a high-divergence/reset experiment instead of another small local mutation.
+Competition mode for this run: ${mode}
+Current champion exists: ${hasChampion ? 'yes' : 'no'}
 
-Use this exact arm shape:
+Turn the parameterization into a focused experiment. Return JSON matching ABExperimentPlan:
+runId, competitionMode, experimentQuestion, focusParameterIds, controlledParameterIds, hypothesis, arms, evalFocus, successMetrics, promotionRisks, reasonNotTestingOtherHighPriorityParameters.
+Select one to three related parameters and hold unrelated parameters constant.
+Default to an ablation-style/local-variation experiment: vary only the selected focus parameters, explicitly preserve the current champion's unrelated structure and behavior, and make the challenger narrow enough that the analyst can tell which deconstructed hypothesis moved the result.
+State success metrics that are measurable under the task contract. Do not plan experiments whose effect would be invisible or impossible to score from the contract's prompt context and expected artifact.
+Honor manager guidance. Do not select avoid.parameterIds unless you explicitly cite new evidence in reasonNotTestingOtherHighPriorityParameters. If strategy.experimentFamily is "high_divergence_reset", plan one high-divergence challenger against the current champion instead of another small local mutation.
+
+If competitionMode is "cold_start_duel", use this exact arm shape:
 "arms": {
   "candidateA": { "strategyName": "...", "mutationInstructions": ["..."] },
   "candidateB": { "strategyName": "...", "mutationInstructions": ["..."] }
-}`;
+}
+
+If competitionMode is "champion_challenge" or "high_divergence_reset", use this exact arm shape:
+"arms": {
+  "challenger": { "strategyName": "...", "mutationInstructions": ["..."] }
+}
+
+Do not return candidateA/candidateB in champion-present modes. The current champion is the control.`;
 }
 
 function buildCreatorPrompt(context) {
@@ -555,7 +569,7 @@ Authoring rules for this package, on top of that standard:
 - description: specific and end-user facing (what it does + when to use it); it must NOT mention Skill RSI, skill-rsi, evaluation runs, test runs, or "vertical slice".
 - The package must contain NOTHING about Skill RSI or its machinery anywhere in any file: no Skill RSI/skill-rsi names, Skill RSI authorship metadata, run ids, candidate ids, parameter ids, experiment/A-B/duel/eval/judge/scoring language, "Run Context" sections, or changed-parameter lists. It should read as if a skilled independent author wrote it for production use.
 
-If assigned candidateA, use candidateId "candidate-a" and experimentArm "candidateA". If assigned candidateB, use candidateId "candidate-b" and experimentArm "candidateB".
+If assigned challenger, use candidateId "challenger" and experimentArm "challenger". If assigned candidateA, use candidateId "candidate-a" and experimentArm "candidateA". If assigned candidateB, use candidateId "candidate-b" and experimentArm "candidateB".
 Return JSON with candidateId, experimentArm, strategy, changedParameterIds, files [{path, content}], rationale, expectedAdvantages, expectedRisks, and selfCritique. candidateId/experimentArm/strategy/changedParameterIds are Skill RSI metadata returned in the JSON ONLY — they must NOT appear inside any package file.`;
 }
 
@@ -672,7 +686,7 @@ function compactEvidence(evidence) {
     confidence: evidence.confidence,
     scoreDelta: evidence.scoreDelta,
     candidateDuelWinner: evidence.candidateDuelWinner,
-    championGateWinner: evidence.championGateWinner,
+    challengeWinner: evidence.challengeWinner,
     reviewBlocked: evidence.reviewBlocked,
     summary: evidence.summary,
     caveats: Array.isArray(evidence.caveats) ? evidence.caveats.slice(0, 4) : [],
@@ -755,12 +769,28 @@ function normalizeOntology(artifact, context = {}) {
 
 function normalizeExperimentPlan(artifact, context = {}) {
   if (!artifact || !artifact.arms) return artifact;
+  const hasChampion = Boolean(context.state?.currentChampion);
+  const requestedMode = context.managerPlan?.strategy?.experimentFamily || artifact.competitionMode || (hasChampion ? 'champion_challenge' : 'cold_start_duel');
+  const competitionMode = ['cold_start_duel', 'champion_challenge', 'high_divergence_reset'].includes(requestedMode)
+    ? requestedMode
+    : hasChampion ? 'champion_challenge' : 'cold_start_duel';
+  if (competitionMode === 'cold_start_duel') {
+    return {
+      ...artifact,
+      runId: normalizeString(artifact.runId, context.runId),
+      competitionMode,
+      arms: {
+        candidateA: normalizeExperimentArm(artifact.arms.candidateA || artifact.arms.challenger),
+        candidateB: normalizeExperimentArm(artifact.arms.candidateB),
+      },
+    };
+  }
   return {
     ...artifact,
     runId: normalizeString(artifact.runId, context.runId),
+    competitionMode,
     arms: {
-      candidateA: normalizeExperimentArm(artifact.arms.candidateA),
-      candidateB: normalizeExperimentArm(artifact.arms.candidateB),
+      challenger: normalizeExperimentArm(artifact.arms.challenger || artifact.arms.candidateA),
     },
   };
 }
@@ -768,7 +798,7 @@ function normalizeExperimentPlan(artifact, context = {}) {
 function normalizeCreatorArtifact(artifact, context = {}) {
   if (!artifact || typeof artifact !== 'object') return artifact;
   const experimentArm = artifact.experimentArm || context.experimentArm || 'candidateA';
-  const candidateId = artifact.candidateId || (experimentArm === 'candidateB' ? 'candidate-b' : 'candidate-a');
+  const candidateId = artifact.candidateId || (experimentArm === 'challenger' ? 'challenger' : experimentArm === 'candidateB' ? 'candidate-b' : 'candidate-a');
   const strategy = normalizeString(
     artifact.strategy || artifact.strategyName || artifact.name,
     `${experimentArm} generated strategy`,

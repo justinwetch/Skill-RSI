@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
+import { Buffer } from 'node:buffer';
 import { runProject } from '../src/lib/run-loop.js';
 import {
   createProjectForUi,
@@ -10,6 +11,7 @@ import {
   readProjectSummary,
   readRunComparison,
   readRunDetail,
+  readRunProgress,
   recordHumanDecision,
 } from '../src/lib/ui-api.js';
 
@@ -124,6 +126,131 @@ test('ui api creates new projects and rejects duplicates', async () => {
   );
 });
 
+test('ui api imports an uploaded baseline as champion v0', async () => {
+  const cwd = await fs.mkdtemp(path.join(os.tmpdir(), 'skill-rsi-ui-api-baseline-'));
+
+  const created = await createProjectForUi({
+    cwd,
+    projectName: 'Baseline Project',
+    goal: 'Improve an existing skill.',
+    baselineFiles: [{
+      path: 'SKILL.md',
+      content: `---
+name: baseline-skill
+description: Use when improving an existing baseline skill.
+---
+
+# Baseline Skill
+`,
+    }],
+  });
+
+  assert.equal(created.state.runCount, 0);
+  assert.equal(created.state.currentChampion.candidateId, 'baseline');
+  assert.equal(created.state.currentChampion.runId, 'baseline-upload');
+  assert.equal(created.history.trajectoryLength, 0);
+  assert.equal(created.history.nextLoopPremise, null);
+  assert.ok(await fs.stat(path.join(cwd, '.skill-rsi', 'projects', 'baseline-project', 'champion', 'skill', 'SKILL.md')));
+});
+
+test('ui api normalizes browser folder baseline uploads with references', async () => {
+  const cwd = await fs.mkdtemp(path.join(os.tmpdir(), 'skill-rsi-ui-api-baseline-folder-'));
+
+  const created = await createProjectForUi({
+    cwd,
+    projectName: 'Browser Folder Baseline',
+    goal: 'Improve an uploaded folder skill.',
+    baselineFiles: [
+      {
+        path: 'Uploaded Skill/SKILL.md',
+        content: `---
+name: browser-folder-baseline
+description: Use when improving a browser-uploaded folder skill.
+---
+
+# Browser Folder Baseline
+
+Read [the notes](references/notes.md).
+`,
+      },
+      {
+        path: 'Uploaded Skill/references/notes.md',
+        content: '# Notes\n',
+      },
+    ],
+  });
+
+  assert.equal(created.state.currentChampion.candidateId, 'baseline');
+  const skillDir = path.join(cwd, '.skill-rsi', 'projects', 'browser-folder-baseline', 'champion', 'skill');
+  assert.match(await fs.readFile(path.join(skillDir, 'SKILL.md'), 'utf8'), /browser-folder-baseline/);
+  assert.match(await fs.readFile(path.join(skillDir, 'references', 'notes.md'), 'utf8'), /Notes/);
+});
+
+test('ui api imports an uploaded baseline zip as champion v0', async () => {
+  const cwd = await fs.mkdtemp(path.join(os.tmpdir(), 'skill-rsi-ui-api-baseline-zip-'));
+  const zip = createStoredZip({
+    'zipped/SKILL.md': `---
+name: zipped-baseline
+description: Use when improving a zipped baseline skill.
+---
+
+# Zipped Baseline
+`,
+    'zipped/references/notes.md': '# Notes\n',
+  });
+
+  const created = await createProjectForUi({
+    cwd,
+    projectName: 'Baseline Zip Project',
+    goal: 'Improve an existing zipped skill.',
+    baselineArchive: {
+      name: 'baseline.zip',
+      contentBase64: zip.toString('base64'),
+    },
+  });
+
+  assert.equal(created.state.currentChampion.candidateId, 'baseline');
+  const skill = await fs.readFile(path.join(cwd, '.skill-rsi', 'projects', 'baseline-zip-project', 'champion', 'skill', 'SKILL.md'), 'utf8');
+  const notes = await fs.readFile(path.join(cwd, '.skill-rsi', 'projects', 'baseline-zip-project', 'champion', 'skill', 'references', 'notes.md'), 'utf8');
+  assert.match(skill, /name: zipped-baseline/);
+  assert.match(notes, /Notes/);
+});
+
+test('ui api rejects malformed baseline zip uploads as bad requests', async () => {
+  const cwd = await fs.mkdtemp(path.join(os.tmpdir(), 'skill-rsi-ui-api-bad-zip-'));
+
+  await assert.rejects(
+    () => createProjectForUi({
+      cwd,
+      projectName: 'Bad Zip Project',
+      goal: 'Reject bad zip.',
+      baselineArchive: {
+        name: 'baseline.zip',
+        contentBase64: Buffer.from('not really a zip').toString('base64'),
+      },
+    }),
+    error => error.statusCode === 400 && /could not be loaded/i.test(error.message)
+  );
+});
+
+test('ui api rejects oversized baseline zip uploads before preflight', async () => {
+  const cwd = await fs.mkdtemp(path.join(os.tmpdir(), 'skill-rsi-ui-api-large-zip-'));
+  const oversized = Buffer.alloc(25 * 1024 * 1024 + 1).toString('base64');
+
+  await assert.rejects(
+    () => createProjectForUi({
+      cwd,
+      projectName: 'Large Zip Project',
+      goal: 'Reject oversized zip.',
+      baselineArchive: {
+        name: 'baseline.zip',
+        contentBase64: oversized,
+      },
+    }),
+    error => error.statusCode === 400 && /too large/i.test(error.message)
+  );
+});
+
 test('ui api stores requested target iterations', async () => {
   const cwd = await fs.mkdtemp(path.join(os.tmpdir(), 'skill-rsi-ui-api-policy-'));
 
@@ -150,4 +277,99 @@ test('ui api stores requested target iterations', async () => {
   const afterRun = await readProjectSummary({ cwd, projectName: 'Policy Project' });
   assert.equal(afterRun.state.runPolicy.triggerMode, 'manual');
   assert.equal(afterRun.state.runPolicy.targetIterations, 7);
+});
+
+function createStoredZip(files) {
+  const localParts = [];
+  const centralParts = [];
+  let offset = 0;
+
+  for (const [filePath, content] of Object.entries(files)) {
+    const name = Buffer.from(filePath);
+    const data = Buffer.from(content);
+    const crc = crc32(data);
+    const local = Buffer.alloc(30);
+    local.writeUInt32LE(0x04034b50, 0);
+    local.writeUInt16LE(20, 4);
+    local.writeUInt16LE(0, 6);
+    local.writeUInt16LE(0, 8);
+    local.writeUInt32LE(0, 10);
+    local.writeUInt32LE(crc, 14);
+    local.writeUInt32LE(data.length, 18);
+    local.writeUInt32LE(data.length, 22);
+    local.writeUInt16LE(name.length, 26);
+    local.writeUInt16LE(0, 28);
+    localParts.push(local, name, data);
+
+    const central = Buffer.alloc(46);
+    central.writeUInt32LE(0x02014b50, 0);
+    central.writeUInt16LE(20, 4);
+    central.writeUInt16LE(20, 6);
+    central.writeUInt16LE(0, 8);
+    central.writeUInt16LE(0, 10);
+    central.writeUInt32LE(0, 12);
+    central.writeUInt32LE(crc, 16);
+    central.writeUInt32LE(data.length, 20);
+    central.writeUInt32LE(data.length, 24);
+    central.writeUInt16LE(name.length, 28);
+    central.writeUInt16LE(0, 30);
+    central.writeUInt16LE(0, 32);
+    central.writeUInt16LE(0, 34);
+    central.writeUInt16LE(0, 36);
+    central.writeUInt32LE(0, 38);
+    central.writeUInt32LE(offset, 42);
+    centralParts.push(central, name);
+
+    offset += local.length + name.length + data.length;
+  }
+
+  const centralDir = Buffer.concat(centralParts);
+  const eocd = Buffer.alloc(22);
+  eocd.writeUInt32LE(0x06054b50, 0);
+  eocd.writeUInt16LE(0, 4);
+  eocd.writeUInt16LE(0, 6);
+  eocd.writeUInt16LE(Object.keys(files).length, 8);
+  eocd.writeUInt16LE(Object.keys(files).length, 10);
+  eocd.writeUInt32LE(centralDir.length, 12);
+  eocd.writeUInt32LE(offset, 16);
+  eocd.writeUInt16LE(0, 20);
+
+  return Buffer.concat([...localParts, centralDir, eocd]);
+}
+
+function crc32(buffer) {
+  let crc = -1;
+  for (const byte of buffer) {
+    crc = (crc >>> 8) ^ CRC_TABLE[(crc ^ byte) & 0xff];
+  }
+  return (crc ^ -1) >>> 0;
+}
+
+const CRC_TABLE = Array.from({ length: 256 }, (_, index) => {
+  let value = index;
+  for (let bit = 0; bit < 8; bit += 1) {
+    value = value & 1 ? 0xedb88320 ^ (value >>> 1) : value >>> 1;
+  }
+  return value >>> 0;
+});
+
+test('ui api exposes next-loop premise and progress stage details', async () => {
+  const cwd = await fs.mkdtemp(path.join(os.tmpdir(), 'skill-rsi-ui-api-premise-'));
+  const result = await runProject({
+    cwd,
+    projectName: 'Premise Project',
+    goal: 'Expose next premise in UI.',
+    loops: 1,
+    mode: 'mock',
+  });
+  const runId = result.completedRuns[0].runId;
+
+  const summary = await readProjectSummary({ cwd, projectName: 'Premise Project' });
+  assert.ok(summary.history.nextLoopPremise.notes.length > 0);
+  assert.equal(summary.history.nextLoopPremise.sourceRunId, runId);
+
+  const progress = await readRunProgress({ cwd, projectName: 'Premise Project' });
+  assert.equal(progress.runId, runId);
+  assert.ok(Array.isArray(progress.stageDetails.plan));
+  assert.ok(progress.events.some(event => event.details));
 });

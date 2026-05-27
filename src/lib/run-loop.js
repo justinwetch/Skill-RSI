@@ -791,7 +791,7 @@ async function runAgenticLoop({
   const ontologyRefreshState = await readJson(ontologyRefreshStatePath, null);
   let researchPacket = await reuseJson(paths.researchCurrent, validateResearchPacket);
 
-  if (!ontology) {
+  if (!ontology && !state.currentChampion) {
     // First run: build the initial domain map from scratch.
     researchPacket = await prepareResearchPacket({
       paths,
@@ -841,7 +841,7 @@ async function runAgenticLoop({
       model: agentModel,
       path: paths.ontologyCurrent,
     });
-  } else if (championHash && championHash !== ontologyRefreshState?.championHash) {
+  } else if (ontology && championHash && championHash !== ontologyRefreshState?.championHash) {
     // The champion changed since the map was last built (§6.2/§6.6): refresh it conservatively.
     researchPacket = await prepareResearchPacket({
       paths,
@@ -894,6 +894,11 @@ async function runAgenticLoop({
       from: ontologyRefreshState?.championHash || null,
       to: championHash,
       path: paths.ontologyCurrent,
+    });
+  } else if (!ontology && state.currentChampion) {
+    await appendTimeline(runPaths.timelineJsonl, 'ontology.skipped_for_baseline', {
+      reason: 'uploaded baseline champion supplied; deconstructing existing skill before any ontology refresh',
+      champion: state.currentChampion.skillHash,
     });
   } else {
     await appendTimeline(runPaths.timelineJsonl, 'ontology.reused', { path: paths.ontologyCurrent });

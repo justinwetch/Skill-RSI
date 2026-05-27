@@ -3,7 +3,7 @@ import {
   FlaskConical, Moon, Sun, Plus, RefreshCw, ChevronLeft, ChevronRight, ChevronDown, ChevronUp,
   ArrowRight, Play, Trophy, Check, CheckCircle2, ArrowUp, Minus, FileText,
   Loader2, Database, Layout, GitPullRequest, MessageSquare, TrendingUp, Scale,
-  Beaker, Swords, Search, Flag, Pencil, Trash2,
+  Beaker, Swords, Search, Flag, Pencil, Trash2, Upload,
 } from 'lucide-react';
 import {
   createProject, deleteProject, fetchProjects, fetchProjectSummary, fetchRunDetail,
@@ -56,7 +56,10 @@ const STAGE_KEYS = STAGES.map(s => s.key);
 const EVENT_STAGE = {
   'run.started': 'deconstruct',
   'run.resumed': 'deconstruct',
-  'ontology.written': 'deconstruct', 'ontology.reused': 'deconstruct', 'ontology.refreshed': 'deconstruct',
+  'research_packet.written': 'deconstruct', 'research_packet.reused': 'deconstruct', 'research_packet.fallback_written': 'deconstruct',
+  'ontology.written': 'deconstruct', 'ontology.reused': 'deconstruct', 'ontology.refreshed': 'deconstruct', 'ontology.skipped_for_baseline': 'deconstruct',
+  'ontology_quality.revision_requested': 'deconstruct', 'ontology_quality.completed': 'deconstruct',
+  'deconstruction_quality.revision_requested': 'deconstruct', 'deconstruction_quality.completed': 'deconstruct',
   'parameterization.written': 'deconstruct', 'parameterization.seeded': 'deconstruct',
   'manager_plan.written': 'plan',
   'experiment_plan.written': 'plan',
@@ -72,9 +75,17 @@ const EVENT_STAGE = {
 const EVENT_LABEL = {
   'run.started': 'Loop started',
   'run.resumed': 'Resumed an interrupted loop',
+  'research_packet.written': 'Built the research packet',
+  'research_packet.reused': 'Reused the current research packet',
+  'research_packet.fallback_written': 'Created an inference-labeled research packet',
   'ontology.written': 'Mapped the skill’s domain',
   'ontology.reused': 'Reused the domain map',
   'ontology.refreshed': 'Refreshed the domain map for the new champion',
+  'ontology.skipped_for_baseline': 'Skipped ontology because a baseline skill was supplied',
+  'ontology_quality.revision_requested': 'Requested one ontology revision from the quality gate',
+  'ontology_quality.completed': 'Recorded ontology quality',
+  'deconstruction_quality.revision_requested': 'Requested one deconstruction revision from the quality gate',
+  'deconstruction_quality.completed': 'Recorded deconstruction quality',
   'parameterization.written': 'Broke the champion into changeable parts',
   'parameterization.seeded': 'Mapped the initial design space from the ontology',
   'manager_plan.written': 'Set the experiment strategy',
@@ -124,7 +135,7 @@ export default function App() {
   const [runningFirst, setRunningFirst] = useState(false);
   const [openEval, setOpenEval] = useState(null);
   const [evTab, setEvTab] = useState('summary');
-  const [draft, setDraft] = useState({ name: '', goal: '', targetIterations: 3 });
+  const [draft, setDraft] = useState({ name: '', goal: '', baselineFiles: [], baselineZip: null });
   const [skillSource, setSkillSource] = useState('champion');
   const [skillData, setSkillData] = useState(null);
   const [compareData, setCompareData] = useState(null);
@@ -241,18 +252,26 @@ export default function App() {
     setBusy(true); setError('');
     const baseName = draft.name.trim();
     try {
+      const baselineFiles = await readDraftBaselineFiles(draft.baselineFiles);
+      const baselineArchive = await readDraftBaselineZip(draft.baselineZip);
       let created = null;
       // Auto-increment the name if it collides with an existing project (e.g. "Natural Prose" -> "Natural Prose 2").
       for (let attempt = 0; attempt < 30 && !created; attempt += 1) {
         const name = attempt === 0 ? baseName : `${baseName} ${attempt + 1}`;
         try {
-          created = await createProject({ projectName: name, goal: draft.goal, targetIterations: draft.targetIterations || 3, triggerMode: 'manual' });
+          created = await createProject({
+            projectName: name,
+            goal: draft.goal,
+            triggerMode: 'manual',
+            baselineFiles,
+            baselineArchive,
+          });
         } catch (err) {
           if (!/already exists/i.test(err.message)) throw err;
         }
       }
       if (!created) throw new Error('Could not find an available name — try a different one.');
-      setDraft({ name: '', goal: '', targetIterations: 3 });
+      setDraft({ name: '', goal: '', baselineFiles: [], baselineZip: null });
       await loadProjects();
       await openProject(created.projectId);
     } catch (err) { setError(err.message); }
@@ -347,6 +366,38 @@ export default function App() {
       )}
     </div>
   );
+}
+
+async function readDraftBaselineFiles(files = []) {
+  if (!files.length) return [];
+  return Promise.all(files.map(file => new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve({
+      path: file.webkitRelativePath || file.name,
+      content: String(reader.result || ''),
+    });
+    reader.onerror = () => reject(reader.error || new Error(`Could not read ${file.name}`));
+    reader.readAsText(file);
+  })));
+}
+
+async function readDraftBaselineZip(file) {
+  if (!file) return null;
+  const buffer = await file.arrayBuffer();
+  return {
+    name: file.name,
+    contentBase64: arrayBufferToBase64(buffer),
+  };
+}
+
+function arrayBufferToBase64(buffer) {
+  const bytes = new Uint8Array(buffer);
+  let binary = '';
+  const chunkSize = 0x8000;
+  for (let offset = 0; offset < bytes.length; offset += chunkSize) {
+    binary += String.fromCharCode(...bytes.subarray(offset, offset + chunkSize));
+  }
+  return btoa(binary);
 }
 
 /* ---------------- front door ---------------- */
@@ -473,6 +524,8 @@ function TrendChip({ latest }) {
 /* ---------------- create ---------------- */
 
 function CreateView({ draft, setDraft, busy, onSubmit, onCancel }) {
+  const baselineCount = draft.baselineFiles?.length || 0;
+  const baselineZip = draft.baselineZip;
   return (
     <div className="create animate-slide-up">
       <div className="crumbs">
@@ -480,7 +533,7 @@ function CreateView({ draft, setDraft, busy, onSubmit, onCancel }) {
       </div>
       <div className="eyebrow">New skill</div>
       <h1>Improve a new skill</h1>
-      <p className="lede">Define what the skill should do and how many improvement loops to run by default.</p>
+      <p className="lede">Define what the skill should do. Optionally start from an existing Agent Skill as the baseline champion.</p>
       <form onSubmit={onSubmit}>
         <label className="field">
           <span>Skill name</span>
@@ -493,9 +546,27 @@ function CreateView({ draft, setDraft, busy, onSubmit, onCancel }) {
             onChange={e => setDraft({ ...draft, goal: e.target.value })} />
         </label>
         <label className="field">
-          <span>Target loops</span>
-          <input className="num" type="number" min="1" value={draft.targetIterations}
-            onChange={e => setDraft({ ...draft, targetIterations: Math.max(1, Number.parseInt(e.target.value, 10) || 1) })} />
+          <span>Baseline skill</span>
+          <div className="upload-grid">
+            <div className="upload-box">
+              <Upload size={17} />
+              <div>
+                <b>{baselineZip ? baselineZip.name : 'Upload zip'}</b>
+                <p>Choose a zipped Agent Skill package. This becomes champion v0.</p>
+              </div>
+              <input type="file" accept=".zip,application/zip" aria-label="Upload baseline skill zip"
+                onChange={e => setDraft({ ...draft, baselineZip: e.target.files?.[0] || null, baselineFiles: [] })} />
+            </div>
+            <div className="upload-box">
+              <Upload size={17} />
+              <div>
+                <b>{baselineCount ? `${baselineCount} file${baselineCount === 1 ? '' : 's'} selected` : 'Upload folder'}</b>
+                <p>Choose a package folder containing `SKILL.md`.</p>
+              </div>
+              <input type="file" multiple webkitdirectory="" aria-label="Upload baseline skill folder"
+                onChange={e => setDraft({ ...draft, baselineFiles: Array.from(e.target.files || []), baselineZip: null })} />
+            </div>
+          </div>
         </label>
         <div className="form-actions">
           <button type="button" className="btn ghost" onClick={onCancel} disabled={busy}>Cancel</button>
@@ -581,7 +652,8 @@ function Project(props) {
               totalLoops={runningLoops} baseRunCount={baseRunCount} defaultIteration={runs + 1} firstRun={runningFirst} />
           ) : (
             <>
-              <RunBar summary={summary} loops={loops} setLoops={setLoops} busy={busy} hasChampion={hasChampion} onStart={onStart} />
+              <NextLoopPremise premise={summary.history?.nextLoopPremise} />
+              <RunBar summary={summary} loops={loops} setLoops={setLoops} busy={busy} onStart={onStart} />
               {runDetail?.recommendation && (
                 <Verdict summary={summary} runDetail={runDetail} comparison={comparison}
                   busy={busy} onStart={onStart} onEvidence={() => onOpenRun(null, 'home')} />
@@ -601,7 +673,23 @@ function Project(props) {
 
 /* ---------------- run control ---------------- */
 
-function RunBar({ summary, loops, setLoops, busy, hasChampion, onStart }) {
+function NextLoopPremise({ premise }) {
+  if (!premise?.notes?.length) return null;
+  return (
+    <div className="premise">
+      <div className="premise-head">
+        <Flag size={15} />
+        <span>Next loop premise</span>
+        {premise.sourceRunId && <em>from {shortRun(premise.sourceRunId)}</em>}
+      </div>
+      <ul>
+        {premise.notes.slice(0, 3).map((note, index) => <li key={index}>{note}</li>)}
+      </ul>
+    </div>
+  );
+}
+
+function RunBar({ summary, loops, setLoops, busy, onStart }) {
   const policy = summary.state.runPolicy || summary.config?.trigger || {};
   const budget = summary.config?.budget || {};
   const usage = summary.state.budgetUsage || {};
@@ -623,7 +711,7 @@ function RunBar({ summary, loops, setLoops, busy, hasChampion, onStart }) {
       </div>
       <button className="btn primary" disabled={busy} onClick={() => onStart(loops)}>
         {busy ? <Loader2 size={16} className="spin" /> : <Play size={16} />}
-        {hasChampion ? 'Start' : 'Start first loop'}
+        {summary.state.runCount > 0 ? 'Start' : 'Start first loop'}
       </button>
     </div>
   );
@@ -632,6 +720,7 @@ function RunBar({ summary, loops, setLoops, busy, hasChampion, onStart }) {
 /* ---------------- running loop ---------------- */
 
 function RunningLoop({ fallbackStage, elapsed, progress, totalLoops, baseRunCount, defaultIteration, firstRun }) {
+  const [openStages, setOpenStages] = useState(() => new Set());
   const events = progress?.events || [];
   // Whether stage 0 is "map the space" vs "deconstruct" is decided by what the run actually did.
   // parameterization.seeded => mapped from scratch (no champion); parameterization.written OR
@@ -666,6 +755,20 @@ function RunningLoop({ fallbackStage, elapsed, progress, totalLoops, baseRunCoun
 
   const iteration = progress?.runNumber || defaultIteration;
   const loopK = Math.min(totalLoops, Math.max(1, iteration - baseRunCount));
+  function toggleStage(key, currentlyOpen) {
+    setOpenStages(prev => {
+      const next = new Set(prev);
+      const closedKey = `closed:${key}`;
+      if (currentlyOpen) {
+        next.delete(key);
+        next.add(closedKey);
+      } else {
+        next.add(key);
+        next.delete(closedKey);
+      }
+      return next;
+    });
+  }
 
   return (
     <div className="card loop-card">
@@ -694,6 +797,10 @@ function RunningLoop({ fallbackStage, elapsed, progress, totalLoops, baseRunCoun
         {view.map((s, i) => {
           const state = i < stageIdx ? 'done' : i === stageIdx ? 'active' : 'upcoming';
           const subs = substepsByStage[s.key] || [];
+          const details = progress?.stageDetails?.[s.key] || [];
+          const autoOpen = state === 'active' && details.length > 0 && !openStages.has(`closed:${s.key}`);
+          const open = openStages.has(s.key) || autoOpen;
+          const expandable = subs.length > 0 || details.length > 0;
           return (
             <div className={`step-row ${state}`} key={s.key}>
               <span className="step-mark">
@@ -702,14 +809,26 @@ function RunningLoop({ fallbackStage, elapsed, progress, totalLoops, baseRunCoun
                   : <span className="step-num">{i + 1}</span>}
               </span>
               <div style={{ flex: 1, minWidth: 0 }}>
-                <div className="step-label">{s.label}</div>
+                <div className="step-title-line">
+                  <div className="step-label">{s.label}</div>
+                  {expandable && (
+                    <button type="button" className="step-expand" aria-expanded={open} onClick={() => toggleStage(s.key, open)}>
+                      {open ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
+                    </button>
+                  )}
+                </div>
                 <div className="step-desc">{state === 'done' && subs.length === 0 ? s.done : s.desc}</div>
-                {subs.length > 0 && (state === 'active' || state === 'done') && (
+                {open && subs.length > 0 && (state === 'active' || state === 'done') && (
                   <div className="substeps">
                     {subs.map((label, n) => (
                       <div className="substep" key={n}><Check size={12} /> {label}</div>
                     ))}
                     {state === 'active' && !completed && <div className="substep working"><Loader2 size={12} className="spin" /> working…</div>}
+                  </div>
+                )}
+                {open && details.length > 0 && (
+                  <div className="stage-detail">
+                    {details.map((detail, n) => <div key={n}>{detail}</div>)}
                   </div>
                 )}
               </div>

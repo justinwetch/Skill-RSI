@@ -14,6 +14,7 @@ export function createManagerArtifact({
   const avoid = collectAvoidance(history);
   const localMaxima = detectLocalMaxima(history);
   const hookFocus = deriveHookFocus({ triggerContext, parameterization });
+  const nextLoopPremise = buildNextLoopPremise(history);
   const experimentFamily = localMaxima.detected ? 'high_divergence_reset' : 'standard_focused_ab';
   const explorationLevel = localMaxima.detected ? 'high' : avoid.parameterIds.length ? 'guarded' : 'normal';
 
@@ -26,6 +27,7 @@ export function createManagerArtifact({
     createdAt,
     currentChampionAtStart: state.currentChampion || null,
     selectedPriorArtifacts: selectPriorArtifacts(history),
+    nextLoopPremise,
     trigger: summarizeTrigger(triggerContext, hookFocus),
     avoid,
     localMaxima,
@@ -41,7 +43,7 @@ export function createManagerArtifact({
         ? 'Plan a high-divergence or reset experiment instead of another small local mutation.'
         : 'Plan a focused A/B experiment against the highest-leverage current parameter.',
       candidatePool: summarizeParameterPool(parameterization, avoid.parameterIds),
-      plannerInstructions: buildPlannerInstructions({ avoid, localMaxima, hookFocus }),
+      plannerInstructions: buildPlannerInstructions({ avoid, localMaxima, hookFocus, nextLoopPremise }),
     },
     finalAction: null,
   };
@@ -206,8 +208,11 @@ function summarizeParameterPool(parameterization, avoidIds) {
   }));
 }
 
-function buildPlannerInstructions({ avoid, localMaxima, hookFocus }) {
+function buildPlannerInstructions({ avoid, localMaxima, hookFocus, nextLoopPremise }) {
   const instructions = [];
+  if (nextLoopPremise?.notes?.length) {
+    instructions.push(`Use the prior analyst recommendation as this loop's premise: ${nextLoopPremise.notes.join(' | ')}.`);
+  }
   if (hookFocus.focusParameterIds.length) {
     instructions.push(`Prioritize hook-focused parameters when feasible: ${hookFocus.focusParameterIds.join(', ')}.`);
   }
@@ -224,6 +229,19 @@ function buildPlannerInstructions({ avoid, localMaxima, hookFocus }) {
     instructions.push('Choose one to three related high-priority parameters and keep the rest controlled.');
   }
   return instructions;
+}
+
+function buildNextLoopPremise(history) {
+  const notes = Array.isArray(history?.recentNextExperimentNotes)
+    ? history.recentNextExperimentNotes.filter(Boolean)
+    : [];
+  if (!notes.length) return null;
+  const sourceRun = Array.isArray(history?.trajectory) ? history.trajectory.at(-1) : null;
+  return {
+    sourceRunId: sourceRun?.runId || null,
+    sourceDecision: sourceRun?.decision || null,
+    notes: notes.slice(0, 6),
+  };
 }
 
 function summarizeTrigger(triggerContext, hookFocus) {

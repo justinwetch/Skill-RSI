@@ -74,6 +74,8 @@ async function handleApi(request, response, url) {
       goal: body.goal || '',
       targetIterations: body.targetIterations || 3,
       triggerMode: body.triggerMode || 'manual',
+      baselineFiles: body.baselineFiles || [],
+      baselineArchive: body.baselineArchive || null,
     }));
     return;
   }

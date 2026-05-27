@@ -6,6 +6,7 @@ import path from 'node:path';
 import { runProject } from '../src/lib/run-loop.js';
 import { initProject } from '../src/lib/init.js';
 import { getProjectPaths } from '../src/lib/paths.js';
+import { createProjectForUi } from '../src/lib/ui-api.js';
 
 test('stub mode completes a three-loop vertical slice', async () => {
   const cwd = await fs.mkdtemp(path.join(os.tmpdir(), 'skill-rsi-test-'));
@@ -658,6 +659,65 @@ test('agentic first run persists research packet and quality-gated ontology arti
   assert.equal(ontologyCalls, 2);
   assert.ok(ontologyQuality.revisedFrom);
   assert.equal(deconstructionQuality.status, 'pass');
+});
+
+test('agentic baseline projects skip ontology and start from deconstruction', async () => {
+  const cwd = await fs.mkdtemp(path.join(os.tmpdir(), 'skill-rsi-agentic-baseline-'));
+  await createProjectForUi({
+    cwd,
+    projectName: 'Baseline Agentic',
+    goal: 'Improve the uploaded baseline skill.',
+    baselineFiles: [{
+      path: 'SKILL.md',
+      content: `---
+name: baseline-agentic
+description: Use when improving an uploaded baseline skill.
+---
+
+# Baseline Skill
+
+Follow the existing workflow.
+`,
+    }],
+  });
+
+  const result = await runProject({
+    cwd,
+    projectName: 'Baseline Agentic',
+    goal: 'Improve the uploaded baseline skill.',
+    loops: 1,
+    mode: 'agentic',
+    evalMode: 'mock',
+    generationModel: 'fake-gen-model',
+    judgeModel: 'fake-judge-model',
+    agentModel: 'fake-agent-model',
+    modelClient: async request => {
+      const prompt = request.messages[0].content;
+      if (prompt.includes('Ontology Agent')) throw new Error('baseline run should not call ontology');
+      if (prompt.includes('Deconstruction and Parameterization Agent')) {
+        assert.match(prompt, /Baseline Skill/);
+        return JSON.stringify(fakeRichParameterization());
+      }
+      if (prompt.includes('Experiment Planner')) return JSON.stringify(fakeExperimentPlan());
+      if (prompt.includes('Assigned experiment arm: candidateB')) return JSON.stringify(fakeCreator('candidate-b', 'candidateB', 'Embedded boundary policy'));
+      if (prompt.includes('Assigned experiment arm: candidateA')) return JSON.stringify(fakeCreator('candidate-a', 'candidateA', 'Description-only tightening'));
+      if (prompt.includes('Interpret this Skill RSI run')) return JSON.stringify({
+        runId: 'analyst',
+        decision: 'promote',
+        recommendedChampionCandidateId: 'candidate-a',
+        confidence: 'medium',
+        reasoning: 'Candidate A improved the uploaded baseline.',
+        observations: ['Baseline was deconstructed directly.'],
+        nextRoundGuidance: { vary: 'next baseline weakness', preserve: 'baseline strengths', investigate: 'durability' },
+      });
+      if (prompt.includes('adversarial reviewer')) return JSON.stringify({ blockingIssues: [], recommendedEdits: [], nonIssues: ['stub review'], overfittingRisk: 'low' });
+      throw new Error(`Unexpected prompt: ${prompt.slice(0, 120)}`);
+    },
+  });
+
+  const runId = result.completedRuns[0].runId;
+  const timeline = await fs.readFile(path.join(result.paths.runsDir, runId, 'timeline.jsonl'), 'utf8');
+  assert.match(timeline, /ontology\.skipped_for_baseline/);
 });
 
 test('agentic mode completes cleanly when candidate review blocks evaluation', async () => {

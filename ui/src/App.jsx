@@ -994,7 +994,8 @@ function Project(props) {
 
           {screen === 'running' ? (
             <RunningLoop fallbackStage={stageIdx} elapsed={elapsed} progress={progress}
-              totalLoops={runningLoops} baseRunCount={baseRunCount} defaultIteration={runs + 1} firstRun={runningFirst} />
+              totalLoops={runningLoops} baseRunCount={baseRunCount} defaultIteration={runs + 1}
+              firstRun={runningFirst} premise={summary.history?.nextLoopPremise} />
           ) : (
             <>
               <NextLoopPremise premise={summary.history?.nextLoopPremise} />
@@ -1079,7 +1080,7 @@ function formatTaskContract(taskContract) {
 
 /* ---------------- running loop ---------------- */
 
-function RunningLoop({ fallbackStage, elapsed, progress, totalLoops, baseRunCount, defaultIteration, firstRun }) {
+function RunningLoop({ fallbackStage, elapsed, progress, totalLoops, baseRunCount, defaultIteration, firstRun, premise }) {
   const [openStages, setOpenStages] = useState(() => new Set());
   const events = progress?.events || [];
   // Whether stage 0 is "map the space" vs "deconstruct" is decided by what the run actually did.
@@ -1115,6 +1116,7 @@ function RunningLoop({ fallbackStage, elapsed, progress, totalLoops, baseRunCoun
 
   const iteration = progress?.runNumber || defaultIteration;
   const loopK = Math.min(totalLoops, Math.max(1, iteration - baseRunCount));
+  const intent = getLoopIntent({ progress, stageIdx, stage0First, premise });
   function toggleStage(key, currentlyOpen) {
     setOpenStages(prev => {
       const next = new Set(prev);
@@ -1141,6 +1143,11 @@ function RunningLoop({ fallbackStage, elapsed, progress, totalLoops, baseRunCoun
           </div>
         </div>
         <span className="pill success"><span className="dot live" /> Running · {fmtElapsed(elapsed)}</span>
+      </div>
+
+      <div className="loop-intent">
+        <Flag size={15} />
+        <span>{intent}</span>
       </div>
 
       <div className="pipeline">
@@ -1202,6 +1209,42 @@ function RunningLoop({ fallbackStage, elapsed, progress, totalLoops, baseRunCoun
       </p>
     </div>
   );
+}
+
+function getLoopIntent({ progress, stageIdx, stage0First, premise }) {
+  const details = progress?.stageDetails || {};
+  const planQuestion = findDetailValue(details.plan, 'Question:');
+  const planArms = findDetailValue(details.plan, 'Arms:');
+  const decision = findDetailValue(details.decide, 'Decision:');
+  const tryNext = findDetailValue(details.decide, 'Try next:');
+  const currentStage = STAGE_KEYS[Math.min(stageIdx, STAGE_KEYS.length - 1)] || 'deconstruct';
+
+  if (decision) return `Decision: ${decision}${tryNext ? `; next: ${tryNext}` : ''}`;
+  if (currentStage === 'evaluate') {
+    return planQuestion
+      ? `Evaluating: ${planQuestion}`
+      : 'Evaluating candidate A vs. B against the prompt bank';
+  }
+  if (currentStage === 'review') {
+    return planQuestion
+      ? `Reviewing candidates for: ${planQuestion}`
+      : 'Reviewing whether both candidates are valid enough to evaluate';
+  }
+  if (currentStage === 'generate') {
+    return planArms
+      ? `Generating variants: ${planArms}`
+      : 'Generating two focused candidate skill variants';
+  }
+  if (planQuestion) return `Testing: ${planQuestion}`;
+  if (premise?.notes?.length) return `Premise: ${premise.notes[0]}`;
+  return stage0First
+    ? 'Mapping the skill space and creating first candidates'
+    : 'Deconstructing the current champion and planning the next ablation';
+}
+
+function findDetailValue(details = [], prefix) {
+  const match = details.find(detail => typeof detail === 'string' && detail.startsWith(prefix));
+  return match ? match.slice(prefix.length).trim() : '';
 }
 
 function Stage({ state, label, Icon, line, lineFilled }) {

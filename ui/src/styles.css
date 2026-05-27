@@ -258,6 +258,8 @@ input:focus, textarea:focus, select:focus, .num:focus { outline: none; border-co
 .loop-card { margin-bottom: 24px; }
 .loop-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 22px; }
 .loop-head .it { font-size: 1.15rem; font-weight: 600; }
+.loop-intent { display: flex; align-items: center; gap: 9px; margin: -6px 0 20px; padding: 11px 13px; border-radius: var(--radius-md); background: var(--color-bg-tertiary); color: var(--color-text-primary); font-size: 13.5px; line-height: 1.45; }
+.loop-intent svg { flex-shrink: 0; color: var(--color-text-secondary); }
 .pipeline { display: flex; align-items: flex-start; justify-content: space-between; gap: 2px; margin-bottom: 22px; }
 .stage { display: flex; flex-direction: column; align-items: center; gap: 8px; width: 94px; text-align: center; }
 .stage-node { width: 34px; height: 34px; border-radius: 50%; display: flex; align-items: center; justify-content: center; background: var(--color-bg-tertiary); color: var(--color-text-muted); border: 1px solid var(--color-border); transition: background 0.2s, color 0.2s; }

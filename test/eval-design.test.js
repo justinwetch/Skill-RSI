@@ -309,6 +309,35 @@ test('invalid prompt repair records deterministic fallback provenance when repai
   assert.equal(design.prompts[0].promptAuthoring.source, 'deterministic_fallback');
 });
 
+test('strict prompt naturalization fails instead of using deterministic fallback', async () => {
+  const design = designEvalBatch({
+    runId: 'run-naturalized-strict',
+    goal: 'Help agents implement code artifacts.',
+    ontology: { qualityAxes: ['artifact completeness'], targetTasks: ['build a utility'] },
+    parameterization: { parameters: [{ id: 'p01', surface: 'missing-context behavior' }] },
+    experimentPlan: { focusParameterIds: ['p01'] },
+    outputType: 'code',
+    stablePromptCount: 1,
+    explorationPromptCount: 0,
+  });
+
+  await assert.rejects(
+    naturalizeEvalPrompts({
+      design,
+      goal: 'Help agents implement code artifacts.',
+      model: 'fake-judge-model',
+      outputType: 'code',
+      strict: true,
+      modelClient: async () => JSON.stringify({ prompts: ['Update the existing app to add search.'] }),
+    }),
+    error => {
+      assert.equal(error.name, 'PromptAuthoringError');
+      assert.equal(error.provenance.fallbackPromptCount, 1);
+      return true;
+    },
+  );
+});
+
 test('evaluation designer creates contract-valid codebase edit prompts', () => {
   const design = designEvalBatch({
     runId: 'run-codebase-edit',

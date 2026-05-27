@@ -613,6 +613,92 @@ test('agentic mode runs real agent contracts with an injected model client', asy
   assert.equal(plan.arms.candidateB.strategyName, 'Embedded boundary policy');
 });
 
+test('agentic real eval fails when prompt authoring remains contract-invalid', async () => {
+  const cwd = await fs.mkdtemp(path.join(os.tmpdir(), 'skill-rsi-agentic-prompt-fail-'));
+  await createProjectForUi({
+    cwd,
+    projectName: 'UX Design Prompt Failure',
+    goal: 'Help agents design better UX.',
+    outputType: 'code',
+    taskContract: { id: 'code_standalone' },
+  });
+
+  await assert.rejects(
+    runProject({
+      cwd,
+      projectName: 'UX Design Prompt Failure',
+      goal: 'Help agents design better UX.',
+      loops: 1,
+      mode: 'agentic',
+      evalMode: 'real',
+      generationModel: 'fake-gen-model',
+      judgeModel: 'fake-judge-model',
+      agentModel: 'fake-agent-model',
+      modelClient: async request => {
+        const prompt = request.messages[0].content;
+        if (prompt.includes('Ontology Agent')) return JSON.stringify(fakeOntology());
+        if (prompt.includes('Parameterization Agent')) return JSON.stringify(fakeParameterization());
+        if (prompt.includes('Experiment Planner')) return JSON.stringify(fakeExperimentPlan());
+        if (prompt.includes('Assigned experiment arm: candidateB')) return JSON.stringify(fakeCreator('candidate-b', 'candidateB', 'Embedded boundary policy'));
+        if (prompt.includes('Assigned experiment arm: candidateA')) return JSON.stringify(fakeCreator('candidate-a', 'candidateA', 'Description-only tightening'));
+        if (prompt.includes('Generate the evaluation criteria')) return JSON.stringify({
+          criteria: [
+            { id: 'clarity', name: 'Clarity', description: 'Clear output', rubric: { 5: 'great', 3: 'ok', 1: 'bad' } },
+            { id: 'usefulness', name: 'Usefulness', description: 'Useful output', rubric: { 5: 'great', 3: 'ok', 1: 'bad' } },
+            { id: 'specificity', name: 'Specificity', description: 'Specific output', rubric: { 5: 'great', 3: 'ok', 1: 'bad' } },
+          ],
+        });
+        if (prompt.includes('Write 10 realistic')) return JSON.stringify({
+          prompts: Array.from({ length: 10 }, () => 'Update the existing app to add search.'),
+        });
+        throw new Error(`Unexpected prompt: ${prompt.slice(0, 80)}`);
+      },
+    }),
+    /Prompt authoring failed/,
+  );
+
+  const paths = getProjectPaths(cwd, 'UX Design Prompt Failure');
+  const runIds = await fs.readdir(paths.runsDir);
+  const timeline = await fs.readFile(path.join(paths.runsDir, runIds[0], 'timeline.jsonl'), 'utf8');
+  assert.match(timeline, /eval_prompts\.failed/);
+  assert.match(timeline, /run\.failed/);
+});
+
+test('agentic real eval fails when first-run criteria authoring fails', async () => {
+  const cwd = await fs.mkdtemp(path.join(os.tmpdir(), 'skill-rsi-agentic-criteria-fail-'));
+
+  await assert.rejects(
+    runProject({
+      cwd,
+      projectName: 'UX Design Criteria Failure',
+      goal: 'Help agents design better UX.',
+      loops: 1,
+      mode: 'agentic',
+      evalMode: 'real',
+      generationModel: 'fake-gen-model',
+      judgeModel: 'fake-judge-model',
+      agentModel: 'fake-agent-model',
+      modelClient: async request => {
+        const prompt = request.messages[0].content;
+        if (prompt.includes('Ontology Agent')) return JSON.stringify(fakeOntology());
+        if (prompt.includes('Parameterization Agent')) return JSON.stringify(fakeParameterization());
+        if (prompt.includes('Experiment Planner')) return JSON.stringify(fakeExperimentPlan());
+        if (prompt.includes('Assigned experiment arm: candidateB')) return JSON.stringify(fakeCreator('candidate-b', 'candidateB', 'Embedded boundary policy'));
+        if (prompt.includes('Assigned experiment arm: candidateA')) return JSON.stringify(fakeCreator('candidate-a', 'candidateA', 'Description-only tightening'));
+        if (prompt.includes('Generate the evaluation criteria')) return JSON.stringify({ criteria: [] });
+        throw new Error(`Unexpected prompt: ${prompt.slice(0, 80)}`);
+      },
+    }),
+    /Criteria authoring failed/,
+  );
+
+  const paths = getProjectPaths(cwd, 'UX Design Criteria Failure');
+  const runIds = await fs.readdir(paths.runsDir);
+  const timeline = await fs.readFile(path.join(paths.runsDir, runIds[0], 'timeline.jsonl'), 'utf8');
+  assert.match(timeline, /criteria\.fallback/);
+  assert.match(timeline, /run\.failed/);
+});
+
 test('agentic first run persists research packet and quality-gated ontology artifacts', async () => {
   const cwd = await fs.mkdtemp(path.join(os.tmpdir(), 'skill-rsi-agentic-research-'));
   const calls = [];

@@ -144,7 +144,16 @@ export async function generateEvalCriteria({ goal, candidateA, candidateB, model
   }
 }
 
-export async function naturalizeEvalPrompts({ design, goal, model, apiKeys = {}, modelClient = null, outputType = 'text', taskContract = null }) {
+export async function naturalizeEvalPrompts({
+  design,
+  goal,
+  model,
+  apiKeys = {},
+  modelClient = null,
+  outputType = 'text',
+  taskContract = null,
+  strict = false,
+}) {
   if (!design) return null;
   if (!model) {
     const promptIds = new Set((design.prompts || []).map(prompt => prompt.id));
@@ -155,6 +164,7 @@ export async function naturalizeEvalPrompts({ design, goal, model, apiKeys = {},
       totalPrompts: design.prompts?.length || 0,
     });
     applyPromptAuthoringProvenance(design, provenance, new Set(), promptIds);
+    if (strict) throw createPromptAuthoringError('Prompt authoring model is required for real eval runs.', provenance);
     return provenance;
   }
   const contract = normalizeTaskContract(taskContract, outputType);
@@ -199,6 +209,7 @@ export async function naturalizeEvalPrompts({ design, goal, model, apiKeys = {},
       fallbackPromptIds: targets.map(prompt => prompt.id),
       failureReason: 'model_prompt_generation_failed_or_unparseable',
     });
+    if (strict) throw createPromptAuthoringError('Prompt authoring failed: model output was unavailable or unparseable.', provenance);
     applyPromptAuthoringProvenance(design, provenance, fallbackIds, fallbackIds);
     return provenance;
   }
@@ -243,16 +254,6 @@ export async function naturalizeEvalPrompts({ design, goal, model, apiKeys = {},
       },
     });
   });
-  const apply = list => (Array.isArray(list)
-    ? list.map(prompt => (replacement.has(prompt.id) ? { ...prompt, ...replacement.get(prompt.id) } : prompt))
-    : list);
-
-  design.prompts = apply(design.prompts);
-  if (design.bank) {
-    design.bank.stablePrompts = apply(design.bank.stablePrompts);
-    design.bank.provisionalPrompts = apply(design.bank.provisionalPrompts);
-    design.bank.explorationPrompts = apply(design.bank.explorationPrompts);
-  }
   const provenance = createPromptAuthoringProvenance({
     source: fallbackIds.size === targets.length ? 'deterministic_fallback' : fallbackIds.size ? 'mixed' : 'model_naturalized',
     attemptedModel: true,
@@ -265,9 +266,30 @@ export async function naturalizeEvalPrompts({ design, goal, model, apiKeys = {},
       .map(index => targets[index])
       .filter(prompt => !fallbackIds.has(prompt.id))
       .map(prompt => prompt.id),
+    failureReason: fallbackIds.size ? 'model_prompt_generation_remained_contract_invalid_after_repair' : null,
   });
+  if (strict && fallbackIds.size > 0) {
+    throw createPromptAuthoringError('Prompt authoring failed: generated prompts remained contract-invalid after repair.', provenance);
+  }
+  const apply = list => (Array.isArray(list)
+    ? list.map(prompt => (replacement.has(prompt.id) ? { ...prompt, ...replacement.get(prompt.id) } : prompt))
+    : list);
+
+  design.prompts = apply(design.prompts);
+  if (design.bank) {
+    design.bank.stablePrompts = apply(design.bank.stablePrompts);
+    design.bank.provisionalPrompts = apply(design.bank.provisionalPrompts);
+    design.bank.explorationPrompts = apply(design.bank.explorationPrompts);
+  }
   applyPromptAuthoringProvenance(design, provenance, fallbackIds);
   return provenance;
+}
+
+function createPromptAuthoringError(message, provenance) {
+  const error = new Error(message);
+  error.name = 'PromptAuthoringError';
+  error.provenance = provenance;
+  return error;
 }
 
 async function requestNaturalizedPromptTexts({ call, model, apiKeys, goal, slots, outputType, contract, count, repairHint = '' }) {

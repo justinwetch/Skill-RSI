@@ -1097,9 +1097,12 @@ async function runAgenticLoop({
         });
       } else {
         await appendTimeline(runPaths.timelineJsonl, 'criteria.fallback', {
-          mode: 'deterministic',
+          mode: evalMode === 'real' ? 'failed' : 'deterministic',
           reason: 'model_criteria_generation_failed_or_unavailable',
         });
+        if (evalMode === 'real') {
+          throw new Error('Criteria authoring failed: model criteria generation is required for real eval runs.');
+        }
       }
     } else {
       await appendTimeline(runPaths.timelineJsonl, 'criteria.reused', {
@@ -1121,16 +1124,29 @@ async function runAgenticLoop({
       outputType: evalOutputType,
       taskContract,
     });
-    // SkillEval-style: have the model write realistic eval prompts (falls back to templates on failure)
-    const promptAuthoring = await naturalizeEvalPrompts({
-      design: evalDesign,
-      goal,
-      model: judgeModel || agentModel,
-      apiKeys,
-      modelClient: agentClient,
-      outputType: evalOutputType,
-      taskContract,
-    });
+    // SkillEval-style: have the model write realistic eval prompts. Real eval treats
+    // invalid prompt authoring as a run failure; mock/dev modes can keep templates.
+    let promptAuthoring;
+    try {
+      promptAuthoring = await naturalizeEvalPrompts({
+        design: evalDesign,
+        goal,
+        model: judgeModel || agentModel,
+        apiKeys,
+        modelClient: agentClient,
+        outputType: evalOutputType,
+        taskContract,
+        strict: evalMode === 'real',
+      });
+    } catch (error) {
+      await appendTimeline(runPaths.timelineJsonl, 'eval_prompts.failed', {
+        mode: evalMode,
+        model: judgeModel || agentModel,
+        reason: error.message,
+        provenance: error.provenance || null,
+      });
+      throw error;
+    }
     await appendTimeline(runPaths.timelineJsonl, 'eval_prompts.generated', {
       mode: 'real',
       model: judgeModel || agentModel,

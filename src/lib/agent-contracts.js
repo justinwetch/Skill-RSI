@@ -80,6 +80,7 @@ export async function runAgentContract({
     championPackage: await readChampionPackage(paths),
     history: await readJson(paths.historyIndex, null),
     agentSkillsStandard: ['creator', 'ontology', 'deconstructor'].includes(agentName) ? await readAgentSkillsStandard(cwd) : null,
+    skillCreatorGuidance: agentName === 'creator' ? await readSkillCreatorGuidance(cwd) : null,
   };
   const prompt = buildAgentPrompt({ agentName, context });
   const realResult = mode === 'mock'
@@ -480,6 +481,12 @@ You are writing a REAL, portable Agent Skill for end users — NOT a Skill RSI a
 ${context.agentSkillsStandard || '(standard unavailable)'}
 === END STANDARD ===
 
+Use the Skill Creator guidance below to make quality and packaging decisions. It is guidance, not permission to violate the Agent Skills standard or assigned experiment arm.
+
+=== SKILL CREATOR GUIDANCE ===
+${context.skillCreatorGuidance || '(skill creator guidance unavailable)'}
+=== END SKILL CREATOR GUIDANCE ===
+
 Authoring rules for this package, on top of that standard:
 - Frontmatter: include the required name and description; add an optional key (license, compatibility, metadata, allowed-tools) only if it genuinely applies, and put extras like author/version INSIDE metadata. Never invent non-spec top-level keys such as id, status, audience, summary, or a top-level version.
 - name: a lowercase-hyphen slug reflecting the skill's purpose (e.g. "reddit-content-writer"), NEVER the Skill RSI candidate id.
@@ -864,14 +871,50 @@ export async function readChampionPackage(paths) {
 // The real Agent Skills standard, extracted to docs/agent-skills-standard.md and fed to the
 // creator so packages conform to the actual spec. Falls back to a compact rule set if missing.
 export async function readAgentSkillsStandard(cwd) {
-  try {
-    return await fs.readFile(path.join(cwd, 'docs', 'agent-skills-standard.md'), 'utf8');
-  } catch {
-    return [
-      'Agent Skills standard (fallback): a skill is a directory with a root SKILL.md.',
-      'Frontmatter requires only `name` (1-64 chars, lowercase letters/digits/hyphens, no leading/trailing or double hyphen) and `description` (1-1024 chars, says what it does and when to use it).',
-      'Optional top-level keys: license, compatibility, metadata (a string→string map — put author/version here), allowed-tools. No other top-level keys (no id, status, audience, summary, top-level version).',
-      'Keep SKILL.md under ~500 lines; move detail into references/, scripts/, assets/ and link with relative paths.',
-    ].join('\n');
+  const candidates = [
+    path.join(cwd, 'docs', 'agent-skills-standard.md'),
+    new URL('../../docs/agent-skills-standard.md', import.meta.url),
+  ];
+  for (const candidate of candidates) {
+    try {
+      return await fs.readFile(candidate, 'utf8');
+    } catch {
+      // Try the next known location.
+    }
   }
+
+  return [
+    'Agent Skills standard (fallback): a skill is a directory with a root SKILL.md.',
+    'Frontmatter requires only `name` (1-64 chars, lowercase letters/digits/hyphens, no leading/trailing or double hyphen) and `description` (1-1024 chars, says what it does and when to use it).',
+    'Optional top-level keys: license, compatibility, metadata (a string→string map — put author/version here), allowed-tools. No other top-level keys (no id, status, audience, summary, top-level version).',
+    'Keep SKILL.md under ~500 lines; move detail into references/, scripts/, assets/ and link with relative paths.',
+  ].join('\n');
+}
+
+export async function readSkillCreatorGuidance(cwd) {
+  const candidates = [
+    path.join(cwd, 'docs', 'skill-creator-guidance.md'),
+    new URL('../../docs/skill-creator-guidance.md', import.meta.url),
+    process.env.CODEX_HOME
+      ? path.join(process.env.CODEX_HOME, 'skills', '.system', 'skill-creator', 'SKILL.md')
+      : null,
+    process.env.HOME
+      ? path.join(process.env.HOME, '.codex', 'skills', '.system', 'skill-creator', 'SKILL.md')
+      : null,
+  ].filter(Boolean);
+
+  for (const candidate of candidates) {
+    try {
+      return await fs.readFile(candidate, 'utf8');
+    } catch {
+      // Try the next known location.
+    }
+  }
+
+  return [
+    'Skill Creator guidance (fallback): keep SKILL.md concise and production-facing.',
+    'Move detailed domain knowledge, examples, schemas, and variant playbooks into references/ with clear loading cues.',
+    'Use scripts/ for fragile deterministic work and assets/ for output resources.',
+    'Do not include Skill RSI run IDs, candidate IDs, eval prompts, judge/scoring language, or auxiliary README/changelog/process docs in generated packages.',
+  ].join('\n');
 }

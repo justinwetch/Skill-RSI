@@ -324,6 +324,26 @@ test('creator artifacts can be materialized into candidate skill packages', asyn
   );
 });
 
+test('creator prompt includes Agent Skills standard and Skill Creator guidance', async () => {
+  const cwd = await fs.mkdtemp(path.join(os.tmpdir(), 'skill-rsi-creator-guidance-'));
+  await initProject({ cwd, projectName: 'UX Design', goal: 'Help agents design better UX.' });
+
+  const result = await runAgentContract({
+    cwd,
+    projectName: 'ux-design',
+    agentName: 'creator',
+    runId: 'creator-guidance',
+    mode: 'mock',
+    experimentArm: 'candidateA',
+  });
+
+  assert.match(result.prompt, /=== AGENT SKILLS STANDARD ===/);
+  assert.match(result.prompt, /=== SKILL CREATOR GUIDANCE ===/);
+  assert.match(result.prompt, /Keep `SKILL\.md` concise/);
+  assert.match(result.prompt, /Progressive disclosure/);
+  assert.match(result.prompt, /Do not create auxiliary documentation/);
+});
+
 test('real creator contract normalizes omitted optional list fields', async () => {
   const cwd = await fs.mkdtemp(path.join(os.tmpdir(), 'skill-rsi-creator-normalize-'));
   await initProject({ cwd, projectName: 'UX Design', goal: 'Help agents design better UX.' });

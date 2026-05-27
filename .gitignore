@@ -1,0 +1,8 @@
+node_modules/
+ui/dist/
+.skill-rsi/
+.env
+.env.*
+!.env.example
+.gh-config/
+.DS_Store

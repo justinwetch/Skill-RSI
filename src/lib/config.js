@@ -22,12 +22,19 @@ export const DEFAULT_PROJECT_CONFIG = {
     // Margins a challenger must clear over the current champion to be promoted.
     minScoreDelta: 4,
     minWinDelta: 2,
+    maxStablePromptRegression: 2,
+    minEvalCompletionRate: 0.8,
   },
   eval: {
     stablePromptCount: 6,
     explorationPromptCount: 4,
     outputType: 'text',
     visualRunner: false,
+    retryPolicy: {
+      generationMaxAttempts: 2,
+      judgeMaxAttempts: 2,
+      backoffMs: 0,
+    },
   },
   models: {
     agent: 'gpt-5.4-mini',       // ontology, deconstructor, planner, creator, reviewer, analyst
@@ -55,7 +62,7 @@ export function normalizeProjectConfig(raw) {
   return {
     trigger: normalizeTrigger(r.trigger),
     budget: normalizeBudget(r.budget),
-    promotion: mergeSection(DEFAULT_PROJECT_CONFIG.promotion, r.promotion),
+    promotion: normalizePromotion(r.promotion),
     eval: normalizeEval(r.eval),
     models: normalizeModels(r.models),
     portability: mergeSection(DEFAULT_PROJECT_CONFIG.portability, r.portability),
@@ -91,6 +98,22 @@ function normalizeBudget(raw) {
   };
 }
 
+function normalizePromotion(raw) {
+  const promotion = mergeSection(DEFAULT_PROJECT_CONFIG.promotion, raw);
+  return {
+    minScoreDelta: normalizePositiveInt(promotion.minScoreDelta, DEFAULT_PROJECT_CONFIG.promotion.minScoreDelta),
+    minWinDelta: normalizePositiveInt(promotion.minWinDelta, DEFAULT_PROJECT_CONFIG.promotion.minWinDelta),
+    maxStablePromptRegression: normalizePositiveInt(
+      promotion.maxStablePromptRegression,
+      DEFAULT_PROJECT_CONFIG.promotion.maxStablePromptRegression,
+    ),
+    minEvalCompletionRate: normalizeUnitNumber(
+      promotion.minEvalCompletionRate,
+      DEFAULT_PROJECT_CONFIG.promotion.minEvalCompletionRate,
+    ),
+  };
+}
+
 function normalizeEval(raw) {
   const evalConfig = mergeSection(DEFAULT_PROJECT_CONFIG.eval, raw);
   return {
@@ -99,6 +122,22 @@ function normalizeEval(raw) {
     explorationPromptCount: normalizePositiveInt(evalConfig.explorationPromptCount, DEFAULT_PROJECT_CONFIG.eval.explorationPromptCount),
     outputType: evalConfig.outputType === 'text' ? 'text' : 'text',
     visualRunner: Boolean(evalConfig.visualRunner),
+    retryPolicy: normalizeRetryPolicy(evalConfig.retryPolicy),
+  };
+}
+
+function normalizeRetryPolicy(raw) {
+  const retryPolicy = mergeSection(DEFAULT_PROJECT_CONFIG.eval.retryPolicy, raw);
+  return {
+    generationMaxAttempts: normalizePositiveInt(
+      retryPolicy.generationMaxAttempts,
+      DEFAULT_PROJECT_CONFIG.eval.retryPolicy.generationMaxAttempts,
+    ),
+    judgeMaxAttempts: normalizePositiveInt(
+      retryPolicy.judgeMaxAttempts,
+      DEFAULT_PROJECT_CONFIG.eval.retryPolicy.judgeMaxAttempts,
+    ),
+    backoffMs: normalizeNonNegativeNumber(retryPolicy.backoffMs, DEFAULT_PROJECT_CONFIG.eval.retryPolicy.backoffMs),
   };
 }
 
@@ -133,4 +172,9 @@ function normalizeNullablePositiveNumber(value) {
 function normalizeNonNegativeNumber(value, fallback) {
   const number = Number(value);
   return Number.isFinite(number) && number >= 0 ? number : fallback;
+}
+
+function normalizeUnitNumber(value, fallback) {
+  const number = Number(value);
+  return Number.isFinite(number) && number >= 0 && number <= 1 ? number : fallback;
 }

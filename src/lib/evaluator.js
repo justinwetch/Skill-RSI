@@ -21,9 +21,11 @@ export async function runHeadlessEval({
   modelClient = callModel,
   maxTokens = 8192,
   judgeMaxTokens = 4096,
+  retryPolicy = {},
 }) {
   const startedAt = new Date().toISOString();
   const startedMs = Date.now();
+  const normalizedRetryPolicy = normalizeRetryPolicy(retryPolicy);
   if (!['mock', 'real'].includes(mode)) {
     throw new Error('Evaluator mode must be mock or real');
   }
@@ -66,6 +68,7 @@ export async function runHeadlessEval({
       modelClient,
       maxTokens,
       judgeMaxTokens,
+      retryPolicy: normalizedRetryPolicy,
     });
 
   const stats = summarizeEvaluations(evaluations);
@@ -81,6 +84,7 @@ export async function runHeadlessEval({
       judgeModel: judgeModel || null,
       generationMaxTokens: maxTokens,
       judgeMaxTokens,
+      retryPolicy: normalizedRetryPolicy,
     },
     timing: {
       startedAt,
@@ -92,6 +96,12 @@ export async function runHeadlessEval({
       skillB: summarizeSkill(skillB),
     },
     blindLabels,
+    hashes: {
+      skillA: skillA.hash,
+      skillB: skillB.hash,
+      prompts: hashJson(prompts),
+      criteria: hashJson(criteria),
+    },
     prompts,
     criteria,
     evaluations,
@@ -155,40 +165,65 @@ async function evaluateRealPrompts({
   modelClient,
   maxTokens,
   judgeMaxTokens,
+  retryPolicy,
 }) {
   const evaluations = [];
 
   for (let index = 0; index < prompts.length; index += 1) {
     const prompt = prompts[index];
+    const promptStarted = Date.now();
     const [resultA, resultB] = await Promise.all([
-      generateSkillOutput({ skill: skillA, prompt, model: generationModel, apiKeys, modelClient, maxTokens }),
-      generateSkillOutput({ skill: skillB, prompt, model: generationModel, apiKeys, modelClient, maxTokens }),
+      generateSkillOutput({ skill: skillA, prompt, model: generationModel, apiKeys, modelClient, maxTokens, retryPolicy }),
+      generateSkillOutput({ skill: skillB, prompt, model: generationModel, apiKeys, modelClient, maxTokens, retryPolicy }),
     ]);
-    const judge = await judgeRealOutputs({
-      prompt,
-      criteria,
-      resultA,
-      resultB,
-      model: judgeModel,
-      apiKeys,
-      modelClient,
-      maxTokens: judgeMaxTokens,
-      blindLabels,
-    });
+    const judge = resultA.status === 'complete' && resultB.status === 'complete'
+      ? await judgeRealOutputs({
+        prompt,
+        criteria,
+        resultA,
+        resultB,
+        model: judgeModel,
+        apiKeys,
+        modelClient,
+        maxTokens: judgeMaxTokens,
+        blindLabels,
+        retryPolicy,
+      })
+      : createSkippedJudge({
+        reason: 'generation_failed',
+        failures: [
+          ...normalizeArray(resultA.failures).map(failure => ({ ...failure, sourceSkill: 'skillA' })),
+          ...normalizeArray(resultB.failures).map(failure => ({ ...failure, sourceSkill: 'skillB' })),
+        ],
+      });
+    const status = resultA.status === 'complete' && resultB.status === 'complete' && judge.status === 'complete'
+      ? 'complete'
+      : 'failed';
 
     evaluations.push({
       id: index + 1,
+      status,
       prompt,
+      promptHash: hashText(getPromptText(prompt)),
+      elapsedMs: Date.now() - promptStarted,
       results: {
         [blindLabels.skillA]: {
           sourceSkill: 'skillA',
-          content: resultA.content,
+          status: resultA.status,
+          content: resultA.content || '',
+          contentHash: resultA.contentHash || null,
           elapsedMs: resultA.elapsedMs,
+          attempts: resultA.attempts,
+          failures: resultA.failures,
         },
         [blindLabels.skillB]: {
           sourceSkill: 'skillB',
-          content: resultB.content,
+          status: resultB.status,
+          content: resultB.content || '',
+          contentHash: resultB.contentHash || null,
           elapsedMs: resultB.elapsedMs,
+          attempts: resultB.attempts,
+          failures: resultB.failures,
         },
       },
       judge,
@@ -198,48 +233,90 @@ async function evaluateRealPrompts({
   return evaluations;
 }
 
-async function generateSkillOutput({ skill, prompt, model, apiKeys, modelClient, maxTokens }) {
+async function generateSkillOutput({ skill, prompt, model, apiKeys, modelClient, maxTokens, retryPolicy }) {
   const startedAt = Date.now();
-  const content = await modelClient({
-    model,
-    apiKeys,
-    systemPrompt: [
-      'You are evaluating an Agent Skill package.',
-      'Follow SKILL.md as the package entrypoint.',
-      'Treat referenced files as package files and use them when relevant.',
-      'If scripts are present, reason from their source unless execution is explicitly available.',
-    ].join('\n'),
-    messages: [{
-      role: 'user',
-      content: `${buildSkillPackageText(skill)}\n\n## User Request\n${getPromptText(prompt)}`,
-    }],
-    maxTokens,
+  const response = await withRetry({
+    phase: 'generation',
+    maxAttempts: retryPolicy.generationMaxAttempts,
+    backoffMs: retryPolicy.backoffMs,
+    operation: () => modelClient({
+      model,
+      apiKeys,
+      systemPrompt: [
+        'You are evaluating an Agent Skill package.',
+        'Follow SKILL.md as the package entrypoint.',
+        'Treat referenced files as package files and use them when relevant.',
+        'If scripts are present, reason from their source unless execution is explicitly available.',
+      ].join('\n'),
+      messages: [{
+        role: 'user',
+        content: `${buildSkillPackageText(skill)}\n\n## User Request\n${getPromptText(prompt)}`,
+      }],
+      maxTokens,
+    }),
   });
 
+  if (!response.ok) {
+    return {
+      status: 'failed',
+      content: '',
+      contentHash: null,
+      elapsedMs: Date.now() - startedAt,
+      attempts: response.attempts.length,
+      failures: response.attempts,
+    };
+  }
+
   return {
-    content,
+    status: 'complete',
+    content: response.value,
+    contentHash: hashText(response.value),
     elapsedMs: Date.now() - startedAt,
+    attempts: response.attempts.length + 1,
+    failures: response.attempts,
   };
 }
 
-async function judgeRealOutputs({ prompt, criteria, resultA, resultB, model, apiKeys, modelClient, maxTokens, blindLabels }) {
+async function judgeRealOutputs({ prompt, criteria, resultA, resultB, model, apiKeys, modelClient, maxTokens, blindLabels, retryPolicy }) {
   const startedAt = Date.now();
-  const text = await modelClient({
-    model,
-    apiKeys,
-    systemPrompt: buildJudgeSystemPrompt(criteria),
-    messages: [{
-      role: 'user',
-      content: [
-        `Original user prompt:\n${getPromptText(prompt)}`,
-        `\n## ${blindLabels.skillA}\n${resultA.content}`,
-        `\n## ${blindLabels.skillB}\n${resultB.content}`,
-      ].join('\n\n'),
-    }],
-    maxTokens,
-    jsonMode: true,
+  const response = await withRetry({
+    phase: 'judging',
+    maxAttempts: retryPolicy.judgeMaxAttempts,
+    backoffMs: retryPolicy.backoffMs,
+    operation: async () => {
+      const text = await modelClient({
+        model,
+        apiKeys,
+        systemPrompt: buildJudgeSystemPrompt(criteria),
+        messages: [{
+          role: 'user',
+          content: [
+            `Original user prompt:\n${getPromptText(prompt)}`,
+            `\n## ${blindLabels.skillA}\n${resultA.content}`,
+            `\n## ${blindLabels.skillB}\n${resultB.content}`,
+          ].join('\n\n'),
+        }],
+        maxTokens,
+        jsonMode: true,
+      });
+      try {
+        return { text, parsed: parseJudgeJson(text) };
+      } catch (error) {
+        error.rawResponse = text;
+        throw error;
+      }
+    },
   });
-  const parsed = parseJudgeJson(text);
+
+  if (!response.ok) {
+    return createFailedJudge({
+      mode: 'real',
+      elapsedMs: Date.now() - startedAt,
+      failures: response.attempts,
+    });
+  }
+
+  const { text, parsed } = response.value;
   const winner = parsed.winner;
   const blindWinner = winner === 'tie' ? 'tie' : blindLabels[winner];
 
@@ -252,7 +329,43 @@ async function judgeRealOutputs({ prompt, criteria, resultA, resultB, model, api
     scoreB: parsed.scoreB,
     breakdown: parsed.breakdown,
     reasoning: parsed.reasoning,
+    rawResponse: text,
+    parsedScores: parsed,
     elapsedMs: Date.now() - startedAt,
+    attempts: response.attempts.length + 1,
+    failures: response.attempts,
+  };
+}
+
+function createSkippedJudge({ reason, failures }) {
+  return {
+    status: 'skipped',
+    mode: 'real',
+    winner: 'tie',
+    blindWinner: 'tie',
+    scoreA: 0,
+    scoreB: 0,
+    breakdown: { skillA: {}, skillB: {} },
+    reasoning: `Judge skipped because ${reason}.`,
+    elapsedMs: 0,
+    attempts: 0,
+    failures,
+  };
+}
+
+function createFailedJudge({ mode, elapsedMs, failures }) {
+  return {
+    status: 'failed',
+    mode,
+    winner: 'tie',
+    blindWinner: 'tie',
+    scoreA: 0,
+    scoreB: 0,
+    breakdown: { skillA: {}, skillB: {} },
+    reasoning: 'Judge failed after retry attempts.',
+    elapsedMs,
+    attempts: failures.length,
+    failures,
   };
 }
 
@@ -283,6 +396,8 @@ function scoreMockOutput({ skill, prompt, criteria, runId }) {
 function summarizeEvaluations(evaluations) {
   const stats = {
     totalEvals: evaluations.length,
+    completedEvals: 0,
+    failedEvals: 0,
     skillAWins: 0,
     skillBWins: 0,
     ties: 0,
@@ -291,6 +406,15 @@ function summarizeEvaluations(evaluations) {
   };
 
   for (const evaluation of evaluations) {
+    if (evaluation.status && evaluation.status !== 'complete') {
+      stats.failedEvals += 1;
+      continue;
+    }
+    if (evaluation.judge?.status && evaluation.judge.status !== 'complete') {
+      stats.failedEvals += 1;
+      continue;
+    }
+    stats.completedEvals += 1;
     if (evaluation.judge.winner === 'skillA') stats.skillAWins += 1;
     if (evaluation.judge.winner === 'skillB') stats.skillBWins += 1;
     if (evaluation.judge.winner === 'tie') stats.ties += 1;
@@ -302,7 +426,28 @@ function summarizeEvaluations(evaluations) {
     ? 'tie'
     : stats.totalScoreA > stats.totalScoreB ? 'skillA' : 'skillB';
   stats.scoreDelta = stats.totalScoreA - stats.totalScoreB;
+  stats.confidence = summarizeConfidence(stats);
   return stats;
+}
+
+function summarizeConfidence(stats) {
+  const completed = stats.completedEvals || 0;
+  const total = stats.totalEvals || 0;
+  const completionRate = total ? completed / total : 0;
+  const decisiveWins = Math.max(stats.skillAWins, stats.skillBWins);
+  const winRate = completed ? decisiveWins / completed : 0;
+  const scoreMarginPerPrompt = completed ? Math.abs(stats.scoreDelta || 0) / completed : 0;
+  const level = completionRate < 0.8
+    ? 'low'
+    : winRate >= 0.7 && scoreMarginPerPrompt >= 2 ? 'high'
+      : winRate >= 0.6 || scoreMarginPerPrompt >= 1 ? 'medium' : 'low';
+  return {
+    method: 'deterministic_prompt_summary',
+    completionRate: Number(completionRate.toFixed(3)),
+    winRate: Number(winRate.toFixed(3)),
+    scoreMarginPerPrompt: Number(scoreMarginPerPrompt.toFixed(3)),
+    level,
+  };
 }
 
 function buildSkillPackageText(skill) {
@@ -433,6 +578,65 @@ function assertEvalInputs({ skillA, skillB, prompts, criteria }) {
 
 async function readJsonFile(filePath) {
   return JSON.parse(await fs.readFile(filePath, 'utf8'));
+}
+
+async function withRetry({ phase, maxAttempts, backoffMs, operation }) {
+  const attempts = [];
+  for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
+    const startedAt = Date.now();
+    try {
+      const value = await operation();
+      return { ok: true, value, attempts };
+    } catch (error) {
+      attempts.push({
+        phase,
+        attempt,
+        name: error.name || 'Error',
+        message: error.message,
+        rawResponse: truncateText(error.rawResponse, 20000),
+        elapsedMs: Date.now() - startedAt,
+      });
+      if (attempt < maxAttempts && backoffMs > 0) {
+        await new Promise(resolve => setTimeout(resolve, backoffMs));
+      }
+    }
+  }
+  return { ok: false, attempts };
+}
+
+function normalizeRetryPolicy(value = {}) {
+  return {
+    generationMaxAttempts: normalizeAttemptCount(value.generationMaxAttempts, 2),
+    judgeMaxAttempts: normalizeAttemptCount(value.judgeMaxAttempts, 2),
+    backoffMs: normalizeNonNegativeInt(value.backoffMs, 0),
+  };
+}
+
+function normalizeAttemptCount(value, fallback) {
+  const parsed = Number.parseInt(value, 10);
+  return Number.isInteger(parsed) && parsed > 0 ? parsed : fallback;
+}
+
+function normalizeNonNegativeInt(value, fallback) {
+  const parsed = Number.parseInt(value, 10);
+  return Number.isInteger(parsed) && parsed >= 0 ? parsed : fallback;
+}
+
+function normalizeArray(value) {
+  return Array.isArray(value) ? value : [];
+}
+
+function hashJson(value) {
+  return hashText(JSON.stringify(value));
+}
+
+function hashText(value) {
+  return crypto.createHash('sha256').update(String(value || '')).digest('hex');
+}
+
+function truncateText(value, maxLength) {
+  if (typeof value !== 'string' || value.length <= maxLength) return value || null;
+  return `${value.slice(0, maxLength)}\n...[truncated ${value.length - maxLength} chars]`;
 }
 
 function stableNumber(value) {

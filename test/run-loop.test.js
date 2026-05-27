@@ -4,6 +4,8 @@ import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { runProject } from '../src/lib/run-loop.js';
+import { initProject } from '../src/lib/init.js';
+import { getProjectPaths } from '../src/lib/paths.js';
 
 test('stub mode completes a three-loop vertical slice', async () => {
   const cwd = await fs.mkdtemp(path.join(os.tmpdir(), 'skill-rsi-test-'));
@@ -59,6 +61,70 @@ test('mock mode completes a first run through headless evaluator artifacts', asy
   assert.equal(duel.mode, 'mock');
   assert.equal(duel.stats.totalEvals, 10);
   assert.ok(['skillA', 'skillB', 'tie'].includes(duel.stats.winner));
+});
+
+test('run loop persists configured eval retry and promotion reliability policy', async () => {
+  const cwd = await fs.mkdtemp(path.join(os.tmpdir(), 'skill-rsi-eval-policy-'));
+  const projectName = 'UX Design Eval Policy';
+  await initProject({
+    cwd,
+    projectName,
+    goal: 'Help agents design better UX.',
+  });
+  const paths = getProjectPaths(cwd, projectName);
+  const config = JSON.parse(await fs.readFile(paths.configJson, 'utf8'));
+  await fs.writeFile(paths.configJson, JSON.stringify({
+    ...config,
+    promotion: {
+      ...config.promotion,
+      maxStablePromptRegression: 3,
+      minEvalCompletionRate: 0.9,
+    },
+    eval: {
+      ...config.eval,
+      retryPolicy: {
+        generationMaxAttempts: 3,
+        judgeMaxAttempts: 4,
+        backoffMs: 0,
+      },
+    },
+  }, null, 2));
+
+  const result = await runProject({
+    cwd,
+    projectName,
+    goal: 'Help agents design better UX.',
+    loops: 1,
+    mode: 'mock',
+  });
+
+  const runId = result.completedRuns[0].runId;
+  const evalConfig = JSON.parse(await fs.readFile(path.join(
+    result.paths.runsDir,
+    runId,
+    'eval',
+    'config.json',
+  ), 'utf8'));
+  const runRecord = JSON.parse(await fs.readFile(path.join(
+    result.paths.runsDir,
+    runId,
+    'run.json',
+  ), 'utf8'));
+  const duel = JSON.parse(await fs.readFile(path.join(
+    result.paths.runsDir,
+    runId,
+    'eval',
+    'candidate-duel.json',
+  ), 'utf8'));
+
+  assert.deepEqual(evalConfig.retryPolicy, {
+    generationMaxAttempts: 3,
+    judgeMaxAttempts: 4,
+    backoffMs: 0,
+  });
+  assert.equal(duel.modelMetadata.retryPolicy.generationMaxAttempts, 3);
+  assert.equal(evalConfig.promotionPolicy.maxStablePromptRegression, 3);
+  assert.equal(runRecord.promotionPolicy.minEvalCompletionRate, 0.9);
 });
 
 test('mock mode later loops run a champion gate', async () => {

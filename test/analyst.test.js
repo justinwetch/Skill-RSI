@@ -51,6 +51,41 @@ test('real analyst recommendation cannot bypass deterministic policy block', asy
   assert.match(recommendation.reasoning, /champion stays|clear enough margin/i);
 });
 
+test('policy analyst blocks promotion when stable prompts show critical regression', () => {
+  const championGate = fakeEval({ winner: 'skillA', scoreDelta: 10, skillAWins: 8, skillBWins: 2 });
+  championGate.evaluations[0] = {
+    ...championGate.evaluations[0],
+    prompt: {
+      ...championGate.evaluations[0].prompt,
+      bucket: 'stable',
+      id: 'stable-critical',
+    },
+    judge: {
+      winner: 'skillB',
+      scoreA: 1,
+      scoreB: 5,
+      reasoning: 'Candidate missed a critical stable behavior.',
+    },
+  };
+
+  const recommendation = createPolicyRecommendation({
+    runId: 'run-003',
+    state: { currentChampion: { skillHash: 'abc' } },
+    candidateA: { candidateId: 'candidate-a', strategy: 'A' },
+    candidateB: { candidateId: 'candidate-b', strategy: 'B' },
+    experimentPlan: { focusParameterIds: ['p01'] },
+    candidateDuel: fakeEval({ winner: 'skillA', scoreDelta: 10, skillAWins: 8, skillBWins: 2 }),
+    championGate,
+    promotion: { minScoreDelta: 4, minWinDelta: 2, maxStablePromptRegression: 2 },
+  });
+
+  assert.equal(recommendation.decision, 'keep_current');
+  assert.equal(recommendation.recommendedChampionCandidateId, null);
+  assert.equal(recommendation.resultSummary.criticalRegressions.length, 1);
+  assert.equal(recommendation.resultSummary.criticalRegressions[0].promptId, 'stable-critical');
+  assert.ok(recommendation.observations.some(item => item.includes('Stable-prompt regression blocked promotion')));
+});
+
 function fakeEval({ winner, scoreDelta, skillAWins, skillBWins }) {
   const totalEvals = skillAWins + skillBWins;
   return {

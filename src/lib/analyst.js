@@ -100,11 +100,24 @@ export function createPolicyRecommendation({
   const scoreDelta = Math.abs(decisiveEval.stats.scoreDelta || 0);
   const winDelta = Math.abs((decisiveEval.stats.skillAWins || 0) - (decisiveEval.stats.skillBWins || 0));
   const hasChampion = Boolean(state.currentChampion);
-  const thresholds = { minScoreDelta: promotion?.minScoreDelta ?? 4, minWinDelta: promotion?.minWinDelta ?? 2 };
+  const thresholds = {
+    minScoreDelta: promotion?.minScoreDelta ?? 4,
+    minWinDelta: promotion?.minWinDelta ?? 2,
+    maxStablePromptRegression: promotion?.maxStablePromptRegression ?? 2,
+    minEvalCompletionRate: promotion?.minEvalCompletionRate ?? 0.8,
+  };
+  const criticalRegressions = championGate
+    ? findStablePromptRegressions(championGate, thresholds.maxStablePromptRegression)
+    : [];
+  const completionRate = decisiveEval.stats?.confidence?.completionRate ?? 1;
   // First run (no champion yet) uses a lenient gate; later runs use the configured margins.
   const minScoreDelta = hasChampion ? thresholds.minScoreDelta : 1;
   const minWinDelta = hasChampion ? thresholds.minWinDelta : 1;
-  const canPromote = candidateWinnerId && scoreDelta >= minScoreDelta && winDelta >= minWinDelta;
+  const canPromote = candidateWinnerId
+    && scoreDelta >= minScoreDelta
+    && winDelta >= minWinDelta
+    && criticalRegressions.length === 0
+    && completionRate >= thresholds.minEvalCompletionRate;
   const promotedCandidateId = canPromote ? candidateWinnerId : null;
 
   return validateRecommendation({
@@ -124,6 +137,12 @@ export function createPolicyRecommendation({
       championGate
         ? `Against the current champion, ${championGate.stats.winner === 'skillA' ? 'the new version came out ahead' : championGate.stats.winner === 'skillB' ? 'the current champion held its lead' : 'it was a tie'}.`
         : 'There was no current champion to compare against yet.',
+      criticalRegressions.length
+        ? `Stable-prompt regression blocked promotion on ${criticalRegressions.length} prompt(s).`
+        : 'No critical stable-prompt regression was detected.',
+      completionRate < thresholds.minEvalCompletionRate
+        ? `Evaluation reliability blocked promotion because only ${Math.round(completionRate * 100)}% of prompts completed.`
+        : 'Evaluation completion was high enough for promotion decisions.',
       experimentPlan.focusParameterIds.length
         ? `This round tested changes to: ${cleanParamList(experimentPlan.focusParameterIds)}.`
         : 'No specific change was isolated this round.',
@@ -137,10 +156,17 @@ export function createPolicyRecommendation({
         ? 'whether the promoted parameter improvement holds against stable prompts'
         : 'whether the eval batch had enough signal or needs better parameter-targeted prompts',
     },
-    resultSummary: summarizeEval(decisiveEval),
+    resultSummary: {
+      ...summarizeEval(decisiveEval),
+      criticalRegressions,
+    },
     signalAssessment: {
       strongSignals: promotedCandidateId ? [`${promotedCandidateId} cleared deterministic promotion thresholds.`] : [],
-      weakSignals: promotedCandidateId ? [] : ['The score or win margin was below promotion threshold.'],
+      weakSignals: promotedCandidateId ? [] : [
+        'The score or win margin was below promotion threshold.',
+        ...criticalRegressions.map(item => `Stable regression on ${item.promptId}: ${item.delta}`),
+        ...(completionRate < thresholds.minEvalCompletionRate ? ['Too many prompt-level eval failures'] : []),
+      ],
       likelyNoise: scoreDelta < minScoreDelta ? ['Low score margin'] : [],
       inconclusiveAreas: promotedCandidateId ? [] : ['Promotion confidence'],
     },
@@ -342,8 +368,8 @@ function summarizeEval(evalRun) {
       ties: evalRun.stats.ties,
     },
     meanScore: {
-      skillA: evalRun.stats.totalEvals ? evalRun.stats.totalScoreA / evalRun.stats.totalEvals : 0,
-      skillB: evalRun.stats.totalEvals ? evalRun.stats.totalScoreB / evalRun.stats.totalEvals : 0,
+      skillA: (evalRun.stats.completedEvals || evalRun.stats.totalEvals) ? evalRun.stats.totalScoreA / (evalRun.stats.completedEvals || evalRun.stats.totalEvals) : 0,
+      skillB: (evalRun.stats.completedEvals || evalRun.stats.totalEvals) ? evalRun.stats.totalScoreB / (evalRun.stats.completedEvals || evalRun.stats.totalEvals) : 0,
     },
     scoreDelta: evalRun.stats.scoreDelta,
     criticalRegressions: [],
@@ -357,6 +383,24 @@ function summarizeEval(evalRun) {
       reasoning: evaluation.judge.reasoning,
     })),
   };
+}
+
+function findStablePromptRegressions(evalRun, maxRegression) {
+  if (!evalRun || !Array.isArray(evalRun.evaluations)) return [];
+  return evalRun.evaluations
+    .filter(evaluation => evaluation?.prompt?.bucket === 'stable')
+    .map(evaluation => {
+      const scoreA = Number(evaluation?.judge?.scoreA || 0);
+      const scoreB = Number(evaluation?.judge?.scoreB || 0);
+      return {
+        promptId: evaluation.prompt.id,
+        scoreA,
+        scoreB,
+        delta: scoreA - scoreB,
+        reasoning: evaluation?.judge?.reasoning || '',
+      };
+    })
+    .filter(item => item.delta <= -Math.abs(maxRegression));
 }
 
 function getCandidateWinnerId(evalRun, winner) {

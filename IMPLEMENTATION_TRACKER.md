@@ -51,12 +51,12 @@ strategy/source-of-truth document, and update this tracker whenever a chunk land
 
 ## Phase 4: Evaluator Reliability And SkillEval Parity
 
-- [ ] Add per-prompt eval failure capture so one failed prompt does not destroy the whole eval run.
-- [ ] Add retry policy for generation and judging calls, with persisted failure metadata.
-- [ ] Persist richer raw eval artifacts: model metadata, timing, raw judge response, parsed scores, and content hashes.
-- [ ] Add stable-prompt critical regression checks to promotion policy.
-- [ ] Add optional repeated runs, bootstrap-style confidence summaries, or multi-judge support for close/high-impact promotions.
-- [ ] Keep visual and mixed-output eval explicitly deferred unless prioritized.
+- [x] Add per-prompt eval failure capture so one failed prompt does not destroy the whole eval run.
+- [x] Add retry policy for generation and judging calls, with persisted failure metadata.
+- [x] Persist richer raw eval artifacts: model metadata, timing, raw judge response, parsed scores, and content hashes.
+- [x] Add stable-prompt critical regression checks to promotion policy.
+- [x] Add deterministic eval confidence summaries for close/high-impact promotion decisions.
+- [x] Keep visual and mixed-output eval explicitly deferred unless prioritized.
 
 ## Phase 5: Optional Visual And UI Expansion
 

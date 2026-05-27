@@ -200,6 +200,7 @@ export async function runProject({
   judgeModel = judgeModel || config.models.judge;
   agentModel = agentModel || config.models.agent;
   const evalOutputType = config.eval.outputType || 'text';
+  const evalRetryPolicy = config.eval.retryPolicy;
   const generationMaxTokens = config.models.generationMaxTokens;
   const judgeMaxTokens = config.models.judgeMaxTokens;
   const agentMaxTokens = config.models.agentMaxTokens;
@@ -260,6 +261,7 @@ export async function runProject({
           promotion: config.promotion,
           evalBatch: config.eval,
           evalOutputType,
+          evalRetryPolicy,
           budgetEstimate: estimateBudgetForOneLoop(config),
           triggerContext: {
             mode: runTrigger,
@@ -305,6 +307,8 @@ async function runStubLoop({
   modelParameters = {},
   evalMode,
   evalOutputType = 'text',
+  evalRetryPolicy = {},
+  promotion = null,
   budgetEstimate = null,
   triggerContext = { mode: 'manual', hook: null },
 }) {
@@ -327,6 +331,7 @@ async function runStubLoop({
       mode: evalMode,
       outputType: evalOutputType,
     },
+    promotionPolicy: promotion,
     models: createRunModelMetadata({ agentModel, generationModel, judgeModel, modelParameters }),
     budgetEstimate,
   };
@@ -404,6 +409,8 @@ async function runStubLoop({
     criteria: evalDesign.criteria,
     bank: evalDesign.bank,
     outputType: evalOutputType,
+    retryPolicy: evalRetryPolicy,
+    promotionPolicy: promotion,
     models: createRunModelMetadata({ agentModel, generationModel, judgeModel, modelParameters }),
     budgetEstimate,
   });
@@ -499,6 +506,7 @@ async function runAgenticLoop({
   promotion = null,
   evalBatch = null,
   evalOutputType = 'text',
+  evalRetryPolicy = {},
   budgetEstimate = null,
   triggerContext = { mode: 'manual', hook: null },
   resuming = false,
@@ -531,6 +539,7 @@ async function runAgenticLoop({
       mode: evalMode,
       outputType: evalOutputType,
     },
+    promotionPolicy: promotion,
     models: createRunModelMetadata({ agentModel, generationModel, judgeModel, modelParameters }),
     budgetEstimate,
   };
@@ -755,6 +764,8 @@ async function runAgenticLoop({
       criteria: evalDesign.criteria,
       bank: evalDesign.bank,
       outputType: evalOutputType,
+      retryPolicy: evalRetryPolicy,
+      promotionPolicy: promotion,
       models: createRunModelMetadata({ agentModel, generationModel, judgeModel, modelParameters }),
       budgetEstimate,
     });
@@ -856,6 +867,7 @@ async function runAgenticLoop({
       outputType: evalOutputType,
       maxTokens: modelParameters.generationMaxTokens,
       judgeMaxTokens: modelParameters.judgeMaxTokens,
+      retryPolicy: evalRetryPolicy,
       apiKeys,
       modelClient: agentClient,
     });
@@ -885,6 +897,7 @@ async function runAgenticLoop({
         outputType: evalOutputType,
         maxTokens: modelParameters.generationMaxTokens,
         judgeMaxTokens: modelParameters.judgeMaxTokens,
+        retryPolicy: evalRetryPolicy,
         apiKeys,
         modelClient: agentClient,
       });
@@ -1137,8 +1150,10 @@ async function runMockLoop({
   modelParameters = {},
   apiKeys,
   modelClient,
+  promotion = null,
   evalBatch = null,
   evalOutputType = 'text',
+  evalRetryPolicy = {},
   budgetEstimate = null,
   triggerContext = { mode: 'manual', hook: null },
 }) {
@@ -1169,6 +1184,7 @@ async function runMockLoop({
       mode: evalMode,
       outputType: evalOutputType,
     },
+    promotionPolicy: promotion,
     models: createRunModelMetadata({ agentModel, generationModel, judgeModel, modelParameters }),
     budgetEstimate,
   };
@@ -1248,6 +1264,8 @@ async function runMockLoop({
     criteria: evalDesign.criteria,
     bank: evalDesign.bank,
     outputType: evalOutputType,
+    retryPolicy: evalRetryPolicy,
+    promotionPolicy: promotion,
     models: createRunModelMetadata({ agentModel, generationModel, judgeModel, modelParameters }),
     budgetEstimate,
   });
@@ -1266,6 +1284,7 @@ async function runMockLoop({
     outputType: evalOutputType,
     maxTokens: modelParameters.generationMaxTokens,
     judgeMaxTokens: modelParameters.judgeMaxTokens,
+    retryPolicy: evalRetryPolicy,
     apiKeys,
     modelClient: modelClient || undefined,
   });
@@ -1296,6 +1315,7 @@ async function runMockLoop({
       outputType: evalOutputType,
       maxTokens: modelParameters.generationMaxTokens,
       judgeMaxTokens: modelParameters.judgeMaxTokens,
+      retryPolicy: evalRetryPolicy,
       apiKeys,
       modelClient: modelClient || undefined,
     });

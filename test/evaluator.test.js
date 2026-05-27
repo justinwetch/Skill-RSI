@@ -96,7 +96,118 @@ test('runs a real text evaluation with an injected model client', async () => {
   assert.equal(result.modelMetadata.judgeModel, 'fake-judge-model');
   assert.equal(result.modelMetadata.generationMaxTokens, 1234);
   assert.equal(result.modelMetadata.judgeMaxTokens, 567);
+  assert.equal(result.modelMetadata.retryPolicy.generationMaxAttempts, 2);
   assert.ok(result.timing.elapsedMs >= 0);
+  assert.ok(result.hashes.prompts);
+  assert.equal(result.evaluations[0].status, 'complete');
+  assert.ok(result.evaluations[0].results[result.blindLabels.skillA].contentHash);
+  assert.match(result.evaluations[0].judge.rawResponse, /Skill A was clearer/);
+  assert.deepEqual(result.evaluations[0].judge.parsedScores.breakdown.skillA, { correctness: 5 });
+});
+
+test('real evaluation records per-prompt generation failure without failing whole run', async () => {
+  const cwd = await fs.mkdtemp(path.join(os.tmpdir(), 'skill-rsi-real-eval-failure-'));
+  const skillA = await writeSkill(cwd, 'skill-a', 'Skill A');
+  const skillB = await writeSkill(cwd, 'skill-b', 'Skill B');
+  const promptsPath = path.join(cwd, 'prompts.json');
+  const criteriaPath = path.join(cwd, 'criteria.json');
+  let callCount = 0;
+
+  await fs.writeFile(promptsPath, JSON.stringify([
+    { id: 'p1', text: 'Do the first thing.' },
+    { id: 'p2', text: 'Do the second thing.' },
+  ]));
+  await fs.writeFile(criteriaPath, JSON.stringify([
+    { id: 'correctness', name: 'Correctness', description: 'Correct output' },
+  ]));
+
+  const result = await runHeadlessEval({
+    skillAPath: skillA,
+    skillBPath: skillB,
+    promptsPath,
+    criteriaPath,
+    mode: 'real',
+    runId: 'run-real-failure-001',
+    generationModel: 'fake-gen-model',
+    judgeModel: 'fake-judge-model',
+    retryPolicy: { generationMaxAttempts: 1, judgeMaxAttempts: 1 },
+    modelClient: async request => {
+      callCount += 1;
+      if (!request.jsonMode && request.messages[0].content.includes('Do the first thing.')) {
+        throw new Error('generation unavailable');
+      }
+      if (request.jsonMode) {
+        return JSON.stringify({
+          winner: 'skillB',
+          scoreA: 2,
+          scoreB: 4,
+          breakdown: {
+            skillA: { correctness: 2 },
+            skillB: { correctness: 4 },
+          },
+          reasoning: 'Skill B handled the prompt better.',
+        });
+      }
+      return 'Generated answer';
+    },
+  });
+
+  assert.equal(result.evaluations.length, 2);
+  assert.equal(result.evaluations[0].status, 'failed');
+  assert.equal(result.evaluations[0].judge.status, 'skipped');
+  assert.equal(result.evaluations[0].judge.failures.length, 2);
+  assert.equal(result.evaluations[1].status, 'complete');
+  assert.equal(result.stats.totalEvals, 2);
+  assert.equal(result.stats.completedEvals, 1);
+  assert.equal(result.stats.failedEvals, 1);
+  assert.equal(result.stats.winner, 'skillB');
+  assert.equal(result.stats.confidence.level, 'low');
+  assert.ok(callCount >= 5);
+});
+
+test('real evaluation retries judge parsing failures and records attempt metadata', async () => {
+  const cwd = await fs.mkdtemp(path.join(os.tmpdir(), 'skill-rsi-real-eval-retry-'));
+  const skillA = await writeSkill(cwd, 'skill-a', 'Skill A');
+  const skillB = await writeSkill(cwd, 'skill-b', 'Skill B');
+  const promptsPath = path.join(cwd, 'prompts.json');
+  const criteriaPath = path.join(cwd, 'criteria.json');
+  let judgeCalls = 0;
+
+  await fs.writeFile(promptsPath, JSON.stringify([{ id: 'p1', text: 'Do the thing.' }]));
+  await fs.writeFile(criteriaPath, JSON.stringify([{ id: 'correctness', name: 'Correctness', description: 'Correct output' }]));
+
+  const result = await runHeadlessEval({
+    skillAPath: skillA,
+    skillBPath: skillB,
+    promptsPath,
+    criteriaPath,
+    mode: 'real',
+    runId: 'run-real-retry-001',
+    generationModel: 'fake-gen-model',
+    judgeModel: 'fake-judge-model',
+    retryPolicy: { generationMaxAttempts: 1, judgeMaxAttempts: 2 },
+    modelClient: async request => {
+      if (!request.jsonMode) return 'Generated answer';
+      judgeCalls += 1;
+      if (judgeCalls === 1) return 'not json';
+      return JSON.stringify({
+        winner: 'skillA',
+        scoreA: 5,
+        scoreB: 3,
+        breakdown: {
+          skillA: { correctness: 5 },
+          skillB: { correctness: 3 },
+        },
+        reasoning: 'Recovered judge response.',
+      });
+    },
+  });
+
+  assert.equal(result.evaluations[0].status, 'complete');
+  assert.equal(result.evaluations[0].judge.attempts, 2);
+  assert.equal(result.evaluations[0].judge.failures.length, 1);
+  assert.match(result.evaluations[0].judge.failures[0].message, /invalid JSON/);
+  assert.equal(result.evaluations[0].judge.failures[0].rawResponse, 'not json');
 });
 
 test('real evaluation requires model information at evaluator boundary', async () => {

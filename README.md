@@ -2,7 +2,7 @@
 
 Recursive Self-Improvement for Agent Skills.
 
-This repository currently has the local Skill RSI scaffold plus a focused headless SkillEval integration. Mock modes remain available for offline development, and `evaluate` can now run text-only real model generation and judging through provider APIs.
+This repository currently has the local Skill RSI scaffold plus a focused headless SkillEval integration. Mock modes remain available for offline development, and `evaluate` can now run text-only real model generation and judging through provider APIs with prompt-level failure capture and retry metadata.
 
 ## Commands
 

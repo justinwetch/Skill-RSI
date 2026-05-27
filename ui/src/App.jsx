@@ -1581,7 +1581,7 @@ function SummaryTab({ stats, evals, labels = { a: 'Candidate A', b: 'Candidate B
       <table className="etable">
         <thead><tr>
           <th style={{ width: 32 }}>#</th><th>Prompt</th>
-          <th className="r">A score</th><th className="r">B score</th><th className="c">Winner</th>
+          <th className="r">{labels.a} score</th><th className="r">{labels.b} score</th><th className="c">Winner</th>
         </tr></thead>
         <tbody>
           {evals.map(ev => {
@@ -1592,7 +1592,7 @@ function SummaryTab({ stats, evals, labels = { a: 'Candidate A', b: 'Candidate B
                 <td className="prompt-cell">{promptGist(ev.prompt?.text)}</td>
                 <td className={`r ${w === 'skillA' ? 'win-a' : ''}`}>{ev.judge?.scoreA}</td>
                 <td className={`r ${w === 'skillB' ? 'win-b' : ''}`}>{ev.judge?.scoreB}</td>
-                <td className="c">{w === 'skillA' ? <span className="lead-a">A</span> : w === 'skillB' ? <span className="lead-b">B</span> : <span className="lead-tie">tie</span>}</td>
+                <td className="c">{w === 'skillA' ? <span className="lead-a">{labels.a}</span> : w === 'skillB' ? <span className="lead-b">{labels.b}</span> : <span className="lead-tie">tie</span>}</td>
               </tr>
             );
           })}
@@ -1633,7 +1633,7 @@ function CriteriaTab({ criteria, evals, labels = { a: 'A', b: 'B' } }) {
                 <td className="c" style={{ color: 'var(--color-text-muted)' }}>{r.t}</td>
                 <td className="r">{r.avgA.toFixed(1)}/5</td>
                 <td className="r">{r.avgB.toFixed(1)}/5</td>
-                <td className="c">{leader === 'a' ? <span className="lead-a">A</span> : leader === 'b' ? <span className="lead-b">B</span> : <span className="lead-tie">–</span>}</td>
+                <td className="c">{leader === 'a' ? <span className="lead-a">{labels.a}</span> : leader === 'b' ? <span className="lead-b">{labels.b}</span> : <span className="lead-tie">–</span>}</td>
               </tr>
             );
           })}
@@ -1646,15 +1646,15 @@ function CriteriaTab({ criteria, evals, labels = { a: 'A', b: 'B' } }) {
 function PromptRow({ ev, criteria, labels = { a: 'Candidate A', b: 'Candidate B' }, open, onToggle }) {
   const w = ev.judge?.winner;
   const winClass = w === 'skillA' ? 'a' : w === 'skillB' ? 'b' : '';
-  const winLabel = w === 'skillA' ? 'A' : w === 'skillB' ? 'B' : 'tie';
+  const winLabel = w === 'skillA' ? labels.a : w === 'skillB' ? labels.b : 'tie';
   const out = outputs(ev);
   return (
     <div style={{ borderTop: '1px solid var(--color-border)' }}>
       <button className="row-click" onClick={onToggle}
         style={{ display: 'flex', alignItems: 'center', gap: 12, width: '100%', background: 'none', border: 'none', padding: '13px 4px', color: 'var(--color-text-primary)', textAlign: 'left' }}>
         <span style={{ flex: 1, fontSize: 14 }}>{promptGist(ev.prompt?.text)}</span>
-        <span style={{ fontSize: 13, color: 'var(--color-text-secondary)', fontVariantNumeric: 'tabular-nums', whiteSpace: 'nowrap' }}>A {ev.judge?.scoreA} · B {ev.judge?.scoreB}</span>
-        <span className={`pill ${winClass}`} style={{ minWidth: 26, justifyContent: 'center' }}>{winLabel}</span>
+        <span style={{ fontSize: 13, color: 'var(--color-text-secondary)', fontVariantNumeric: 'tabular-nums', whiteSpace: 'nowrap' }}>{labels.a} {ev.judge?.scoreA} · {labels.b} {ev.judge?.scoreB}</span>
+        <span className={`pill ${winClass}`} style={{ justifyContent: 'center' }}>{winLabel}</span>
         {open ? <ChevronUp size={15} style={{ color: 'var(--color-text-secondary)' }} /> : <ChevronDown size={15} style={{ color: 'var(--color-text-muted)' }} />}
       </button>
       {open && (
@@ -1666,9 +1666,9 @@ function PromptRow({ ev, criteria, labels = { a: 'Candidate A', b: 'Candidate B'
                 <div className="crit" key={c.id}>
                   <span className="nm">{c.name}</span>
                   <div className="vals">
-                    <span className="va">A {ev.judge?.breakdown?.skillA?.[c.id] ?? '–'}</span>
+                    <span className="va">{labels.a} {ev.judge?.breakdown?.skillA?.[c.id] ?? '–'}</span>
                     <span className="sep">·</span>
-                    <span className="vb">B {ev.judge?.breakdown?.skillB?.[c.id] ?? '–'}</span>
+                    <span className="vb">{labels.b} {ev.judge?.breakdown?.skillB?.[c.id] ?? '–'}</span>
                   </div>
                 </div>
               ))}

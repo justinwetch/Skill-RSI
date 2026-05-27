@@ -27,11 +27,11 @@ strategy/source-of-truth document, and update this tracker whenever a chunk land
 
 ## Phase 1: History And Provenance Hardening
 
-- [ ] Expand `history/current-summary.md` with durable known weaknesses, do-not-repeat items, next experiment notes, and failed-strategy summaries.
-- [ ] Add richer detailed run reports with eval summary, parameter outcomes, prompt-bank changes, artifact paths, and failure/recovery notes.
-- [ ] Track stale vs. current evidence in `parameterLog` so later loops do not over-weight old or inconclusive results.
-- [ ] Record failed creator/reviewer/eval strategies in history when they reveal reusable information.
-- [ ] Add tests for history summaries over multi-run sequences, including promotion, no-promotion, inconclusive, and recovered-failure runs.
+- [x] Expand `history/current-summary.md` with durable known weaknesses, do-not-repeat items, next experiment notes, and failed-strategy summaries.
+- [x] Add richer detailed run reports with eval summary, parameter outcomes, prompt-bank changes, artifact paths, and failure/recovery notes.
+- [x] Track stale vs. current evidence in `parameterLog` so later loops do not over-weight old or inconclusive results.
+- [x] Record failed creator/reviewer/eval strategies in history when they reveal reusable information.
+- [x] Add tests for history summaries over multi-run sequences, including promotion, no-promotion, inconclusive, and recovered-failure runs.
 
 ## Phase 2: Manager Behavior And Experiment Memory
 

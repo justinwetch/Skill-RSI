@@ -147,6 +147,15 @@ test('runProject retries malformed creator artifacts with candidate-specific dia
   assert.match(timeline, /creator_contract.retrying/);
   assert.match(timeline, /creator_contract.recovered/);
   assert.match(failure.message, /SKILL\.md/);
+  assert.ok(result.history.failedStrategyLog.some(item => (
+    item.source === 'creator_contract'
+    && item.candidateId === 'candidate-b'
+    && item.status === 'recovered_or_contained'
+  )));
+  assert.match(
+    await fs.readFile(path.join(projectDir, 'history', 'current-summary.md'), 'utf8'),
+    /Failed or recovered strategies:/,
+  );
 });
 
 function fakeOntology() {

@@ -327,3 +327,71 @@ test('real creator contract normalizes common SKILL.md file aliases', async () =
   assert.equal(result.artifact.files[0].path, 'SKILL.md');
   assert.match(result.artifact.files[0].content, /description:/);
 });
+
+test('agent prompts receive compact Phase 1 history memory', async () => {
+  const cwd = await fs.mkdtemp(path.join(os.tmpdir(), 'skill-rsi-history-context-'));
+  await initProject({ cwd, projectName: 'UX Design', goal: 'Help agents design better UX.' });
+  const paths = getProjectPaths(cwd, 'ux-design');
+  const history = JSON.parse(await fs.readFile(paths.historyIndex, 'utf8'));
+  await fs.writeFile(paths.historyIndex, `${JSON.stringify({
+    ...history,
+    currentChampion: { runId: 'run-002', candidateId: 'candidate-a', skillHash: 'abc123' },
+    trajectory: [{
+      runId: 'run-002',
+      decision: 'request_new_experiment',
+      winner: 'current',
+      scoreDelta: 0,
+      parameterTested: ['p01'],
+      hypothesisHeld: null,
+      summary: 'Experiment did not create a clear improvement.',
+    }],
+    parameterLog: [{
+      parameterId: 'p01',
+      testedInRuns: ['run-001', 'run-002'],
+      currentBelief: 'Activation metadata has been noisy twice.',
+      status: 'do_not_retry_without_new_evidence',
+      lastTestedRunId: 'run-002',
+      lastDecision: 'request_new_experiment',
+      outcomeCounts: { promote: 0, keep_current: 0, edit_current: 0, request_new_experiment: 2 },
+      currentEvidence: {
+        runId: 'run-002',
+        decision: 'request_new_experiment',
+        confidence: 'low',
+        scoreDelta: 0,
+        candidateDuelWinner: 'tie',
+        championGateWinner: null,
+        reviewBlocked: false,
+        summary: 'No useful activation metadata signal.',
+        caveats: ['Low score margin'],
+      },
+      staleEvidence: [{
+        runId: 'run-001',
+        decision: 'keep_current',
+        confidence: 'low',
+        scoreDelta: 1,
+        candidateDuelWinner: 'skillA',
+        championGateWinner: 'skillB',
+        reviewBlocked: false,
+        summary: 'Older weak activation metadata signal.',
+        caveats: ['Current champion held'],
+      }],
+    }],
+    knownWeaknesses: [{ runId: 'run-002', source: 'likely_noise', message: 'Low score margin', status: 'open' }],
+    doNotRepeat: ['Do not retry p01 without new evidence'],
+    failedStrategyLog: [{ runId: 'run-002', source: 'experiment_signal', message: 'Repeated weak activation test', status: 'inconclusive' }],
+    recentNextExperimentNotes: ['Try next: output contract'],
+  }, null, 2)}\n`, 'utf8');
+
+  const result = await runAgentContract({
+    cwd,
+    projectName: 'ux-design',
+    agentName: 'experiment-planner',
+    runId: 'planner-history-context',
+    mode: 'mock',
+  });
+
+  assert.match(result.prompt, /Do not retry p01 without new evidence/);
+  assert.match(result.prompt, /Repeated weak activation test/);
+  assert.match(result.prompt, /Activation metadata has been noisy twice/);
+  assert.match(result.prompt, /Try next: output contract/);
+});

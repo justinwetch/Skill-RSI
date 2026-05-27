@@ -89,6 +89,38 @@ test('mock mode later loops run a champion gate', async () => {
   assert.equal(gate.stats.totalEvals, 10);
 });
 
+test('history tracks multi-run parameter provenance and detailed artifacts', async () => {
+  const cwd = await fs.mkdtemp(path.join(os.tmpdir(), 'skill-rsi-history-provenance-'));
+
+  const result = await runProject({
+    cwd,
+    projectName: 'UX Design History',
+    goal: 'Help agents design better UX.',
+    loops: 3,
+    mode: 'mock',
+  });
+
+  const history = JSON.parse(await fs.readFile(result.paths.historyIndex, 'utf8'));
+  const summary = await fs.readFile(result.paths.historySummary, 'utf8');
+  const latestRunId = result.completedRuns.at(-1).runId;
+  const detail = await fs.readFile(path.join(result.paths.historyDetailedDir, `${latestRunId}.md`), 'utf8');
+  const parameter = history.parameterLog.find(item => item.parameterId === 'p01-activation_metadata');
+
+  assert.ok(parameter);
+  assert.equal(parameter.testedInRuns.length, 3);
+  assert.ok(parameter.currentEvidence);
+  assert.ok(parameter.staleEvidence.length >= 2);
+  assert.ok(parameter.outcomeCounts);
+  assert.match(summary, /Known weaknesses:/);
+  assert.match(summary, /Do not repeat:/);
+  assert.match(summary, /Recent parameter evidence:/);
+  assert.match(summary, /Failed or recovered strategies:/);
+  assert.match(detail, /## Evaluation Summary/);
+  assert.match(detail, /## Prompt Bank Changes/);
+  assert.match(detail, /## Candidate Reviews/);
+  assert.match(detail, /## Artifact Paths/);
+});
+
 test('mock mode updates prompt bank across loops', async () => {
   const cwd = await fs.mkdtemp(path.join(os.tmpdir(), 'skill-rsi-prompt-bank-loop-'));
 
@@ -145,6 +177,8 @@ test('stop rules pause after consecutive inconclusive runs', async () => {
   assert.equal(result.completedRuns.length, 1);
   assert.equal(result.state.runCount, 1);
   assert.equal(result.history.trajectory.at(-1).decision, 'request_new_experiment');
+  assert.ok(result.history.knownWeaknesses.length > 0);
+  assert.ok(result.history.failedStrategyLog.some(item => item.source === 'experiment_signal'));
   assert.match(result.stopReason, /consecutive inconclusive run/);
 
   const second = await runProject({
@@ -184,6 +218,7 @@ test('stop rules pause after consecutive non-promotion runs', async () => {
   assert.equal(result.completedRuns.length, 1);
   assert.equal(result.state.runCount, 1);
   assert.notEqual(result.history.trajectory.at(-1).decision, 'promote');
+  assert.ok(result.history.knownWeaknesses.length > 0);
   assert.match(result.stopReason, /without promotion/);
 });
 

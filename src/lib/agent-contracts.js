@@ -459,9 +459,46 @@ function compactHistory(history) {
   return {
     experimentId: history.experimentId,
     skillGoal: history.skillGoal,
-    summary: history.summary,
+    currentChampion: history.currentChampion || null,
     trajectory: Array.isArray(history.trajectory) ? history.trajectory.slice(-12) : [],
-    parameterLog: Array.isArray(history.parameterLog) ? history.parameterLog.slice(-24) : [],
+    parameterLog: Array.isArray(history.parameterLog)
+      ? history.parameterLog.slice(-24).map(compactParameterLogItem)
+      : [],
+    knownWeaknesses: Array.isArray(history.knownWeaknesses) ? history.knownWeaknesses.slice(-12) : [],
+    doNotRepeat: Array.isArray(history.doNotRepeat) ? history.doNotRepeat.slice(-12) : [],
+    failedStrategyLog: Array.isArray(history.failedStrategyLog) ? history.failedStrategyLog.slice(-12) : [],
+    recentNextExperimentNotes: Array.isArray(history.recentNextExperimentNotes)
+      ? history.recentNextExperimentNotes.slice(-12)
+      : [],
+  };
+}
+
+function compactParameterLogItem(item) {
+  return {
+    parameterId: item.parameterId,
+    testedInRuns: Array.isArray(item.testedInRuns) ? item.testedInRuns.slice(-8) : [],
+    currentBelief: item.currentBelief,
+    status: item.status,
+    lastTestedRunId: item.lastTestedRunId || null,
+    lastDecision: item.lastDecision || null,
+    outcomeCounts: item.outcomeCounts || null,
+    currentEvidence: compactEvidence(item.currentEvidence),
+    staleEvidence: Array.isArray(item.staleEvidence) ? item.staleEvidence.slice(0, 4).map(compactEvidence) : [],
+  };
+}
+
+function compactEvidence(evidence) {
+  if (!evidence || typeof evidence !== 'object') return evidence || null;
+  return {
+    runId: evidence.runId,
+    decision: evidence.decision,
+    confidence: evidence.confidence,
+    scoreDelta: evidence.scoreDelta,
+    candidateDuelWinner: evidence.candidateDuelWinner,
+    championGateWinner: evidence.championGateWinner,
+    reviewBlocked: evidence.reviewBlocked,
+    summary: evidence.summary,
+    caveats: Array.isArray(evidence.caveats) ? evidence.caveats.slice(0, 4) : [],
   };
 }
 

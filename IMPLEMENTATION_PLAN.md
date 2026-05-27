@@ -2,6 +2,10 @@
 
 Recursive Self-Improvement for Agent Skills
 
+For current implementation status and next work, see
+[`IMPLEMENTATION_TRACKER.md`](IMPLEMENTATION_TRACKER.md). This document remains
+the conceptual source of truth for architecture and product intent.
+
 ## 1. Goal
 
 Skill RSI is a system that repeatedly improves Agent Skill packages by generating independent candidate skill versions, evaluating them with a headless SkillEval-style A/B harness, interpreting the results, and promoting the best version into the next iteration.

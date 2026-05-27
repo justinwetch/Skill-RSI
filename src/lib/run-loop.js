@@ -31,6 +31,7 @@ import {
 } from './stub-agents.js';
 
 const MAX_CANDIDATE_REVISIONS = 3;
+const MAX_CREATOR_CONTRACT_ATTEMPTS = 2;
 
 // Resumability (plan §5): reuse a node's already-written artifact instead of redoing the work.
 async function reuseJson(filePath, validate) {
@@ -129,6 +130,7 @@ export async function runProject({
           name: error.name,
           message: error.message,
         });
+        await markRunFailed({ runPaths, runId, runNumber, mode, error });
         throw error;
       }
 
@@ -442,47 +444,35 @@ async function runAgenticLoop({
     });
   }
 
-  let creatorAArtifact = await readJson(path.join(runPaths.candidateADir, 'creator-artifact.json'), null);
-  if (!creatorAArtifact) {
-    const creatorAResult = await runAgentContract({
-      cwd: path.dirname(paths.rootDir),
-      projectName: projectId,
-      agentName: 'creator',
-      runId: `${runId}-creator-a`,
-      mode: 'real',
-      model: agentModel,
-      apiKeys,
-      modelClient: agentClient,
-      experimentArm: 'candidateA',
-    });
-    creatorAArtifact = creatorAResult.artifact;
-    await writeJson(path.join(runPaths.candidateADir, 'creator-artifact.json'), creatorAArtifact);
-  }
-  let candidateA = validateCandidate(await materializeCreatorArtifact({
-    artifact: creatorAArtifact,
+  const candidateAResult = await createAndMaterializeCandidate({
+    paths,
+    runPaths,
+    projectId,
+    runId,
     candidateDir: runPaths.candidateADir,
-  }));
+    candidateId: 'candidate-a',
+    experimentArm: 'candidateA',
+    agentModel,
+    apiKeys,
+    agentClient,
+  });
+  let creatorAArtifact = candidateAResult.artifact;
+  let candidateA = candidateAResult.candidate;
 
-  let creatorBArtifact = await readJson(path.join(runPaths.candidateBDir, 'creator-artifact.json'), null);
-  if (!creatorBArtifact) {
-    const creatorBResult = await runAgentContract({
-      cwd: path.dirname(paths.rootDir),
-      projectName: projectId,
-      agentName: 'creator',
-      runId: `${runId}-creator-b`,
-      mode: 'real',
-      model: agentModel,
-      apiKeys,
-      modelClient: agentClient,
-      experimentArm: 'candidateB',
-    });
-    creatorBArtifact = creatorBResult.artifact;
-    await writeJson(path.join(runPaths.candidateBDir, 'creator-artifact.json'), creatorBArtifact);
-  }
-  let candidateB = validateCandidate(await materializeCreatorArtifact({
-    artifact: creatorBArtifact,
+  const candidateBResult = await createAndMaterializeCandidate({
+    paths,
+    runPaths,
+    projectId,
+    runId,
     candidateDir: runPaths.candidateBDir,
-  }));
+    candidateId: 'candidate-b',
+    experimentArm: 'candidateB',
+    agentModel,
+    apiKeys,
+    agentClient,
+  });
+  let creatorBArtifact = candidateBResult.artifact;
+  let candidateB = candidateBResult.candidate;
   await appendTimeline(runPaths.timelineJsonl, 'candidates.written', {
     mode: 'real',
     model: agentModel,
@@ -747,6 +737,151 @@ async function runAgenticLoop({
   await appendTimeline(runPaths.timelineJsonl, 'run.completed', { status: 'completed' });
 
   return { state: nextState, history: nextHistory, runRecord: completedRunRecord };
+}
+
+async function createAndMaterializeCandidate({
+  paths,
+  runPaths,
+  projectId,
+  runId,
+  candidateDir,
+  candidateId,
+  experimentArm,
+  agentModel,
+  apiKeys,
+  agentClient,
+}) {
+  const artifactPath = path.join(candidateDir, 'creator-artifact.json');
+  let artifact = await readJson(artifactPath, null);
+  let revision = null;
+
+  for (let attempt = 1; attempt <= MAX_CREATOR_CONTRACT_ATTEMPTS; attempt += 1) {
+    try {
+      if (!artifact) {
+        const creatorResult = await runAgentContract({
+          cwd: path.dirname(paths.rootDir),
+          projectName: projectId,
+          agentName: 'creator',
+          runId: creatorContractRunId(runId, candidateId, attempt),
+          mode: 'real',
+          model: agentModel,
+          apiKeys,
+          modelClient: agentClient,
+          experimentArm,
+          revision,
+        });
+        artifact = creatorResult.artifact;
+        const attemptPath = attempt === 1
+          ? artifactPath
+          : path.join(candidateDir, `creator-artifact-retry-${String(attempt - 1).padStart(3, '0')}.json`);
+        await writeJson(attemptPath, artifact);
+        if (attemptPath !== artifactPath) await writeJson(artifactPath, artifact);
+      }
+
+      const candidate = validateCandidate(await materializeCreatorArtifact({ artifact, candidateDir }));
+      if (attempt > 1) {
+        await appendTimeline(runPaths.timelineJsonl, 'creator_contract.recovered', {
+          candidateId,
+          attempt,
+        });
+      }
+      return { artifact, candidate };
+    } catch (error) {
+      await persistCreatorContractFailure({
+        runPaths,
+        candidateDir,
+        candidateId,
+        experimentArm,
+        attempt,
+        error,
+      });
+
+      if (attempt >= MAX_CREATOR_CONTRACT_ATTEMPTS) {
+        throw wrapCreatorContractError({ candidateId, error });
+      }
+
+      revision = createCreatorContractRevision({
+        candidateId,
+        attempt,
+        artifact,
+        error,
+      });
+      artifact = null;
+      await appendTimeline(runPaths.timelineJsonl, 'creator_contract.retrying', {
+        candidateId,
+        nextAttempt: attempt + 1,
+      });
+    }
+  }
+
+  throw new Error(`${candidateId} creator artifact invalid: exhausted creator contract attempts`);
+}
+
+function creatorContractRunId(runId, candidateId, attempt) {
+  const suffix = candidateId === 'candidate-b' ? 'b' : 'a';
+  const base = `${runId}-creator-${suffix}`;
+  return attempt === 1 ? base : `${base}-retry-${String(attempt - 1).padStart(3, '0')}`;
+}
+
+async function persistCreatorContractFailure({
+  runPaths,
+  candidateDir,
+  candidateId,
+  experimentArm,
+  attempt,
+  error,
+}) {
+  const suffix = String(attempt).padStart(3, '0');
+  const failurePath = path.join(candidateDir, `creator-contract-failure-${suffix}.json`);
+  await writeJson(failurePath, {
+    candidateId,
+    experimentArm,
+    attempt,
+    name: error.name,
+    message: error.message,
+    agentName: error.agentName || 'creator',
+    contractRunId: error.contractRunId || null,
+    rawArtifact: error.rawArtifact || null,
+    rawModelText: truncateText(error.rawModelText, 50000),
+  });
+  await appendTimeline(runPaths.timelineJsonl, 'creator_contract.failed', {
+    candidateId,
+    attempt,
+    message: error.message,
+    path: failurePath,
+  });
+}
+
+function createCreatorContractRevision({ candidateId, attempt, artifact, error }) {
+  return {
+    attempt,
+    candidateId,
+    originalArtifact: artifact || error.rawArtifact || {
+      contractFailure: error.message,
+      rawModelText: truncateText(error.rawModelText, 6000),
+    },
+    review: {
+      candidateId,
+      approveForEval: false,
+      blockingIssues: [{
+        surface: 'creator artifact contract',
+        message: `The previous creator response could not be materialized: ${error.message}`,
+      }],
+      recommendedEdits: [{
+        surface: 'files',
+        message: 'Return files as an array with a root entry exactly like { "path": "SKILL.md", "content": "..." }.',
+      }],
+      nonIssues: [],
+      overfittingRisk: 'low',
+    },
+  };
+}
+
+function wrapCreatorContractError({ candidateId, error }) {
+  const wrapped = new Error(`${candidateId} creator artifact invalid: ${error.message}`);
+  wrapped.name = error.name || 'Error';
+  wrapped.cause = error;
+  return wrapped;
 }
 
 async function runMockLoop({
@@ -1374,6 +1509,31 @@ function countTrailing(items, predicate) {
     count += 1;
   }
   return count;
+}
+
+async function markRunFailed({ runPaths, runId, runNumber, mode, error }) {
+  const existing = await readJson(runPaths.runJson, null);
+  const failedAt = new Date().toISOString();
+  await writeJson(runPaths.runJson, {
+    ...(existing || {
+      runId,
+      runNumber,
+      mode,
+      startedAt: failedAt,
+      currentChampionAtStart: null,
+    }),
+    status: 'failed',
+    completedAt: failedAt,
+    error: {
+      name: error.name,
+      message: error.message,
+    },
+  });
+}
+
+function truncateText(value, maxChars) {
+  if (typeof value !== 'string') return null;
+  return value.length > maxChars ? `${value.slice(0, maxChars)}\n...[truncated]` : value;
 }
 
 function parsePositiveInteger(value) {

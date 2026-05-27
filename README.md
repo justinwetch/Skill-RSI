@@ -67,6 +67,8 @@ OPENAI_API_KEY=sk-...
 Generated experiment data is written under `.skill-rsi/projects/<project>/`.
 
 For unattended runs, see [`docs/SCHEDULING.md`](docs/SCHEDULING.md).
+For current implementation status and the checkoff roadmap, see
+[`IMPLEMENTATION_TRACKER.md`](IMPLEMENTATION_TRACKER.md).
 
 ## Implemented
 
@@ -94,7 +96,7 @@ For unattended runs, see [`docs/SCHEDULING.md`](docs/SCHEDULING.md).
 - timeline inspection command with text/JSON output plus failed-run timeline entries
 - documented cron and macOS LaunchAgent scheduling around the bounded `continuous` command
 - UI-ready JSON surfaces for project lists, project summaries, run details, candidate comparisons, and human decision artifacts
-- SkillEval-inspired React UI for project dashboards, run summaries, candidate comparison, eval results, prompt-bank health, timeline, and human review decisions
+- SkillEval-inspired React UI for project dashboards, run summaries, candidate comparison, eval results, prompt-bank health, timeline, and skill inspection
 - mock first-run flow that uses generated candidate packages plus the headless evaluator artifact shape
 - mock later-run flow with challenger-vs-champion gates
 - project run lock, max-run budget guard, and per-run `timeline.jsonl` logs

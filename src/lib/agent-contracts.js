@@ -94,8 +94,19 @@ async function createRealArtifact({ agentName, context, prompt, model, apiKeys, 
     maxTokens: agentName === 'creator' ? 12000 : 8192,
     jsonMode: true,
   });
-  const artifact = parseJson(text);
-  return validateAgentArtifact(agentName, artifact, context);
+  let artifact;
+  try {
+    artifact = parseJson(text);
+  } catch (error) {
+    annotateContractError(error, { agentName, context, rawModelText: text });
+    throw error;
+  }
+  try {
+    return validateAgentArtifact(agentName, artifact, context);
+  } catch (error) {
+    annotateContractError(error, { agentName, context, rawModelText: text, rawArtifact: artifact });
+    throw error;
+  }
 }
 
 async function createMockArtifact({ agentName, context }) {
@@ -206,12 +217,15 @@ async function writeCurrentAgentArtifact({ cwd, projectName, agentName, artifact
 
 export async function materializeCreatorArtifact({ artifact, candidateDir }) {
   validateCreatorArtifact(artifact, { runId: artifact.runId || 'materialized-creator' });
+  const packageFiles = artifact.files.map(file => ({
+    relativePath: validateRelativePackagePath(file.path),
+    content: validateCreatorFileContent(file),
+  }));
   const skillDir = path.join(candidateDir, 'skill');
   await ensureDir(skillDir);
 
-  for (const file of artifact.files) {
-    const relativePath = validateRelativePackagePath(file.path);
-    await writeText(path.join(skillDir, relativePath), file.content);
+  for (const file of packageFiles) {
+    await writeText(path.join(skillDir, file.relativePath), file.content);
   }
 
   const candidate = validateCandidate({
@@ -243,6 +257,13 @@ function validateRelativePackagePath(filePath) {
     throw new Error(`Creator file path cannot leave the skill package: ${filePath}`);
   }
   return normalized;
+}
+
+function validateCreatorFileContent(file) {
+  if (typeof file.content !== 'string') {
+    throw new Error(`Creator file content must be a string: ${file.path}`);
+  }
+  return file.content;
 }
 
 function renderCreatorRationale(candidate) {
@@ -449,10 +470,18 @@ function parseJson(text) {
   return JSON.parse((match ? match[1] : text).trim());
 }
 
+function annotateContractError(error, { agentName, context, rawModelText = null, rawArtifact = null }) {
+  error.agentName = agentName;
+  error.contractRunId = context.runId;
+  error.experimentArm = context.experimentArm || null;
+  error.rawModelText = rawModelText;
+  error.rawArtifact = rawArtifact;
+}
+
 function validateAgentArtifact(agentName, artifact, context) {
   if (agentName === 'ontology') return validateOntology(normalizeOntology(artifact, context));
   if (agentName === 'deconstructor') return validateParameterization(normalizeParameterization(artifact, context));
-  if (agentName === 'experiment-planner') return validateExperimentPlan(normalizeExperimentPlan(artifact));
+  if (agentName === 'experiment-planner') return validateExperimentPlan(normalizeExperimentPlan(artifact, context));
   if (agentName === 'analyst') return validateRecommendation(artifact);
   return validateCreatorArtifact(normalizeCreatorArtifact(artifact, context), context);
 }
@@ -491,10 +520,11 @@ function normalizeOntology(artifact, context = {}) {
   };
 }
 
-function normalizeExperimentPlan(artifact) {
+function normalizeExperimentPlan(artifact, context = {}) {
   if (!artifact || !artifact.arms) return artifact;
   return {
     ...artifact,
+    runId: normalizeString(artifact.runId, context.runId),
     arms: {
       candidateA: normalizeExperimentArm(artifact.arms.candidateA),
       candidateB: normalizeExperimentArm(artifact.arms.candidateB),
@@ -517,22 +547,52 @@ function normalizeCreatorArtifact(artifact, context = {}) {
     strategy,
     rationale: normalizeString(artifact.rationale, `Generated ${candidateId} using ${strategy}.`),
     changedParameterIds: normalizeArray(artifact.changedParameterIds),
-    files: normalizeCreatorFiles(artifact.files, { candidateId, strategy }),
+    files: normalizeCreatorFiles(extractCreatorFiles(artifact), { candidateId, strategy }),
     expectedAdvantages: normalizeArray(artifact.expectedAdvantages),
     expectedRisks: normalizeArray(artifact.expectedRisks),
     selfCritique: normalizeArray(artifact.selfCritique, ['No self-critique was returned by the creator model.']),
   };
 }
 
+function extractCreatorFiles(artifact) {
+  if (Array.isArray(artifact.files)) return artifact.files;
+  const inlineSkill = artifact.skillMarkdown || artifact.skillMd || artifact.skillContent || artifact.skill;
+  if (typeof inlineSkill === 'string' && inlineSkill.trim()) {
+    return [{ path: 'SKILL.md', content: inlineSkill }];
+  }
+  return artifact.files;
+}
+
 function normalizeCreatorFiles(files, { candidateId, strategy }) {
   if (!Array.isArray(files)) return files;
   return files.map(file => {
-    if (!file || file.path !== 'SKILL.md' || typeof file.content !== 'string') return file;
-    return {
+    if (!file || typeof file !== 'object') return file;
+    const rawPath = file.path || file.filePath || file.filename || file.name;
+    const rawContent = typeof file.content === 'string' ? file.content
+      : typeof file.markdown === 'string' ? file.markdown
+        : typeof file.text === 'string' ? file.text
+          : typeof file.body === 'string' ? file.body
+            : file.content;
+    const normalizedPath = normalizeCreatorFilePath(rawPath);
+    const normalizedFile = {
       ...file,
-      content: ensureSkillFrontmatter(file.content, { candidateId, strategy }),
+      path: normalizedPath || file.path,
+      content: rawContent,
+    };
+    if (normalizedFile.path !== 'SKILL.md' || typeof normalizedFile.content !== 'string') return normalizedFile;
+    return {
+      ...normalizedFile,
+      content: ensureSkillFrontmatter(normalizedFile.content, { candidateId, strategy }),
     };
   });
+}
+
+function normalizeCreatorFilePath(rawPath) {
+  if (typeof rawPath !== 'string' || !rawPath.trim()) return null;
+  const normalized = rawPath.trim().replaceAll('\\', '/');
+  const lower = normalized.toLowerCase();
+  if (lower === 'skill.md' || lower.endsWith('/skill.md')) return 'SKILL.md';
+  return normalized;
 }
 
 function ensureSkillFrontmatter(content, { candidateId, strategy }) {

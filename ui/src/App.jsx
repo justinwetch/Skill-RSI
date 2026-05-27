@@ -7,7 +7,7 @@ import {
 } from 'lucide-react';
 import {
   createProject, deleteProject, fetchProjects, fetchProjectSummary, fetchRunDetail,
-  fetchComparison, fetchSkill, fetchProgress, runStep, recordDecision,
+  fetchComparison, fetchSkill, fetchProgress, runStep,
 } from './api.js';
 
 const STAGES = [
@@ -121,7 +121,6 @@ export default function App() {
   const [runningFirst, setRunningFirst] = useState(false);
   const [openEval, setOpenEval] = useState(null);
   const [evTab, setEvTab] = useState('summary');
-  const [note, setNote] = useState('');
   const [draft, setDraft] = useState({ name: '', goal: '' });
   const [skillSource, setSkillSource] = useState('champion');
   const [skillData, setSkillData] = useState(null);
@@ -164,7 +163,7 @@ export default function App() {
   async function openProject(projectId) {
     setSelectedId(projectId);
     setView('project'); setScreen('home');
-    setOpenEval(null); setEvTab('summary'); setNote('');
+    setOpenEval(null); setEvTab('summary');
     await loadProjectData(projectId);
   }
 
@@ -191,7 +190,7 @@ export default function App() {
     if (!selectedId || busy) return;
     const preCount = summary?.state?.runCount || 0;
     const preLastId = summary?.state?.lastRunId || null;
-    setBusy(true); setError(''); setNote('');
+    setBusy(true); setError('');
     setScreen('running'); setStageIdx(0); setElapsed(0); setProgress(null);
     setRunningLoops(count); setBaseRunCount(preCount); setRunningFirst(!summary?.state?.currentChampion);
 
@@ -252,16 +251,6 @@ export default function App() {
       setDraft({ name: '', goal: '' });
       await loadProjects();
       await openProject(created.projectId);
-    } catch (err) { setError(err.message); }
-    finally { setBusy(false); }
-  }
-
-  async function handleAccept() {
-    if (!selectedId || !summary?.state?.lastRunId) return;
-    setBusy(true);
-    try {
-      await recordDecision(selectedId, { decision: 'approve', runId: summary.state.lastRunId });
-      setNote('Champion accepted — recorded for this skill.');
     } catch (err) { setError(err.message); }
     finally { setBusy(false); }
   }
@@ -340,7 +329,7 @@ export default function App() {
           screen={screen} setScreen={setScreen}
           stageIdx={stageIdx} elapsed={elapsed}
           progress={progress} runningLoops={runningLoops} baseRunCount={baseRunCount} runningFirst={runningFirst}
-          loops={loops} setLoops={setLoops} busy={busy} note={note}
+          loops={loops} setLoops={setLoops} busy={busy}
           openEval={openEval} setOpenEval={setOpenEval}
           evTab={evTab} setEvTab={setEvTab}
           skillSource={skillSource} skillData={skillData} compareData={compareData} skillLoading={skillLoading}
@@ -349,7 +338,7 @@ export default function App() {
           inspectLoading={inspectLoading} inspectRunId={inspectRunId}
           evidenceFrom={evidenceFrom} skillFrom={skillFrom}
           onBack={() => { setView('list'); loadProjects(); }}
-          onStart={handleStart} onAccept={handleAccept} onViewSkill={viewSkill} onOpenRun={openRun}
+          onStart={handleStart} onViewSkill={viewSkill} onOpenRun={openRun}
         />
       )}
     </div>
@@ -516,11 +505,11 @@ function Project(props) {
   const {
     summary, runDetail, comparison, screen, setScreen, stageIdx, elapsed,
     progress, runningLoops, baseRunCount, runningFirst,
-    loops, setLoops, busy, note, openEval, setOpenEval, evTab, setEvTab,
+    loops, setLoops, busy, openEval, setOpenEval, evTab, setEvTab,
     skillSource, skillData, compareData, skillLoading, skillFile, setSkillFile,
     inspectDetail, inspectComparison, inspectLoading, inspectRunId,
     evidenceFrom, skillFrom,
-    onBack, onStart, onAccept, onViewSkill, onOpenRun,
+    onBack, onStart, onViewSkill, onOpenRun,
   } = props;
 
   const runs = summary.state.runCount || 0;
@@ -584,10 +573,9 @@ function Project(props) {
           ) : (
             <>
               <RunBar loops={loops} setLoops={setLoops} busy={busy} hasChampion={hasChampion} onStart={onStart} />
-              {note && <div className="pill success" style={{ marginBottom: 18 }}><Check size={13} /> {note}</div>}
               {runDetail?.recommendation && (
                 <Verdict summary={summary} runDetail={runDetail} comparison={comparison}
-                  busy={busy} onStart={onStart} onAccept={onAccept} onEvidence={() => onOpenRun(null, 'home')} />
+                  busy={busy} onStart={onStart} onEvidence={() => onOpenRun(null, 'home')} />
               )}
               <div className="grid home">
                 <ChampionCard summary={summary} runDetail={runDetail} comparison={comparison} onViewSkill={onViewSkill} />
@@ -733,7 +721,7 @@ function Stage({ state, label, Icon, line, lineFilled }) {
 
 /* ---------------- verdict ---------------- */
 
-function Verdict({ summary, runDetail, comparison, busy, onStart, onAccept, onEvidence }) {
+function Verdict({ summary, runDetail, comparison, busy, onStart, onEvidence }) {
   const rec = runDetail.recommendation;
   const duel = comparison?.evalSummary?.candidateDuel;
   const promoted = rec.decision === 'promote';
@@ -761,9 +749,6 @@ function Verdict({ summary, runDetail, comparison, busy, onStart, onAccept, onEv
         <button className="btn primary" disabled={busy} onClick={() => onStart(1)}>
           {busy ? <Loader2 size={16} className="spin" /> : <RefreshCw size={16} />} Run another loop
         </button>
-        {promoted && (
-          <button className="btn" disabled={busy} onClick={onAccept}><CheckCircle2 size={16} /> Accept champion</button>
-        )}
         {runDetail?.evals?.candidateDuel && (
           <button className="btn ghost" onClick={onEvidence}><FileText size={16} /> See the evidence <ArrowRight size={15} /></button>
         )}

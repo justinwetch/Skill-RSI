@@ -299,3 +299,31 @@ test('real creator contract normalizes omitted optional list fields', async () =
   assert.match(result.artifact.files[0].content, /description: Use when applying the Embedded boundary policy Skill RSI candidate\./);
   assert.equal(result.artifact.selfCritique.length, 1);
 });
+
+test('real creator contract normalizes common SKILL.md file aliases', async () => {
+  const cwd = await fs.mkdtemp(path.join(os.tmpdir(), 'skill-rsi-creator-file-alias-'));
+  await initProject({ cwd, projectName: 'UX Design', goal: 'Help agents design better UX.' });
+
+  const result = await runAgentContract({
+    cwd,
+    projectName: 'ux-design',
+    agentName: 'creator',
+    runId: 'creator-file-alias',
+    mode: 'real',
+    model: 'fake-agent-model',
+    experimentArm: 'candidateA',
+    modelClient: async () => JSON.stringify({
+      strategy: 'Alias tolerant package',
+      changedParameterIds: [],
+      files: [{
+        filename: 'skill/SKILL.md',
+        markdown: '---\nname: ux-design\n---\n\n# UX Design\n',
+      }],
+      expectedAdvantages: [],
+      expectedRisks: [],
+    }),
+  });
+
+  assert.equal(result.artifact.files[0].path, 'SKILL.md');
+  assert.match(result.artifact.files[0].content, /description:/);
+});

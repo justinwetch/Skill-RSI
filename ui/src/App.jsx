@@ -3,7 +3,7 @@ import {
   FlaskConical, Moon, Sun, Plus, RefreshCw, ChevronLeft, ChevronRight, ChevronDown, ChevronUp,
   ArrowRight, Play, Trophy, Check, CheckCircle2, ArrowUp, Minus, FileText,
   Loader2, Database, Layout, GitPullRequest, MessageSquare, TrendingUp, Scale,
-  Beaker, Swords, Search, Flag, Pencil, Trash2, Upload, Sparkles, Package,
+  Beaker, Swords, Search, Flag, Pencil, Trash2, Upload, Sparkles, Package, Shield,
 } from 'lucide-react';
 import {
   createProject, deleteProject, fetchProjects, fetchProjectSummary, fetchRunDetail,
@@ -138,6 +138,7 @@ export default function App() {
   const [draft, setDraft] = useState({
     mode: 'scratch',
     outputType: 'text',
+    taskEnvironment: 'standalone',
     name: '',
     goal: '',
     baselineFiles: [],
@@ -286,6 +287,7 @@ export default function App() {
             goal,
             triggerMode: 'manual',
             outputType: draft.outputType || 'text',
+            taskContract: getDraftTaskContract(draft),
             baselineFiles,
             baselineArchive,
           });
@@ -297,6 +299,7 @@ export default function App() {
       setDraft({
         mode: 'scratch',
         outputType: 'text',
+        taskEnvironment: 'standalone',
         name: '',
         goal: '',
         baselineFiles: [],
@@ -397,6 +400,17 @@ export default function App() {
       )}
     </div>
   );
+}
+
+function getDraftTaskContract(draft) {
+  const artifactType = draft.outputType === 'code' ? 'code' : 'text';
+  const environment = artifactType === 'code'
+    ? (draft.taskEnvironment === 'codebase_edit' ? 'codebase_edit' : 'standalone')
+    : (draft.taskEnvironment === 'source_grounded' ? 'source_grounded' : 'standalone');
+  const id = artifactType === 'code'
+    ? (environment === 'codebase_edit' ? 'codebase_edit' : 'code_standalone')
+    : (environment === 'source_grounded' ? 'text_source_grounded' : 'text_standalone');
+  return { id, artifactType, environment };
 }
 
 // --- baseline SKILL.md auto-fill -------------------------------------------
@@ -654,7 +668,16 @@ function CreateView({ draft, setDraft, busy, onSubmit, onCancel }) {
   const existing = draft.mode === 'existing';
   const hasBaseline = Boolean(draft.baselineZip || draft.baselineFiles?.length || draft.baselineMarkdown);
   const setMode = mode => setDraft(d => ({ ...d, mode }));
-  const setOutputType = outputType => setDraft(d => ({ ...d, outputType }));
+  const setOutputType = outputType => setDraft(d => ({
+    ...d,
+    outputType,
+    taskEnvironment:
+      (outputType === 'code' && d.taskEnvironment === 'source_grounded')
+      || (outputType === 'text' && d.taskEnvironment === 'codebase_edit')
+        ? 'standalone'
+        : d.taskEnvironment || 'standalone',
+  }));
+  const setTaskEnvironment = taskEnvironment => setDraft(d => ({ ...d, taskEnvironment }));
   const outputTypes = [
     {
       key: 'text',
@@ -683,6 +706,31 @@ function CreateView({ draft, setDraft, busy, onSubmit, onCancel }) {
       disabled: true,
     },
   ];
+  const taskEnvironments = draft.outputType === 'code'
+    ? [
+      {
+        key: 'standalone',
+        title: 'Standalone build',
+        desc: 'Prompts ask for complete runnable code without implying hidden repo files.',
+      },
+      {
+        key: 'codebase_edit',
+        title: 'Existing codebase edit',
+        desc: 'Prompts include a file tree and source snippets, then judge code changes against them.',
+      },
+    ]
+    : [
+      {
+        key: 'standalone',
+        title: 'Standalone artifact',
+        desc: 'Prompts include enough context to produce a complete written artifact.',
+      },
+      {
+        key: 'source_grounded',
+        title: 'Source-grounded',
+        desc: 'Prompts include source excerpts or structured facts that outputs must use faithfully.',
+      },
+    ];
   return (
     <div className="create animate-slide-up">
       <div className="crumbs">
@@ -712,7 +760,7 @@ function CreateView({ draft, setDraft, busy, onSubmit, onCancel }) {
       </div>
 
       <div className="field">
-        <span>Expected output</span>
+        <span>Output artifact</span>
         <div className="output-grid" role="radiogroup" aria-label="Expected output">
           {outputTypes.map(type => {
             const Icon = type.icon;
@@ -731,7 +779,29 @@ function CreateView({ draft, setDraft, busy, onSubmit, onCancel }) {
             );
           })}
         </div>
-        <p className="field-hint">This controls what candidate skills are trained to produce and what the eval prompts require.</p>
+        <p className="field-hint">This controls the artifact Skill RSI expects candidate skills to produce.</p>
+      </div>
+
+      <div className="field">
+        <span>Task environment</span>
+        <div className="output-grid" role="radiogroup" aria-label="Task environment">
+          {taskEnvironments.map(type => {
+            const active = draft.taskEnvironment === type.key;
+            return (
+              <button key={type.key} type="button"
+                className={`mode-card output-card${active ? ' active' : ''}`}
+                role="radio" aria-checked={active}
+                onClick={() => setTaskEnvironment(type.key)}>
+                <Shield size={18} />
+                <div>
+                  <b>{type.title}</b>
+                  <p>{type.desc}</p>
+                </div>
+              </button>
+            );
+          })}
+        </div>
+        <p className="field-hint">Skill RSI will only generate eval prompts that include the context required by this environment.</p>
       </div>
 
       <form onSubmit={onSubmit}>
@@ -969,6 +1039,7 @@ function RunBar({ summary, loops, setLoops, busy, onStart }) {
   const budget = summary.config?.budget || {};
   const usage = summary.state.budgetUsage || {};
   const maxRuns = budget.maxRuns;
+  const taskContractLabel = formatTaskContract(summary.config?.eval?.taskContract);
   return (
     <div className="run-bar">
       <div className="copy">
@@ -979,7 +1050,7 @@ function RunBar({ summary, loops, setLoops, busy, onStart }) {
           improvement {loops === 1 ? 'loop' : 'loops'}
         </div>
         <div className="subtle">
-          {policy.triggerMode || policy.mode || 'manual'} · target {policy.targetIterations || loops}
+          {policy.triggerMode || policy.mode || 'manual'} · {taskContractLabel} · target {policy.targetIterations || loops}
           {maxRuns ? ` · max ${maxRuns} runs` : ''}
           {usage.estimatedTokens ? ` · ~${formatCompact(usage.estimatedTokens)} tokens used` : ''}
         </div>
@@ -990,6 +1061,20 @@ function RunBar({ summary, loops, setLoops, busy, onStart }) {
       </button>
     </div>
   );
+}
+
+function formatTaskContract(taskContract) {
+  switch (taskContract?.id) {
+    case 'code_standalone':
+      return 'code · standalone';
+    case 'codebase_edit':
+      return 'code · codebase edit';
+    case 'text_source_grounded':
+      return 'text · source-grounded';
+    case 'text_standalone':
+    default:
+      return 'text · standalone';
+  }
 }
 
 /* ---------------- running loop ---------------- */

@@ -5,6 +5,7 @@ import { loadSkillPackage } from './skill-package.js';
 import { writeJson } from './store.js';
 import { validateHeadlessEvalRun } from './schema.js';
 import { callModel } from './model-client.js';
+import { normalizeTaskContract, taskContractSummary } from './task-contracts.js';
 
 const TEXT_EVALUATED_OUTPUT_TYPES = ['text', 'code', 'code_visual'];
 
@@ -24,6 +25,7 @@ export async function runHeadlessEval({
   maxTokens = 8192,
   judgeMaxTokens = 4096,
   retryPolicy = {},
+  taskContract = null,
 }) {
   const startedAt = new Date().toISOString();
   const startedMs = Date.now();
@@ -31,6 +33,11 @@ export async function runHeadlessEval({
   if (!['mock', 'real'].includes(mode)) {
     throw new Error('Evaluator mode must be mock or real');
   }
+  if (!taskContract && !TEXT_EVALUATED_OUTPUT_TYPES.includes(outputType)) {
+    throw new Error(`Unsupported output evaluation type: ${outputType}`);
+  }
+  const normalizedTaskContract = normalizeTaskContract(taskContract, outputType);
+  outputType = normalizedTaskContract.outputType;
   if (!TEXT_EVALUATED_OUTPUT_TYPES.includes(outputType)) {
     throw new Error(`Unsupported output evaluation type: ${outputType}`);
   }
@@ -71,6 +78,7 @@ export async function runHeadlessEval({
       maxTokens,
       judgeMaxTokens,
       retryPolicy: normalizedRetryPolicy,
+      taskContract: normalizedTaskContract,
     });
 
   const stats = summarizeEvaluations(evaluations);
@@ -81,6 +89,7 @@ export async function runHeadlessEval({
     createdAt: startedAt,
     completedAt,
     outputType,
+    taskContract: normalizedTaskContract,
     modelMetadata: {
       generationModel: generationModel || null,
       judgeModel: judgeModel || null,
@@ -168,6 +177,7 @@ async function evaluateRealPrompts({
   maxTokens,
   judgeMaxTokens,
   retryPolicy,
+  taskContract,
 }) {
   const evaluations = [];
 
@@ -190,6 +200,7 @@ async function evaluateRealPrompts({
         maxTokens: judgeMaxTokens,
         blindLabels,
         retryPolicy,
+        taskContract,
       })
       : createSkippedJudge({
         reason: 'generation_failed',
@@ -279,7 +290,7 @@ async function generateSkillOutput({ skill, prompt, model, apiKeys, modelClient,
   };
 }
 
-async function judgeRealOutputs({ prompt, criteria, resultA, resultB, model, apiKeys, modelClient, maxTokens, blindLabels, retryPolicy }) {
+async function judgeRealOutputs({ prompt, criteria, resultA, resultB, model, apiKeys, modelClient, maxTokens, blindLabels, retryPolicy, taskContract = null }) {
   const startedAt = Date.now();
   const response = await withRetry({
     phase: 'judging',
@@ -289,7 +300,7 @@ async function judgeRealOutputs({ prompt, criteria, resultA, resultB, model, api
       const text = await modelClient({
         model,
         apiKeys,
-        systemPrompt: buildJudgeSystemPrompt(criteria),
+        systemPrompt: buildJudgeSystemPrompt(criteria, taskContract),
         messages: [{
           role: 'user',
           content: [
@@ -483,7 +494,8 @@ function buildSkillPackageText(skill) {
   return lines.join('\n');
 }
 
-function buildJudgeSystemPrompt(criteria) {
+function buildJudgeSystemPrompt(criteria, taskContract = null) {
+  const contract = normalizeTaskContract(taskContract);
   const rubricText = criteria.map((criterion, index) => [
     `${index + 1}. ${criterion.name || criterion.id}`,
     criterion.description || '',
@@ -493,7 +505,11 @@ function buildJudgeSystemPrompt(criteria) {
   const ids = criteria.map(criterion => criterion.id || criterion.name);
   return `You are an expert evaluator comparing two AI-generated outputs.
 
+Task contract:
+${JSON.stringify(taskContractSummary(contract), null, 2)}
+
 Score each output from 1-5 for each criterion.
+Reward outputs that satisfy the task contract's expected artifact and context rules. Penalize advice-only answers when the contract expects an artifact. For code_standalone, penalize asking for repository files because no existing codebase is part of the task. For codebase_edit, reward faithful edits to the provided files and penalize unrelated rewrites or ignoring the supplied code. For source-grounded tasks, reward source fidelity and penalize invented source claims.
 
 Criteria:
 ${rubricText}

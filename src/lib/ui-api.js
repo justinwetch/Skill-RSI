@@ -7,6 +7,7 @@ import { loadSkillPackage, materializeSkillPackage } from './skill-package.js';
 import { appendTimeline, readTimeline } from './timeline.js';
 import { ensureDir, hashDirectory, pathExists, readJson, writeJson, writeText } from './store.js';
 import { loadProjectConfig } from './config.js';
+import { normalizeTaskContract, taskContractOutputType } from './task-contracts.js';
 
 const MAX_BASELINE_ZIP_BYTES = 25 * 1024 * 1024;
 const UI_OUTPUT_TYPES = ['text', 'code', 'code_visual'];
@@ -18,6 +19,7 @@ export async function createProjectForUi({
   targetIterations = 3,
   triggerMode = 'manual',
   outputType = 'text',
+  taskContract = null,
   baselineFiles = [],
   baselineArchive = null,
 }) {
@@ -31,7 +33,10 @@ export async function createProjectForUi({
   if (!Number.isInteger(normalizedTargetIterations) || normalizedTargetIterations < 1) {
     throw badRequest('Target iterations must be a positive integer');
   }
-  const normalizedOutputType = UI_OUTPUT_TYPES.includes(outputType) ? outputType : 'text';
+  const normalizedTaskContract = normalizeTaskContract(taskContract, outputType);
+  const normalizedOutputType = UI_OUTPUT_TYPES.includes(taskContractOutputType(normalizedTaskContract))
+    ? taskContractOutputType(normalizedTaskContract)
+    : 'text';
   const paths = getProjectPaths(cwd, projectName);
   if (await pathExists(paths.stateJson)) {
     const error = new Error(`Project "${paths.projectId}" already exists`);
@@ -61,6 +66,7 @@ export async function createProjectForUi({
         targetIterations: normalizedTargetIterations,
       },
       evalOutputType: normalizedOutputType,
+      taskContract: normalizedTaskContract,
     });
     if (preflightSource) await installBaselineSkill({ paths, sourcePath: preflightSource.sourcePath });
     return readProjectSummary({ cwd, projectName });
@@ -109,6 +115,7 @@ export async function readProjectSummary({ cwd, projectName }) {
       budget: config.budget,
       eval: {
         outputType: config.eval.outputType,
+        taskContract: config.eval.taskContract,
         visualRunner: config.eval.visualRunner,
         stablePromptCount: config.eval.stablePromptCount,
         explorationPromptCount: config.eval.explorationPromptCount,

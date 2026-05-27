@@ -408,8 +408,9 @@ test('creator prompt includes the project output contract', async () => {
   });
 
   assert.match(result.prompt, /Expected user-output contract:/);
-  assert.match(result.prompt, /production-ready code for visual\/interface artifacts/);
-  assert.match(result.prompt, /Conceptual visual direction alone is incomplete/);
+  assert.match(result.prompt, /code_standalone/);
+  assert.match(result.prompt, /Complete runnable code/);
+  assert.match(result.prompt, /do not depend on hidden existing files/);
 });
 
 test('ontology and deconstructor prompts receive the project output contract', async () => {
@@ -436,8 +437,9 @@ test('ontology and deconstructor prompts receive the project output contract', a
     mode: 'mock',
   });
 
-  assert.match(ontology.prompt, /production-ready code artifacts/);
-  assert.match(deconstructor.prompt, /Advice-only responses are incomplete/);
+  assert.match(ontology.prompt, /code_standalone/);
+  assert.match(ontology.prompt, /Task Contract Robustness/);
+  assert.match(deconstructor.prompt, /missing-context behavior/);
 });
 
 test('real creator contract normalizes omitted optional list fields', async () => {

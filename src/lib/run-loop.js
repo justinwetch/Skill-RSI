@@ -245,6 +245,7 @@ async function applyOntologyQualityGate({
   apiKeys,
   agentClient,
   maxTokens,
+  taskContract = null,
   refresh = false,
 }) {
   const firstReport = createOntologyQualityReport({ ontology, researchPacket, config: researchConfig });
@@ -266,6 +267,7 @@ async function applyOntologyQualityGate({
       modelClient: agentClient,
       researchPacket,
       qualityFeedback: firstReport,
+      taskContract,
       refresh,
       maxTokens,
     });
@@ -302,6 +304,7 @@ async function applyDeconstructionQualityGate({
   apiKeys,
   agentClient,
   maxTokens,
+  taskContract = null,
 }) {
   const championPackage = await readChampionPackage(paths);
   const firstReport = createDeconstructionQualityReport({ parameterization, championPackage });
@@ -323,6 +326,7 @@ async function applyDeconstructionQualityGate({
       modelClient: agentClient,
       researchPacket,
       qualityFeedback: firstReport,
+      taskContract,
       maxTokens,
     });
     finalParameterization = validateParameterization(revised.artifact);
@@ -432,6 +436,7 @@ export async function runProject({
   judgeModel = judgeModel || config.models.judge;
   agentModel = agentModel || config.models.agent;
   const evalOutputType = config.eval.outputType || 'text';
+  const taskContract = config.eval.taskContract;
   const evalRetryPolicy = config.eval.retryPolicy;
   const generationMaxTokens = config.models.generationMaxTokens;
   const judgeMaxTokens = config.models.judgeMaxTokens;
@@ -493,6 +498,7 @@ export async function runProject({
           promotion: config.promotion,
           evalBatch: config.eval,
           evalOutputType,
+          taskContract,
           evalRetryPolicy,
           researchConfig: config.research,
           qualityGateConfig: config.qualityGate,
@@ -541,6 +547,7 @@ async function runStubLoop({
   modelParameters = {},
   evalMode,
   evalOutputType = 'text',
+  taskContract = null,
   evalRetryPolicy = {},
   promotion = null,
   budgetEstimate = null,
@@ -564,6 +571,7 @@ async function runStubLoop({
     eval: {
       mode: evalMode,
       outputType: evalOutputType,
+      taskContract,
     },
     promotionPolicy: promotion,
     models: createRunModelMetadata({ agentModel, generationModel, judgeModel, modelParameters }),
@@ -634,6 +642,7 @@ async function runStubLoop({
     history,
     previousBank: await readJson(paths.promptBankIndex, null),
     outputType: evalOutputType,
+    taskContract,
   });
   await writeJson(paths.promptBankIndex, evalDesign.bank);
   await writeJson(paths.promptBankPrompts, evalDesign.prompts);
@@ -644,6 +653,7 @@ async function runStubLoop({
     criteria: evalDesign.criteria,
     bank: evalDesign.bank,
     outputType: evalOutputType,
+    taskContract,
     retryPolicy: evalRetryPolicy,
     promotionPolicy: promotion,
     models: createRunModelMetadata({ agentModel, generationModel, judgeModel, modelParameters }),
@@ -741,6 +751,7 @@ async function runAgenticLoop({
   promotion = null,
   evalBatch = null,
   evalOutputType = 'text',
+  taskContract = null,
   evalRetryPolicy = {},
   researchConfig = {},
   qualityGateConfig = {},
@@ -760,6 +771,7 @@ async function runAgenticLoop({
     judgeModel,
     agentModel,
     outputType: evalOutputType,
+    taskContract,
   });
 
   // Preserve the original run record (and its start time) when resuming an incomplete run.
@@ -776,6 +788,7 @@ async function runAgenticLoop({
     eval: {
       mode: evalMode,
       outputType: evalOutputType,
+      taskContract,
     },
     promotionPolicy: promotion,
     models: createRunModelMetadata({ agentModel, generationModel, judgeModel, modelParameters }),
@@ -816,6 +829,7 @@ async function runAgenticLoop({
       apiKeys,
       modelClient: agentClient,
       researchPacket,
+      taskContract,
       maxTokens: modelParameters.agentMaxTokens,
     });
     ontology = validateOntology(ontologyResult.artifact);
@@ -833,6 +847,7 @@ async function runAgenticLoop({
       apiKeys,
       agentClient,
       maxTokens: modelParameters.agentMaxTokens,
+      taskContract,
     });
     await writeJson(paths.ontologyCurrent, ontology);
     await writeJson(path.join(runPaths.deconstructionDir, 'ontology.json'), ontology);
@@ -867,6 +882,7 @@ async function runAgenticLoop({
       modelClient: agentClient,
       refresh: true,
       researchPacket,
+      taskContract,
       maxTokens: modelParameters.agentMaxTokens,
     });
     ontology = validateOntology(refreshed.artifact);
@@ -884,6 +900,7 @@ async function runAgenticLoop({
       apiKeys,
       agentClient,
       maxTokens: modelParameters.agentMaxTokens,
+      taskContract,
       refresh: true,
     });
     await writeJson(paths.ontologyCurrent, ontology);
@@ -938,6 +955,7 @@ async function runAgenticLoop({
       apiKeys,
       modelClient: agentClient,
       researchPacket,
+      taskContract,
       maxTokens: modelParameters.agentMaxTokens,
     });
     parameterization = validateParameterization(deconstructorResult.artifact);
@@ -954,6 +972,7 @@ async function runAgenticLoop({
       apiKeys,
       agentClient,
       maxTokens: modelParameters.agentMaxTokens,
+      taskContract,
     });
     await writeJson(paths.parameterizationCurrent, parameterization);
     await writeJson(runPaths.parameterizationJson, parameterization);
@@ -991,6 +1010,7 @@ async function runAgenticLoop({
       apiKeys,
       modelClient: agentClient,
       managerPlan: managerArtifact,
+      taskContract,
       maxTokens: modelParameters.agentMaxTokens,
     });
     experimentPlan = validateExperimentPlan(applyManagerGuidanceToPlan(
@@ -1021,6 +1041,7 @@ async function runAgenticLoop({
     apiKeys,
     agentClient,
     outputType: evalOutputType,
+    taskContract,
   });
   let creatorAArtifact = candidateAResult.artifact;
   let candidateA = candidateAResult.candidate;
@@ -1038,6 +1059,7 @@ async function runAgenticLoop({
     apiKeys,
     agentClient,
     outputType: evalOutputType,
+    taskContract,
   });
   let creatorBArtifact = candidateBResult.artifact;
   let candidateB = candidateBResult.candidate;
@@ -1067,12 +1089,23 @@ async function runAgenticLoop({
         apiKeys,
         modelClient: agentClient,
         outputType: evalOutputType,
+        taskContract,
       });
       if (coreCriteria) {
         await appendTimeline(runPaths.timelineJsonl, 'criteria.generated', {
           mode: 'real', model: judgeModel || agentModel, count: coreCriteria.length,
         });
+      } else {
+        await appendTimeline(runPaths.timelineJsonl, 'criteria.fallback', {
+          mode: 'deterministic',
+          reason: 'model_criteria_generation_failed_or_unavailable',
+        });
       }
+    } else {
+      await appendTimeline(runPaths.timelineJsonl, 'criteria.reused', {
+        source: previousBank?.criteriaAuthoring?.source || 'prompt_bank',
+        count: lockedCore.length,
+      });
     }
     evalDesign = designEvalBatch({
       runId,
@@ -1086,20 +1119,26 @@ async function runAgenticLoop({
       explorationPromptCount: evalBatch?.explorationPromptCount,
       coreCriteria,
       outputType: evalOutputType,
+      taskContract,
     });
     // SkillEval-style: have the model write realistic eval prompts (falls back to templates on failure)
-    await naturalizeEvalPrompts({
+    const promptAuthoring = await naturalizeEvalPrompts({
       design: evalDesign,
       goal,
       model: judgeModel || agentModel,
       apiKeys,
       modelClient: agentClient,
       outputType: evalOutputType,
+      taskContract,
     });
     await appendTimeline(runPaths.timelineJsonl, 'eval_prompts.generated', {
       mode: 'real',
       model: judgeModel || agentModel,
       count: evalDesign.prompts.length,
+      source: promptAuthoring?.source || evalDesign.bank?.promptAuthoring?.source || 'unknown',
+      fallbackPromptCount: promptAuthoring?.fallbackPromptCount || 0,
+      repairedPromptCount: promptAuthoring?.repairedPromptIds?.length || 0,
+      modelAttemptCount: promptAuthoring?.modelAttemptCount || 0,
     });
     await writeJson(paths.promptBankIndex, evalDesign.bank);
     await writeJson(paths.promptBankPrompts, evalDesign.prompts);
@@ -1110,6 +1149,7 @@ async function runAgenticLoop({
       criteria: evalDesign.criteria,
       bank: evalDesign.bank,
       outputType: evalOutputType,
+      taskContract,
       retryPolicy: evalRetryPolicy,
       promotionPolicy: promotion,
       models: createRunModelMetadata({ agentModel, generationModel, judgeModel, modelParameters }),
@@ -1156,6 +1196,7 @@ async function runAgenticLoop({
       agentClient,
       agentSkillsStandard,
       outputType: evalOutputType,
+      taskContract,
       championPackage: championPackageForReview,
     }));
   }
@@ -1180,6 +1221,7 @@ async function runAgenticLoop({
       agentClient,
       agentSkillsStandard,
       outputType: evalOutputType,
+      taskContract,
       championPackage: championPackageForReview,
     }));
   }
@@ -1216,6 +1258,7 @@ async function runAgenticLoop({
       generationModel,
       judgeModel,
       outputType: evalOutputType,
+      taskContract,
       maxTokens: modelParameters.generationMaxTokens,
       judgeMaxTokens: modelParameters.judgeMaxTokens,
       retryPolicy: evalRetryPolicy,
@@ -1246,6 +1289,7 @@ async function runAgenticLoop({
         generationModel,
         judgeModel,
         outputType: evalOutputType,
+        taskContract,
         maxTokens: modelParameters.generationMaxTokens,
         judgeMaxTokens: modelParameters.judgeMaxTokens,
         retryPolicy: evalRetryPolicy,
@@ -1353,6 +1397,7 @@ async function createAndMaterializeCandidate({
   apiKeys,
   agentClient,
   outputType = 'text',
+  taskContract = null,
 }) {
   const artifactPath = path.join(candidateDir, 'creator-artifact.json');
   let artifact = await readJson(artifactPath, null);
@@ -1373,6 +1418,7 @@ async function createAndMaterializeCandidate({
           experimentArm,
           revision,
           outputType,
+          taskContract,
           maxTokens: modelParameters.creatorMaxTokens,
         });
         artifact = creatorResult.artifact;
@@ -1510,6 +1556,7 @@ async function runMockLoop({
   promotion = null,
   evalBatch = null,
   evalOutputType = 'text',
+  taskContract = null,
   evalRetryPolicy = {},
   budgetEstimate = null,
   triggerContext = { mode: 'manual', hook: null },
@@ -1525,6 +1572,7 @@ async function runMockLoop({
     judgeModel,
     agentModel,
     outputType: evalOutputType,
+    taskContract,
   });
 
   const startedAt = new Date().toISOString();
@@ -1540,6 +1588,7 @@ async function runMockLoop({
     eval: {
       mode: evalMode,
       outputType: evalOutputType,
+      taskContract,
     },
     promotionPolicy: promotion,
     models: createRunModelMetadata({ agentModel, generationModel, judgeModel, modelParameters }),
@@ -1612,6 +1661,7 @@ async function runMockLoop({
     stablePromptCount: evalBatch?.stablePromptCount,
     explorationPromptCount: evalBatch?.explorationPromptCount,
     outputType: evalOutputType,
+    taskContract,
   });
   await writeJson(paths.promptBankIndex, evalDesign.bank);
   await writeJson(paths.promptBankPrompts, evalDesign.prompts);
@@ -1622,6 +1672,7 @@ async function runMockLoop({
     criteria: evalDesign.criteria,
     bank: evalDesign.bank,
     outputType: evalOutputType,
+    taskContract,
     retryPolicy: evalRetryPolicy,
     promotionPolicy: promotion,
     models: createRunModelMetadata({ agentModel, generationModel, judgeModel, modelParameters }),
@@ -1640,6 +1691,7 @@ async function runMockLoop({
     generationModel,
     judgeModel,
     outputType: evalOutputType,
+    taskContract,
     maxTokens: modelParameters.generationMaxTokens,
     judgeMaxTokens: modelParameters.judgeMaxTokens,
     retryPolicy: evalRetryPolicy,
@@ -1671,6 +1723,7 @@ async function runMockLoop({
       generationModel,
       judgeModel,
       outputType: evalOutputType,
+      taskContract,
       maxTokens: modelParameters.generationMaxTokens,
       judgeMaxTokens: modelParameters.judgeMaxTokens,
       retryPolicy: evalRetryPolicy,
@@ -1896,6 +1949,7 @@ async function reviseBlockedCandidate({
   agentClient,
   agentSkillsStandard,
   outputType = 'text',
+  taskContract = null,
   championPackage = null,
 }) {
   const suffix = String(attempt).padStart(3, '0');
@@ -1922,6 +1976,7 @@ async function reviseBlockedCandidate({
       review,
     },
     outputType,
+    taskContract,
     maxTokens: modelParameters.creatorMaxTokens,
   });
   await writeJson(path.join(revisionDir, 'creator-contract.json'), revisionResult);

@@ -2,16 +2,18 @@ import { getProjectPaths } from './paths.js';
 import { ensureDir, pathExists, writeJson, writeText } from './store.js';
 import { validateHistoryIndex, validateProjectConfig, validateRunState } from './schema.js';
 import { DEFAULT_PROJECT_CONFIG } from './config.js';
+import { normalizeTaskContract, taskContractOutputType } from './task-contracts.js';
 
 function yamlScalar(value) {
   return JSON.stringify(String(value));
 }
 
-export async function initProject({ cwd, projectName, goal, runPolicy = null, evalOutputType = 'text' }) {
+export async function initProject({ cwd, projectName, goal, runPolicy = null, evalOutputType = 'text', taskContract = null }) {
   const paths = getProjectPaths(cwd, projectName);
   const createdAt = new Date().toISOString();
   const normalizedRunPolicy = normalizeRunPolicy(runPolicy);
-  const normalizedEvalOutputType = normalizeEvalOutputType(evalOutputType);
+  const normalizedTaskContract = normalizeTaskContract(taskContract, evalOutputType);
+  const normalizedEvalOutputType = normalizeEvalOutputType(taskContractOutputType(normalizedTaskContract));
 
   await ensureDir(paths.projectDir);
   await ensureDir(paths.championSkillDir);
@@ -70,6 +72,7 @@ export async function initProject({ cwd, projectName, goal, runPolicy = null, ev
       eval: {
         ...DEFAULT_PROJECT_CONFIG.eval,
         outputType: normalizedEvalOutputType,
+        taskContract: normalizedTaskContract,
       },
     });
   }

@@ -16,6 +16,7 @@ import {
   createStubParameterization,
 } from './stub-agents.js';
 import { loadSkillPackage } from './skill-package.js';
+import { normalizeTaskContract, taskContractSummary } from './task-contracts.js';
 
 export const AGENT_NAMES = ['ontology', 'deconstructor', 'experiment-planner', 'creator', 'analyst'];
 
@@ -44,6 +45,7 @@ export async function runAgentContract({
   researchPacket = null,
   qualityFeedback = null,
   outputType = null,
+  taskContract = null,
   maxTokens = null,
 }) {
   if (!AGENT_NAMES.includes(agentName)) {
@@ -63,13 +65,18 @@ export async function runAgentContract({
     currentChampion: null,
   });
   const projectConfig = await readJson(paths.configJson, null);
+  const normalizedTaskContract = normalizeTaskContract(
+    taskContract || projectConfig?.eval?.taskContract,
+    outputType || projectConfig?.eval?.outputType,
+  );
   const runPaths = getRunPaths(paths, runId);
   const context = {
     projectId: paths.projectId,
     goal: await readGoal(paths),
     runId,
     projectConfig,
-    outputType: normalizeOutputType(outputType || projectConfig?.eval?.outputType),
+    outputType: normalizeOutputType(normalizedTaskContract.outputType),
+    taskContract: normalizedTaskContract,
     state,
     ontology: await readJson(paths.ontologyCurrent, null),
     parameterization: await readJson(paths.parameterizationCurrent, null),
@@ -309,7 +316,7 @@ ${candidate.rationale}
 const ONTOLOGY_FIELDS = 'runId, skillGoal, targetUsers, targetTasks, invocationBoundaries {shouldTriggerWhen, shouldNotTriggerWhen}, inputSurface, outputArtifacts, requiredKnowledge, referencePoints, adjacentDomainsToBorrowFrom, optionalResources {references, scripts, assets}, platformAssumptions {portableAgentSkills, clientSpecificFeatures}, failureModes, qualityAxes, evalPromptTaxonomy, candidateStrategySpace, openQuestions.';
 
 function buildOntologyPrompt(context) {
-  const outputContract = getAgentOutputContract(context.outputType);
+  const outputContract = getAgentOutputContract(context.outputType, context.taskContract);
   if (context.refresh && context.ontology) {
     // Later-run refresh (§6.2/§6.6): update the existing map conservatively rather than rebuild.
     return `You are the Ontology Agent for Skill RSI, REFRESHING an existing domain map after a new champion was promoted.
@@ -322,6 +329,9 @@ ${formatContextBlock(context.ontology)}
 
 Expected user-output contract:
 ${formatContextBlock(outputContract)}
+
+Task contract:
+${formatContextBlock(taskContractSummary(context.taskContract))}
 
 Research packet:
 ${formatContextBlock(context.researchPacket)}
@@ -349,8 +359,11 @@ ${formatContextBlock(context.researchPacket)}
 Expected user-output contract:
 ${formatContextBlock(outputContract)}
 
+Task contract:
+${formatContextBlock(taskContractSummary(context.taskContract))}
+
 Map the domain and Agent Skill design space.
-Build an evidence-backed ontology. Include authorityMap, evidenceClaims, sourceRefs, inferenceLabels, unsupportedClaims, and researchGaps as companion fields. Classify major claims as sourced, inferred, or speculative. Translate authority opinions into concrete implications for this skill and include misuse risks.
+Build an evidence-backed ontology. Include authorityMap, evidenceClaims, sourceRefs, inferenceLabels, unsupportedClaims, researchGaps, and Task Contract Robustness as companion fields. Classify major claims as sourced, inferred, or speculative. Translate authority opinions into concrete implications for this skill and include misuse risks. Treat required input context, sufficient vs underspecified task boundaries, expected artifact shape, clarification policy, and observable/judgeable outputs as first-class ontology concerns.
 ${qualityFeedbackBlock(context)}
 ${ontologyStandardBlock(context)}
 Return JSON matching SkillOntology with these fields:
@@ -375,7 +388,7 @@ Revise the artifact to address every issue in the quality report. Keep valid exi
 
 function buildDeconstructorPrompt(context) {
   const hasChampion = Boolean(context.state?.currentChampion && context.championSkill);
-  const outputContract = getAgentOutputContract(context.outputType);
+  const outputContract = getAgentOutputContract(context.outputType, context.taskContract);
 
   if (!hasChampion) {
     // First run: there is no champion yet. Per the implementation plan (§4, §6.2), the
@@ -396,12 +409,15 @@ ${formatContextBlock(context.researchPacket)}
 Expected user-output contract:
 ${formatContextBlock(outputContract)}
 
+Task contract:
+${formatContextBlock(taskContractSummary(context.taskContract))}
+
 Agent Skills standard:
 ${formatContextBlock(context.agentSkillsStandard)}
 
-Using the ontology's domain map, define the INITIAL parameter taxonomy for this skill: the surfaces a strong first version must get right — activation/triggering, workflow sequence, decision heuristics, context vs. reference split, output contract, validation, failure handling, examples, and packaging. Return JSON matching SkillParameterization:
+Using the ontology's domain map, define the INITIAL parameter taxonomy for this skill: the surfaces a strong first version must get right — activation/triggering, workflow sequence, decision heuristics, context vs. reference split, task contract robustness, output contract, validation, failure handling, examples, and packaging. Return JSON matching SkillParameterization:
 runId, championSkillHash (use "none"), summary, parameters, crossParameterInteractions, highestLeverageHypotheses, doNotTouchYet, suggestedExperimentFamilies.
-Provide at least 12 parameters. For each, currentImplementation should describe the intended baseline (since none exists yet). Each parameter must include id, surface, currentImplementation, improvementHypothesis, expectedBenefit, regressionRisk, artifactEvidence, evidenceFromHistory, possibleMutations, measurementPlan, couplingNotes, priority, confidence, and granularity.
+Provide at least 12 parameters. Include task-contract surfaces when relevant: missing-context behavior, artifact completeness, source fidelity, patch/file mapping, standalone fallback quality, and what is observable/judgeable. For each, currentImplementation should describe the intended baseline (since none exists yet). Each parameter must include id, surface, currentImplementation, improvementHypothesis, expectedBenefit, regressionRisk, artifactEvidence, evidenceFromHistory, possibleMutations, measurementPlan, couplingNotes, priority, confidence, and granularity.
 ${qualityFeedbackBlock(context)}`;
   }
 
@@ -419,6 +435,9 @@ ${formatContextBlock(context.researchPacket)}
 Expected user-output contract:
 ${formatContextBlock(outputContract)}
 
+Task contract:
+${formatContextBlock(taskContractSummary(context.taskContract))}
+
 Experiment history summary:
 ${formatContextBlock(compactHistory(context.history))}
 
@@ -431,7 +450,7 @@ ${formatContextBlock(context.championPackage)}
 Agent Skills standard:
 ${formatContextBlock(context.agentSkillsStandard)}
 
-Deconstruct the current champion into at least 12 granular improvement parameters. Return JSON matching SkillParameterization:
+Deconstruct the current champion into at least 12 granular improvement parameters. Include task-contract surfaces when relevant: required input context, sufficient vs underspecified task boundaries, missing-context behavior, artifact completeness, source fidelity, patch/file mapping, standalone fallback quality, and what is observable/judgeable. Return JSON matching SkillParameterization:
 runId, championSkillHash, summary, parameters, crossParameterInteractions, highestLeverageHypotheses, doNotTouchYet, suggestedExperimentFamilies.
 Each parameter must include id, surface, currentImplementation, improvementHypothesis, expectedBenefit, regressionRisk, artifactEvidence, evidenceFromHistory, possibleMutations, measurementPlan, couplingNotes, priority, confidence, and granularity.
 ${qualityFeedbackBlock(context)}`;
@@ -452,10 +471,14 @@ ${formatContextBlock(compactHistory(context.history))}
 Manager guidance for this run:
 ${formatContextBlock(context.managerPlan)}
 
+Task contract:
+${formatContextBlock(taskContractSummary(context.taskContract))}
+
 Turn the parameterization into a focused A/B experiment. Return JSON matching ABExperimentPlan:
 runId, experimentQuestion, focusParameterIds, controlledParameterIds, hypothesis, arms {candidateA, candidateB}, evalFocus, successMetrics, promotionRisks, reasonNotTestingOtherHighPriorityParameters.
 Select one to three related parameters and hold unrelated parameters constant.
 Default to an ablation-style/local-variation experiment: vary only the selected focus parameters, explicitly preserve the current champion's unrelated structure and behavior, and make the two arms narrow enough that the analyst can tell which deconstructed hypothesis moved the result.
+State success metrics that are measurable under the task contract. Do not plan experiments whose effect would be invisible or impossible to score from the contract's prompt context and expected artifact.
 Honor manager guidance. Do not select avoid.parameterIds unless you explicitly cite new evidence in reasonNotTestingOtherHighPriorityParameters. If strategy.experimentFamily is "high_divergence_reset", plan a high-divergence/reset experiment instead of another small local mutation.
 
 Use this exact arm shape:
@@ -466,7 +489,7 @@ Use this exact arm shape:
 }
 
 function buildCreatorPrompt(context) {
-  const outputContract = getAgentOutputContract(context.outputType);
+  const outputContract = getAgentOutputContract(context.outputType, context.taskContract);
   return `You are a Skill Creator subagent for Skill RSI.
 
 Goal: ${context.goal}
@@ -481,6 +504,9 @@ ${formatContextBlock(context.experimentPlan)}
 
 Expected user-output contract:
 ${formatContextBlock(outputContract)}
+
+Task contract:
+${formatContextBlock(taskContractSummary(context.taskContract))}
 
 Current champion SKILL.md:
 ${context.championSkill || 'No current champion skill exists yet.'}
@@ -550,36 +576,30 @@ function normalizeOutputType(outputType) {
   return ['text', 'code', 'code_visual'].includes(outputType) ? outputType : 'text';
 }
 
-function getAgentOutputContract(outputType) {
-  if (outputType === 'code') {
+function getAgentOutputContract(outputType, taskContract = null) {
+  const contract = normalizeTaskContract(taskContract, outputType);
+  if (contract.outputType === 'code') {
     return {
-      outputType: 'code',
-      contract: 'The improved skill is evaluated on whether it helps agents produce concrete, production-ready code artifacts when implementation work is requested. Advice-only responses are incomplete unless the user explicitly asks for advice.',
+      outputType: contract.outputType,
+      taskContractId: contract.id,
+      contract: contract.criteriaInstruction,
+      insufficientContextBehavior: contract.insufficientContextBehavior,
       implications: [
-        'Ontology should treat implementation readiness, runnable completeness, API/framework specificity, validation, and edge-case handling as first-class quality axes.',
-        'Deconstruction should include parameters for how the skill moves from requirements to concrete files/code and how it prevents vague recommendation-only output.',
-        'Creator output should be a portable Agent Skill that trains agents to produce code, not merely implementation plans.',
-      ],
-    };
-  }
-  if (outputType === 'code_visual') {
-    return {
-      outputType: 'code_visual',
-      contract: 'The improved skill is evaluated on whether it helps agents produce production-ready code for visual/interface artifacts. Conceptual visual direction alone is incomplete. Screenshot/visual execution is not available yet, so the text evaluator inspects code, styling, accessibility, responsive behavior, and interaction detail.',
-      implications: [
-        'Ontology should include visual hierarchy, layout implementation, responsive behavior, accessibility, interaction states, and production readiness as first-class quality axes.',
-        'Deconstruction should identify where the current skill permits mood-board or recommendation-only answers instead of implemented UI/code.',
-        'Creator output should train agents to generate actual interface code and validation checks while avoiding claims that screenshots or browser pixels will be evaluated in this phase.',
+        'Ontology should treat task context sufficiency, implementation readiness, runnable completeness, validation, and edge-case handling as first-class quality axes.',
+        'Deconstruction should include parameters for how the skill produces the expected code artifact under the active task environment.',
+        'Creator output should be a portable Agent Skill that trains agents to satisfy the task contract, not merely produce plausible advice.',
       ],
     };
   }
   return {
-    outputType: 'text',
-    contract: 'The improved skill is evaluated on useful text artifacts appropriate to the skill domain, not merely meta-advice about how to create them.',
+    outputType: contract.outputType,
+    taskContractId: contract.id,
+    contract: contract.criteriaInstruction,
+    insufficientContextBehavior: contract.insufficientContextBehavior,
     implications: [
-      'Ontology should identify the text artifacts the skill must reliably produce.',
-      'Deconstruction should include parameters for artifact structure, specificity, validation, and domain fit.',
-      'Creator output should train agents to produce the requested text artifact directly.',
+      'Ontology should define the concrete text artifacts and required context the skill should handle.',
+      'Deconstruction should include parameters for usefulness, structure, source fidelity, context sufficiency, and validation.',
+      'Creator output should optimize for the active task contract and avoid meta-advice unless the contract calls for it.',
     ],
   };
 }
@@ -595,6 +615,9 @@ ${formatContextBlock(compactHistory(context.history))}
 
 Active experiment plan:
 ${formatContextBlock(context.experimentPlan)}
+
+Task contract:
+${formatContextBlock(taskContractSummary(context.taskContract))}
 
 Interpret SkillEval results in context. Return JSON matching AnalystRecommendation:
 runId, decision, recommendedChampionCandidateId, confidence, reasoning, observations, nextRoundGuidance {vary, preserve, investigate}.

@@ -62,7 +62,8 @@ test('headless evaluator accepts non-visual code output contracts', async () => 
     outputType: 'code_visual',
   });
 
-  assert.equal(result.outputType, 'code_visual');
+  assert.equal(result.outputType, 'code');
+  assert.equal(result.taskContract.id, 'code_standalone');
   await assert.rejects(() => runHeadlessEval({
     skillAPath: skillA,
     skillBPath: skillB,
@@ -135,6 +136,8 @@ test('runs a real text evaluation with an injected model client', async () => {
   assert.ok(result.evaluations[0].results[result.blindLabels.skillA].contentHash);
   assert.match(result.evaluations[0].judge.rawResponse, /Skill A was clearer/);
   assert.deepEqual(result.evaluations[0].judge.parsedScores.breakdown.skillA, { correctness: 5 });
+  assert.match(calls[2].systemPrompt, /Task contract:/);
+  assert.match(calls[2].systemPrompt, /text_standalone/);
 });
 
 test('real evaluation records per-prompt generation failure without failing whole run', async () => {

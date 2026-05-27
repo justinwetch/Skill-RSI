@@ -1,5 +1,6 @@
 import { getProjectPaths } from './paths.js';
 import { readJson } from './store.js';
+import { normalizeTaskContract, taskContractOutputType } from './task-contracts.js';
 
 // Per-project tunables the loop actually honors. Persisted as machine-readable JSON
 // (config.json) so there is a single source of truth without a YAML parser dependency.
@@ -29,6 +30,11 @@ export const DEFAULT_PROJECT_CONFIG = {
     stablePromptCount: 6,
     explorationPromptCount: 4,
     outputType: 'text',
+    taskContract: {
+      id: 'text_standalone',
+      artifactType: 'text',
+      environment: 'standalone',
+    },
     visualRunner: false,
     retryPolicy: {
       generationMaxAttempts: 2,
@@ -128,11 +134,14 @@ function normalizePromotion(raw) {
 
 function normalizeEval(raw) {
   const evalConfig = mergeSection(DEFAULT_PROJECT_CONFIG.eval, raw);
+  const taskContract = normalizeTaskContract(raw?.taskContract || null, evalConfig.outputType);
+  const outputType = taskContractOutputType(taskContract);
   return {
     ...evalConfig,
     stablePromptCount: normalizePositiveInt(evalConfig.stablePromptCount, DEFAULT_PROJECT_CONFIG.eval.stablePromptCount),
     explorationPromptCount: normalizePositiveInt(evalConfig.explorationPromptCount, DEFAULT_PROJECT_CONFIG.eval.explorationPromptCount),
-    outputType: TEXT_EVAL_OUTPUT_TYPES.includes(evalConfig.outputType) ? evalConfig.outputType : 'text',
+    taskContract,
+    outputType: TEXT_EVAL_OUTPUT_TYPES.includes(outputType) ? outputType : 'text',
     visualRunner: Boolean(evalConfig.visualRunner),
     retryPolicy: normalizeRetryPolicy(evalConfig.retryPolicy),
   };

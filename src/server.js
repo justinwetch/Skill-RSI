@@ -75,7 +75,6 @@ async function handleApi(request, response, url) {
       targetIterations: body.targetIterations || 3,
       triggerMode: body.triggerMode || 'manual',
       outputType: body.outputType || 'text',
-      taskContract: body.taskContract || null,
       baselineFiles: body.baselineFiles || [],
       baselineArchive: body.baselineArchive || null,
     }));

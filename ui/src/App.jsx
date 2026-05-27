@@ -3,7 +3,7 @@ import {
   FlaskConical, Moon, Sun, Plus, RefreshCw, ChevronLeft, ChevronRight, ChevronDown, ChevronUp,
   ArrowRight, Play, Trophy, Check, CheckCircle2, ArrowUp, Minus, FileText,
   Loader2, Database, Layout, GitPullRequest, MessageSquare, TrendingUp, Scale,
-  Beaker, Swords, Search, Flag, Pencil, Trash2, Upload, Sparkles, Package, Shield,
+  Beaker, Swords, Search, Flag, Pencil, Trash2, Upload, Sparkles, Package,
 } from 'lucide-react';
 import {
   createProject, deleteProject, fetchProjects, fetchProjectSummary, fetchRunDetail,
@@ -141,7 +141,6 @@ export default function App() {
   const [draft, setDraft] = useState({
     mode: 'scratch',
     outputType: 'text',
-    taskEnvironment: 'standalone',
     name: '',
     goal: '',
     baselineFiles: [],
@@ -248,7 +247,6 @@ export default function App() {
         mode: 'agentic',
         evalMode: 'real',
         maxRuns: null,
-        stopRules: { maxNoPromotionRuns: 3, maxInconclusiveRuns: 2 },
       });
       clearTimers();
       await loadProjectData(selectedId);
@@ -302,7 +300,6 @@ export default function App() {
       setDraft({
         mode: 'scratch',
         outputType: 'text',
-        taskEnvironment: 'standalone',
         name: '',
         goal: '',
         baselineFiles: [],
@@ -412,13 +409,11 @@ export default function App() {
 
 function getDraftTaskContract(draft) {
   const artifactType = draft.outputType === 'code' ? 'code' : 'text';
-  const environment = artifactType === 'code'
-    ? (draft.taskEnvironment === 'codebase_edit' ? 'codebase_edit' : 'standalone')
-    : (draft.taskEnvironment === 'source_grounded' ? 'source_grounded' : 'standalone');
-  const id = artifactType === 'code'
-    ? (environment === 'codebase_edit' ? 'codebase_edit' : 'code_standalone')
-    : (environment === 'source_grounded' ? 'text_source_grounded' : 'text_standalone');
-  return { id, artifactType, environment };
+  return {
+    id: artifactType === 'code' ? 'code_standalone' : 'text_standalone',
+    artifactType,
+    environment: 'standalone',
+  };
 }
 
 // --- baseline SKILL.md auto-fill -------------------------------------------
@@ -676,16 +671,7 @@ function CreateView({ draft, setDraft, busy, onSubmit, onCancel }) {
   const existing = draft.mode === 'existing';
   const hasBaseline = Boolean(draft.baselineZip || draft.baselineFiles?.length || draft.baselineMarkdown);
   const setMode = mode => setDraft(d => ({ ...d, mode }));
-  const setOutputType = outputType => setDraft(d => ({
-    ...d,
-    outputType,
-    taskEnvironment:
-      (outputType === 'code' && d.taskEnvironment === 'source_grounded')
-      || (outputType === 'text' && d.taskEnvironment === 'codebase_edit')
-        ? 'standalone'
-        : d.taskEnvironment || 'standalone',
-  }));
-  const setTaskEnvironment = taskEnvironment => setDraft(d => ({ ...d, taskEnvironment }));
+  const setOutputType = outputType => setDraft(d => ({ ...d, outputType }));
   const outputTypes = [
     {
       key: 'text',
@@ -714,31 +700,6 @@ function CreateView({ draft, setDraft, busy, onSubmit, onCancel }) {
       disabled: true,
     },
   ];
-  const taskEnvironments = draft.outputType === 'code'
-    ? [
-      {
-        key: 'standalone',
-        title: 'Standalone build',
-        desc: 'Prompts ask for complete runnable code without implying hidden repo files.',
-      },
-      {
-        key: 'codebase_edit',
-        title: 'Existing codebase edit',
-        desc: 'Prompts include a file tree and source snippets, then judge code changes against them.',
-      },
-    ]
-    : [
-      {
-        key: 'standalone',
-        title: 'Standalone artifact',
-        desc: 'Prompts include enough context to produce a complete written artifact.',
-      },
-      {
-        key: 'source_grounded',
-        title: 'Source-grounded',
-        desc: 'Prompts include source excerpts or structured facts that outputs must use faithfully.',
-      },
-    ];
   return (
     <div className="create animate-slide-up">
       <div className="crumbs">
@@ -788,28 +749,6 @@ function CreateView({ draft, setDraft, busy, onSubmit, onCancel }) {
           })}
         </div>
         <p className="field-hint">This controls the artifact Skill RSI expects candidate skills to produce.</p>
-      </div>
-
-      <div className="field">
-        <span>Task environment</span>
-        <div className="output-grid" role="radiogroup" aria-label="Task environment">
-          {taskEnvironments.map(type => {
-            const active = draft.taskEnvironment === type.key;
-            return (
-              <button key={type.key} type="button"
-                className={`mode-card output-card${active ? ' active' : ''}`}
-                role="radio" aria-checked={active}
-                onClick={() => setTaskEnvironment(type.key)}>
-                <Shield size={18} />
-                <div>
-                  <b>{type.title}</b>
-                  <p>{type.desc}</p>
-                </div>
-              </button>
-            );
-          })}
-        </div>
-        <p className="field-hint">Skill RSI will only generate eval prompts that include the context required by this environment.</p>
       </div>
 
       <form onSubmit={onSubmit}>
@@ -1034,7 +973,7 @@ function NextLoopPremise({ premise }) {
     <div className="premise">
       <div className="premise-head">
         <Flag size={15} />
-        <span>Next loop premise</span>
+        <span>Next Loop Plan</span>
         {premise.sourceRunId && <em>from {shortRun(premise.sourceRunId)}</em>}
       </div>
       <ul>
@@ -1067,7 +1006,7 @@ function RunBar({ summary, loops, setLoops, busy, onStart }) {
       </div>
       <button className="btn primary" disabled={busy} onClick={() => onStart(loops)}>
         {busy ? <Loader2 size={16} className="spin" /> : <Play size={16} />}
-        {summary.state.runCount > 0 ? 'Start' : 'Start first loop'}
+        {summary.state.runCount > 0 ? 'Run next loop(s)' : 'Start first loop'}
       </button>
     </div>
   );
@@ -1076,14 +1015,12 @@ function RunBar({ summary, loops, setLoops, busy, onStart }) {
 function formatTaskContract(taskContract) {
   switch (taskContract?.id) {
     case 'code_standalone':
-      return 'code · standalone';
     case 'codebase_edit':
-      return 'code · codebase edit';
+      return 'code output';
     case 'text_source_grounded':
-      return 'text · source-grounded';
     case 'text_standalone':
     default:
-      return 'text · standalone';
+      return 'text output';
   }
 }
 
@@ -1308,15 +1245,12 @@ function Verdict({ summary, runDetail, comparison, busy, onStart, onEvidence }) 
       </div>
       <p className="verdict-body">{rec.reasoning || winLine}</p>
       <div className="verdict-actions">
-        <button className="btn primary" disabled={busy} onClick={() => onStart(1)}>
-          {busy ? <Loader2 size={16} className="spin" /> : <RefreshCw size={16} />} Run another loop
-        </button>
         {(runDetail?.evals?.candidateDuel || runDetail?.evals?.challenge) && (
-          <button className="btn ghost" onClick={onEvidence}><FileText size={16} /> See the evidence <ArrowRight size={15} /></button>
+          <button className="btn ghost" onClick={onEvidence}><FileText size={16} /> Detailed Data <ArrowRight size={15} /></button>
         )}
       </div>
       {(observations.length > 0 || guidance) && (
-        <details className="disclosure">
+        <details className="disclosure" open>
           <summary><ChevronRightInline /> Analyst notes &amp; next steps</summary>
           {observations.length > 0 && (
             <ul className="notes-list">{observations.map((o, i) => <li key={i}>{o}</li>)}</ul>
@@ -1487,7 +1421,7 @@ function SecondaryRow({ summary, runDetail }) {
       )}
       {timeline.length > 0 && (
         <div className="card">
-          <details className="disclosure" style={{ marginTop: 0, borderTop: 'none', paddingTop: 0 }}>
+          <details className="disclosure" open style={{ marginTop: 0, borderTop: 'none', paddingTop: 0 }}>
             <summary style={{ fontSize: 13, color: 'var(--color-text-muted)' }}>
               <Flag size={14} /> Run timeline · {timeline.length} steps
             </summary>

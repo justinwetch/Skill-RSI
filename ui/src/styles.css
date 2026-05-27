@@ -200,7 +200,6 @@ input:focus, textarea:focus, select:focus, .num:focus { outline: none; border-co
 .premise-head { display: flex; align-items: center; gap: 8px; font-size: 13px; font-weight: 600; color: var(--color-text-primary); }
 .premise-head em { margin-left: auto; font-style: normal; font-weight: 500; color: var(--color-text-muted); }
 .premise ul { margin: 8px 0 0; padding-left: 19px; font-size: 13px; color: var(--color-text-secondary); line-height: 1.65; }
-
 /* ===== verdict ===== */
 .verdict { border-radius: var(--radius-lg); padding: 22px 24px; margin-bottom: 24px; border: 1px solid var(--color-border); }
 .verdict.good { background: var(--color-success-subtle); border-color: transparent; }
@@ -446,5 +445,5 @@ input:focus, textarea:focus, select:focus, .num:focus { outline: none; border-co
 .empty { text-align: center; color: var(--color-text-secondary); padding: 56px 20px; font-size: 15px; }
 .alert { background: var(--color-error-subtle); color: var(--color-error); border-radius: var(--radius-md); padding: 12px 15px; font-size: 14px; margin-bottom: 18px; }
 .muted { color: var(--color-text-secondary); font-size: 14px; }
-.secondary-grid { margin-top: 16px; }
+.grid.two.secondary-grid { grid-template-columns: 1.45fr 1fr; margin-top: 16px; }
 .animate-slide-up { animation: slideUp 0.26s ease-out; }

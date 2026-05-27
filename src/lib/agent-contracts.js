@@ -774,11 +774,37 @@ function normalizeExperimentPlan(artifact, context = {}) {
   const competitionMode = ['cold_start_duel', 'champion_challenge', 'high_divergence_reset'].includes(requestedMode)
     ? requestedMode
     : hasChampion ? 'champion_challenge' : 'cold_start_duel';
+  const normalizedCore = {
+    ...artifact,
+    runId: normalizeString(artifact.runId, context.runId),
+    competitionMode,
+    experimentQuestion: normalizeString(
+      artifact.experimentQuestion || artifact.question || artifact.researchQuestion,
+      buildExperimentQuestionFallback(artifact, context),
+    ),
+    hypothesis: normalizeString(
+      artifact.hypothesis || artifact.experimentHypothesis || artifact.improvementHypothesis || artifact.expectedOutcome,
+      buildExperimentHypothesisFallback(artifact, context),
+    ),
+    focusParameterIds: normalizeParameterIdArray(
+      artifact.focusParameterIds || artifact.parameterIds || artifact.selectedParameterIds || artifact.parameters,
+      getDefaultFocusParameterIds(context),
+    ),
+    controlledParameterIds: normalizeParameterIdArray(
+      artifact.controlledParameterIds || artifact.preservedParameterIds || artifact.controlParameters,
+    ),
+    successMetrics: normalizeArray(artifact.successMetrics || artifact.metrics || artifact.measurementPlan, [
+      'Higher prompt-level scores on tasks targeting the selected parameter.',
+    ]),
+    evalFocus: normalizeArray(artifact.evalFocus || artifact.evaluationFocus || artifact.measurementFocus),
+    promotionRisks: normalizeArray(artifact.promotionRisks || artifact.risks, ['Regression against current champion strengths.']),
+    reasonNotTestingOtherHighPriorityParameters: normalizeArray(
+      artifact.reasonNotTestingOtherHighPriorityParameters || artifact.scopeRationale || artifact.notTestingReason,
+    ),
+  };
   if (competitionMode === 'cold_start_duel') {
     return {
-      ...artifact,
-      runId: normalizeString(artifact.runId, context.runId),
-      competitionMode,
+      ...normalizedCore,
       arms: {
         candidateA: normalizeExperimentArm(artifact.arms.candidateA || artifact.arms.challenger),
         candidateB: normalizeExperimentArm(artifact.arms.candidateB),
@@ -786,13 +812,76 @@ function normalizeExperimentPlan(artifact, context = {}) {
     };
   }
   return {
-    ...artifact,
-    runId: normalizeString(artifact.runId, context.runId),
-    competitionMode,
+    ...normalizedCore,
     arms: {
       challenger: normalizeExperimentArm(artifact.arms.challenger || artifact.arms.candidateA),
     },
   };
+}
+
+function buildExperimentQuestionFallback(artifact, context = {}) {
+  const focus = getDefaultFocusParameterIds(context).map(id => getParameterSurface(context, id) || id).join(', ');
+  const mode = context.managerPlan?.strategy?.experimentFamily || artifact?.competitionMode || 'champion_challenge';
+  if (focus) return `Does a focused ${mode} change to ${focus} improve the skill?`;
+  return 'Does the planned challenger improve the skill while preserving current strengths?';
+}
+
+function buildExperimentHypothesisFallback(artifact, context = {}) {
+  const focusIds = normalizeParameterIdArray(
+    artifact?.focusParameterIds || artifact?.parameterIds || artifact?.selectedParameterIds || artifact?.parameters,
+    getDefaultFocusParameterIds(context),
+  );
+  const hypotheses = focusIds.map(id => getParameterHypothesis(context, id)).filter(Boolean);
+  if (hypotheses.length) return hypotheses.slice(0, 2).join(' ');
+  const focus = focusIds.map(id => getParameterSurface(context, id) || id).filter(Boolean).join(', ');
+  if (focus) return `A narrow change to ${focus} will improve targeted outputs without regressing the champion's unrelated strengths.`;
+  return "A narrow challenger variation will improve targeted outputs without regressing the champion's unrelated strengths.";
+}
+
+function getDefaultFocusParameterIds(context = {}) {
+  const pool = context.managerPlan?.experimentIntent?.candidatePool || context.parameterization?.parameters || [];
+  const ids = [...pool]
+    .filter(parameter => parameter?.eligible !== false)
+    .sort((a, b) => priorityRank(b.priority) - priorityRank(a.priority))
+    .map(parameter => parameter.id)
+    .filter(Boolean);
+  return ids.length ? ids.slice(0, 3) : ['p01'];
+}
+
+function getParameterSurface(context = {}, id) {
+  const parameter = context.parameterization?.parameters?.find(item => item.id === id)
+    || context.managerPlan?.experimentIntent?.candidatePool?.find(item => item.id === id);
+  return parameter?.surface || null;
+}
+
+function getParameterHypothesis(context = {}, id) {
+  const parameter = context.parameterization?.parameters?.find(item => item.id === id);
+  return parameter?.improvementHypothesis || parameter?.hypothesis || null;
+}
+
+function priorityRank(value) {
+  const normalized = String(value || '').toLowerCase();
+  if (normalized === 'high') return 3;
+  if (normalized === 'medium') return 2;
+  if (normalized === 'low') return 1;
+  return 0;
+}
+
+function normalizeParameterIdArray(value, fallback = []) {
+  const values = Array.isArray(value)
+    ? value
+    : typeof value === 'string' && value.trim()
+      ? value.split(/[,\n]/)
+      : fallback;
+  return Array.from(new Set(values
+    .map(item => {
+      if (typeof item === 'string') return item.trim();
+      if (item && typeof item === 'object') {
+        return String(item.id || item.parameterId || item.key || '').trim();
+      }
+      return '';
+    })
+    .filter(Boolean)));
 }
 
 function normalizeCreatorArtifact(artifact, context = {}) {

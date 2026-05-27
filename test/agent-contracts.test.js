@@ -273,6 +273,63 @@ test('real experiment planner normalizes common arm aliases', async () => {
   assert.deepEqual(result.artifact.arms.candidateB.mutationInstructions, ['Keep validation lightweight.']);
 });
 
+test('real experiment planner recovers missing hypothesis from selected parameter', async () => {
+  const cwd = await fs.mkdtemp(path.join(os.tmpdir(), 'skill-rsi-agent-planner-hypothesis-'));
+  await initProject({ cwd, projectName: 'UX Design', goal: 'Help agents design better UX.' });
+  const paths = getProjectPaths(cwd, 'ux-design');
+  await fs.mkdir(path.dirname(paths.parameterizationCurrent), { recursive: true });
+  await fs.writeFile(paths.parameterizationCurrent, JSON.stringify({
+    runId: 'planner-missing-hypothesis-parameterization',
+    championSkillHash: 'none',
+    summary: 'Parameterization for planner normalization.',
+    parameters: [{
+      id: 'p04-validation-rubric-explicitness',
+      surface: 'validation rubric explicitness',
+      currentImplementation: 'Validation is implicit.',
+      improvementHypothesis: 'A concrete rubric should reduce incomplete outputs.',
+      expectedBenefit: 'More complete outputs.',
+      regressionRisk: 'Extra length.',
+      artifactEvidence: ['No champion yet.'],
+      evidenceFromHistory: [],
+      possibleMutations: ['Add a concrete rubric.'],
+      measurementPlan: 'Score validation usefulness.',
+      couplingNotes: ['May couple with workflow length.'],
+      priority: 'high',
+      confidence: 'medium',
+      granularity: 'section',
+    }],
+  }, null, 2));
+
+  const result = await runAgentContract({
+    cwd,
+    projectName: 'ux-design',
+    agentName: 'experiment-planner',
+    runId: 'planner-missing-hypothesis',
+    mode: 'real',
+    model: 'fake-agent-model',
+    modelClient: async () => JSON.stringify({
+      runId: 'planner-missing-hypothesis',
+      experimentQuestion: 'Does a tighter validation rubric improve outcomes?',
+      selectedParameterIds: [{ id: 'p04-validation-rubric-explicitness' }],
+      controlledParameterIds: [],
+      arms: {
+        candidateA: {
+          strategyName: 'Explicit rubric',
+          mutationInstructions: ['Add a short pass/fail rubric.'],
+        },
+        candidateB: {
+          strategyName: 'Baseline validation',
+          mutationInstructions: ['Keep validation lightweight.'],
+        },
+      },
+      successMetrics: ['higher validation criterion score'],
+    }),
+  });
+
+  assert.equal(result.artifact.hypothesis, 'A concrete rubric should reduce incomplete outputs.');
+  assert.equal(result.artifact.focusParameterIds[0], 'p04-validation-rubric-explicitness');
+});
+
 test('creator artifacts can be materialized into candidate skill packages', async () => {
   const cwd = await fs.mkdtemp(path.join(os.tmpdir(), 'skill-rsi-creator-materialize-'));
   const candidateDir = path.join(cwd, 'candidate-a');

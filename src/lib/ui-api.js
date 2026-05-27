@@ -19,7 +19,6 @@ export async function createProjectForUi({
   targetIterations = 3,
   triggerMode = 'manual',
   outputType = 'text',
-  taskContract = null,
   baselineFiles = [],
   baselineArchive = null,
 }) {
@@ -33,7 +32,7 @@ export async function createProjectForUi({
   if (!Number.isInteger(normalizedTargetIterations) || normalizedTargetIterations < 1) {
     throw badRequest('Target iterations must be a positive integer');
   }
-  const normalizedTaskContract = normalizeTaskContract(taskContract, outputType);
+  const normalizedTaskContract = normalizeTaskContract(null, outputType);
   const normalizedOutputType = UI_OUTPUT_TYPES.includes(taskContractOutputType(normalizedTaskContract))
     ? taskContractOutputType(normalizedTaskContract)
     : 'text';

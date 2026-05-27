@@ -18,6 +18,13 @@ function requireArray(label, object, key) {
   }
 }
 
+function requireStringArray(label, object, key) {
+  requireArray(label, object, key);
+  if (object[key].some(item => typeof item !== 'string' || item.trim() === '')) {
+    fail(label, `${key} must contain only non-empty strings`);
+  }
+}
+
 export const COMPETITION_MODES = ['cold_start_duel', 'champion_challenge', 'high_divergence_reset'];
 
 export function validateProjectConfig(config) {
@@ -176,8 +183,8 @@ export function validateExperimentPlan(plan) {
   }
   requireString(label, plan, 'experimentQuestion');
   requireString(label, plan, 'hypothesis');
-  requireArray(label, plan, 'focusParameterIds');
-  requireArray(label, plan, 'controlledParameterIds');
+  requireStringArray(label, plan, 'focusParameterIds');
+  requireStringArray(label, plan, 'controlledParameterIds');
   requireArray(label, plan, 'successMetrics');
   if (plan.focusParameterIds.length < 1 || plan.focusParameterIds.length > 3) {
     fail(label, 'focusParameterIds must contain one to three parameters');

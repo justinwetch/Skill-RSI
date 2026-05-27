@@ -128,7 +128,33 @@ test('ui api creates new projects and rejects duplicates', async () => {
   );
 });
 
-test('ui api stores requested task contract for new projects', async () => {
+test('ui api derives task contracts from UI output type defaults', async () => {
+  const cwd = await fs.mkdtemp(path.join(os.tmpdir(), 'skill-rsi-ui-api-derived-contract-'));
+
+  const textProject = await createProjectForUi({
+    cwd,
+    projectName: 'Text Skill',
+    goal: 'Improve a writing skill.',
+    outputType: 'text',
+  });
+  assert.equal(textProject.config.eval.outputType, 'text');
+  assert.equal(textProject.config.eval.taskContract.id, 'text_standalone');
+
+  const codeProject = await createProjectForUi({
+    cwd,
+    projectName: 'Code Skill',
+    goal: 'Improve an implementation skill.',
+    outputType: 'code',
+  });
+  assert.equal(codeProject.config.eval.outputType, 'code');
+  assert.equal(codeProject.config.eval.taskContract.id, 'code_standalone');
+
+  const summary = await readProjectSummary({ cwd, projectName: 'Code Skill' });
+  assert.equal(summary.config.eval.outputType, 'code');
+  assert.equal(summary.config.eval.taskContract.id, 'code_standalone');
+});
+
+test('ui api ignores explicit task contracts and derives from output type', async () => {
   const cwd = await fs.mkdtemp(path.join(os.tmpdir(), 'skill-rsi-ui-api-output-type-'));
 
   const created = await createProjectForUi({
@@ -140,11 +166,11 @@ test('ui api stores requested task contract for new projects', async () => {
   });
 
   assert.equal(created.config.eval.outputType, 'code');
-  assert.equal(created.config.eval.taskContract.id, 'codebase_edit');
+  assert.equal(created.config.eval.taskContract.id, 'code_standalone');
 
   const summary = await readProjectSummary({ cwd, projectName: 'Frontend Codebase Edit' });
   assert.equal(summary.config.eval.outputType, 'code');
-  assert.equal(summary.config.eval.taskContract.id, 'codebase_edit');
+  assert.equal(summary.config.eval.taskContract.id, 'code_standalone');
 });
 
 test('ui api imports an uploaded baseline as champion v0', async () => {

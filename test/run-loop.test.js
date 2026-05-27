@@ -638,7 +638,6 @@ test('agentic real eval fails when prompt authoring remains contract-invalid', a
     projectName: 'UX Design Prompt Failure',
     goal: 'Help agents design better UX.',
     outputType: 'code',
-    taskContract: { id: 'code_standalone' },
   });
 
   await assert.rejects(

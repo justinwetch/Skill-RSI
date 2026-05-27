@@ -1,7 +1,7 @@
 import { validateRecommendation } from './schema.js';
 import { callModel } from './model-client.js';
 
-const ALLOWED_DECISIONS = ['promote', 'keep_current', 'edit_current', 'request_new_experiment'];
+const ALLOWED_DECISIONS = ['promote', 'keep_current', 'request_new_experiment'];
 const ALLOWED_CONFIDENCE = ['low', 'medium', 'high'];
 
 // Plain-language helpers so user-facing text never leaks internal terms (skillA/B, duel, gate...).
@@ -263,6 +263,7 @@ runId, decision, recommendedChampionCandidateId, confidence, reasoning, observat
 Rules:
 - Use decision promote only when evidence is meaningful and no critical regression is visible.
 - Prefer keep_current or request_new_experiment when results are close, noisy, or prompt quality looks suspect.
+- Do not use edit_current; surgical editing is not an implemented run branch yet.
 - recommendedChampionCandidateId must be candidate-a or candidate-b only when decision is promote.
 - Write reasoning, historySummary, and every observation for a non-technical reader who has not seen any of the internals. Use plain language: say what happened and what it means. Refer to the two versions as "Candidate A" and "Candidate B", the existing best as "the current champion", and the comparison as "the head-to-head test". Never use internal terms such as "policy gate", "deterministic policy", "duel", "champion gate", "skillA"/"skillB", "raw scores", "promotion signal", "parameter ids", or content hashes. Keep reasoning to 1-3 sentences.`;
 }

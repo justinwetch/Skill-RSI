@@ -143,6 +143,7 @@ async function main() {
       judgeModel,
       agentModel,
       stopRules: resolveStopRules(options),
+      triggerMode: 'manual',
       apiKeys: {
         anthropic: options['anthropic-key'],
         openai: options['openai-key'],
@@ -175,6 +176,7 @@ async function main() {
       judgeModel,
       agentModel,
       stopRules: resolveStopRules(options),
+      triggerMode: 'manual',
       apiKeys: {
         anthropic: options['anthropic-key'],
         openai: options['openai-key'],
@@ -213,6 +215,7 @@ async function main() {
       judgeModel,
       agentModel,
       stopRules: resolveStopRules(options),
+      triggerMode: 'continuous',
       apiKeys: {
         anthropic: options['anthropic-key'],
         openai: options['openai-key'],
@@ -236,6 +239,10 @@ async function main() {
       projectName,
       eventPath: options.event || null,
     });
+    const hookContext = {
+      ...(await readJson(hookPath, {})),
+      path: hookPath,
+    };
     const result = await runProject({
       cwd: process.cwd(),
       projectName,
@@ -248,6 +255,8 @@ async function main() {
       judgeModel,
       agentModel,
       stopRules: resolveStopRules(options),
+      triggerMode: 'hook',
+      hookContext,
       apiKeys: {
         anthropic: options['anthropic-key'],
         openai: options['openai-key'],

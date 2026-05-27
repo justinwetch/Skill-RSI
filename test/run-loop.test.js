@@ -121,6 +121,203 @@ test('history tracks multi-run parameter provenance and detailed artifacts', asy
   assert.match(detail, /## Artifact Paths/);
 });
 
+test('runs write and finalize a manager artifact', async () => {
+  const cwd = await fs.mkdtemp(path.join(os.tmpdir(), 'skill-rsi-manager-artifact-'));
+
+  const result = await runProject({
+    cwd,
+    projectName: 'UX Design Manager',
+    goal: 'Help agents design better UX.',
+    loops: 1,
+    mode: 'mock',
+  });
+
+  const runId = result.completedRuns[0].runId;
+  const manager = JSON.parse(await fs.readFile(path.join(
+    result.paths.runsDir,
+    runId,
+    'manager',
+    'manager.json',
+  ), 'utf8'));
+  const timeline = await fs.readFile(path.join(result.paths.runsDir, runId, 'timeline.jsonl'), 'utf8');
+
+  assert.equal(manager.runId, runId);
+  assert.equal(manager.strategy.experimentFamily, 'standard_focused_ab');
+  assert.equal(manager.finalAction.decision, result.completedRuns[0].recommendation.decision);
+  assert.ok(Array.isArray(manager.experimentIntent.plannerInstructions));
+  assert.match(timeline, /manager_plan\.written/);
+  assert.match(timeline, /manager_plan\.finalized/);
+});
+
+test('manager avoids parameters marked do-not-repeat without new evidence', async () => {
+  const cwd = await fs.mkdtemp(path.join(os.tmpdir(), 'skill-rsi-manager-avoid-'));
+
+  const first = await runProject({
+    cwd,
+    projectName: 'UX Design Avoid',
+    goal: 'Help agents design better UX.',
+    loops: 1,
+    mode: 'mock',
+  });
+  const history = JSON.parse(await fs.readFile(first.paths.historyIndex, 'utf8'));
+  await fs.writeFile(first.paths.historyIndex, `${JSON.stringify({
+    ...history,
+    parameterLog: [
+      {
+        parameterId: 'p01-activation_metadata',
+        testedInRuns: ['seed-run'],
+        currentBelief: 'Activation metadata test was noisy.',
+        status: 'do_not_retry_without_new_evidence',
+      },
+      {
+        parameterId: 'p02-trigger_boundaries',
+        testedInRuns: ['seed-run'],
+        currentBelief: 'Trigger boundary test was inconclusive.',
+        status: 'do_not_retry_without_new_evidence',
+      },
+      {
+        parameterId: 'p03-workflow_sequence',
+        testedInRuns: ['seed-run'],
+        currentBelief: 'Workflow sequence test lost twice.',
+        status: 'do_not_retry_without_new_evidence',
+      },
+    ],
+    doNotRepeat: ['Do not retry the first three parameters without new evidence.'],
+  }, null, 2)}\n`, 'utf8');
+
+  const second = await runProject({
+    cwd,
+    projectName: 'UX Design Avoid',
+    goal: 'Help agents design better UX.',
+    loops: 1,
+    mode: 'mock',
+  });
+
+  const runId = second.completedRuns[0].runId;
+  const plan = JSON.parse(await fs.readFile(path.join(
+    second.paths.runsDir,
+    runId,
+    'deconstruction',
+    'experiment-plan.json',
+  ), 'utf8'));
+  const manager = JSON.parse(await fs.readFile(path.join(
+    second.paths.runsDir,
+    runId,
+    'manager',
+    'manager.json',
+  ), 'utf8'));
+
+  assert.deepEqual(manager.avoid.parameterIds, [
+    'p01-activation_metadata',
+    'p02-trigger_boundaries',
+    'p03-workflow_sequence',
+  ]);
+  assert.ok(manager.selectedPriorArtifacts.some(item => item.kind === 'run_report'));
+  assert.ok(plan.focusParameterIds.every(id => !manager.avoid.parameterIds.includes(id)));
+  assert.ok(plan.focusParameterIds.includes('p04-decision_heuristics'));
+});
+
+test('manager detects local maxima and switches to high-divergence reset planning', async () => {
+  const cwd = await fs.mkdtemp(path.join(os.tmpdir(), 'skill-rsi-manager-local-max-'));
+
+  const first = await runProject({
+    cwd,
+    projectName: 'UX Design Local Max',
+    goal: 'Help agents design better UX.',
+    loops: 1,
+    mode: 'mock',
+  });
+  const history = JSON.parse(await fs.readFile(first.paths.historyIndex, 'utf8'));
+  await fs.writeFile(first.paths.historyIndex, `${JSON.stringify({
+    ...history,
+    trajectory: [
+      { runId: 'old-001', decision: 'keep_current', scoreDelta: 0, parameterTested: ['p01'], summary: 'No signal.' },
+      { runId: 'old-002', decision: 'request_new_experiment', scoreDelta: 0, parameterTested: ['p02'], summary: 'Inconclusive.' },
+      { runId: 'old-003', decision: 'keep_current', scoreDelta: 1, parameterTested: ['p03'], summary: 'Current champion held.' },
+    ],
+  }, null, 2)}\n`, 'utf8');
+
+  const second = await runProject({
+    cwd,
+    projectName: 'UX Design Local Max',
+    goal: 'Help agents design better UX.',
+    loops: 1,
+    mode: 'mock',
+  });
+
+  const runId = second.completedRuns[0].runId;
+  const manager = JSON.parse(await fs.readFile(path.join(
+    second.paths.runsDir,
+    runId,
+    'manager',
+    'manager.json',
+  ), 'utf8'));
+  const plan = JSON.parse(await fs.readFile(path.join(
+    second.paths.runsDir,
+    runId,
+    'deconstruction',
+    'experiment-plan.json',
+  ), 'utf8'));
+
+  assert.equal(manager.localMaxima.detected, true);
+  assert.equal(manager.strategy.experimentFamily, 'high_divergence_reset');
+  assert.match(plan.experimentQuestion, /High-divergence reset/);
+  assert.match(plan.arms.candidateA.strategyName, /^high-divergence-/);
+  assert.match(plan.arms.candidateB.strategyName, /^reset-control-/);
+});
+
+test('manager respects configured hook focus fields', async () => {
+  const cwd = await fs.mkdtemp(path.join(os.tmpdir(), 'skill-rsi-hook-focus-fields-'));
+  const first = await runProject({
+    cwd,
+    projectName: 'UX Design Hook Focus',
+    goal: 'Help agents design better UX.',
+    loops: 1,
+    mode: 'mock',
+  });
+  await fs.writeFile(first.paths.configJson, JSON.stringify({
+    trigger: {
+      mode: 'hook',
+      hookFocusFields: ['reason'],
+    },
+  }, null, 2));
+
+  const second = await runProject({
+    cwd,
+    projectName: 'UX Design Hook Focus',
+    goal: 'Help agents design better UX.',
+    loops: 1,
+    mode: 'mock',
+    triggerMode: 'hook',
+    hookContext: {
+      id: 'hook-reason-only',
+      payload: {
+        source: 'test',
+        reason: 'The output contract changed.',
+        changedFiles: ['references/domain-notes.md'],
+      },
+    },
+  });
+
+  const runId = second.completedRuns[0].runId;
+  const manager = JSON.parse(await fs.readFile(path.join(
+    second.paths.runsDir,
+    runId,
+    'manager',
+    'manager.json',
+  ), 'utf8'));
+  const plan = JSON.parse(await fs.readFile(path.join(
+    second.paths.runsDir,
+    runId,
+    'deconstruction',
+    'experiment-plan.json',
+  ), 'utf8'));
+
+  assert.deepEqual(manager.trigger.hook.focusParameterIds, ['p08-output_contract']);
+  assert.ok(plan.focusParameterIds.includes('p08-output_contract'));
+  assert.ok(!plan.focusParameterIds.includes('p06-reference_architecture'));
+});
+
 test('mock mode updates prompt bank across loops', async () => {
   const cwd = await fs.mkdtemp(path.join(os.tmpdir(), 'skill-rsi-prompt-bank-loop-'));
 

@@ -29,6 +29,9 @@ test('ui api exposes stable project and run detail surfaces', async () => {
   assert.equal(summary.projectId, 'ui-api-project');
   assert.equal(summary.goal, 'Test UI API surfaces.');
   assert.equal(summary.state.runCount, 1);
+  assert.ok(summary.state.budgetUsage.estimatedTokens > 0);
+  assert.equal(summary.config.eval.outputType, 'text');
+  assert.equal(summary.config.budget.maxConcurrentRuns, 1);
   assert.equal(summary.history.trajectoryLength, 1);
   assert.equal(summary.promptBank.stablePromptCount, 6);
   assert.ok(summary.artifacts.historyIndex.endsWith('history/index.json'));
@@ -42,13 +45,16 @@ test('ui api exposes stable project and run detail surfaces', async () => {
   assert.equal(detail.runId, runId);
   assert.equal(detail.run.runId, runId);
   assert.ok(detail.parameterization.parameters.length >= 12);
+  assert.equal(detail.manager.runId, runId);
+  assert.ok(detail.manager.finalAction);
+  assert.ok(detail.artifacts.managerJson.endsWith('manager/manager.json'));
   assert.ok(detail.experimentPlan.focusParameterIds.length >= 1);
   assert.ok(detail.candidates.candidateA.skillPath.endsWith('candidate-a/skill'));
   assert.equal(detail.evals.candidateDuel.stats.totalEvals, 10);
   assert.equal(detail.timeline.at(0).event, 'run.started');
 });
 
-test('ui api exposes comparison and human decision artifacts', async () => {
+test('ui api exposes comparison and optional audit annotations', async () => {
   const cwd = await fs.mkdtemp(path.join(os.tmpdir(), 'skill-rsi-ui-api-decision-'));
   const result = await runProject({
     cwd,
@@ -63,7 +69,7 @@ test('ui api exposes comparison and human decision artifacts', async () => {
   assert.equal(comparison.schemaVersion, 1);
   assert.equal(comparison.sides.candidateA.available, true);
   assert.equal(comparison.sides.candidateB.available, true);
-  assert.equal(comparison.sides.currentChampion.available, true);
+  assert.equal(typeof comparison.sides.currentChampion.available, 'boolean');
   assert.ok(comparison.evalSummary.candidateDuel.winner);
   assert.ok(comparison.recommendation.decision);
 
@@ -101,6 +107,8 @@ test('ui api creates new projects and rejects duplicates', async () => {
   assert.equal(created.state.runCount, 0);
   assert.equal(created.state.runPolicy.triggerMode, 'manual');
   assert.equal(created.state.runPolicy.targetIterations, 3);
+  assert.equal(created.config.trigger.targetIterations, 3);
+  assert.equal(created.config.budget.estimatedTokensPerLoop, 50000);
 
   const summaries = await readProjectSummaries({ cwd });
   assert.equal(summaries.length, 1);
@@ -128,6 +136,7 @@ test('ui api stores requested target iterations', async () => {
 
   assert.equal(created.state.runPolicy.triggerMode, 'manual');
   assert.equal(created.state.runPolicy.targetIterations, 7);
+  assert.equal(created.config.trigger.targetIterations, 7);
 
   await runProject({
     cwd,

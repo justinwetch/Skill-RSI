@@ -155,6 +155,7 @@ async function handleApi(request, response, url) {
       judgeModel,
       agentModel,
       stopRules: body.stopRules || {},
+      triggerMode: body.triggerMode || 'manual',
     });
     writeJson(response, 200, {
       schemaVersion: 1,

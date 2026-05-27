@@ -58,13 +58,14 @@ const EVENT_STAGE = {
   'run.resumed': 'deconstruct',
   'ontology.written': 'deconstruct', 'ontology.reused': 'deconstruct', 'ontology.refreshed': 'deconstruct',
   'parameterization.written': 'deconstruct', 'parameterization.seeded': 'deconstruct',
+  'manager_plan.written': 'plan',
   'experiment_plan.written': 'plan',
   'candidates.written': 'generate',
   'candidate_reviews.completed': 'review', 'candidate_revision.started': 'review', 'candidate_revision.completed': 'review',
   'criteria.generated': 'evaluate',
   'eval_prompts.generated': 'evaluate', 'eval_config.written': 'evaluate', 'candidate_duel.completed': 'evaluate',
   'champion_gate.completed': 'evaluate', 'champion_gate.skipped': 'evaluate',
-  'prompt_bank.updated': 'decide', 'analysis.written': 'decide', 'state.updated': 'decide', 'run.completed': 'decide',
+  'prompt_bank.updated': 'decide', 'analysis.written': 'decide', 'state.updated': 'decide', 'manager_plan.finalized': 'decide', 'run.completed': 'decide',
 };
 
 // real timeline events → human-readable substep shown live under the active step
@@ -76,6 +77,7 @@ const EVENT_LABEL = {
   'ontology.refreshed': 'Refreshed the domain map for the new champion',
   'parameterization.written': 'Broke the champion into changeable parts',
   'parameterization.seeded': 'Mapped the initial design space from the ontology',
+  'manager_plan.written': 'Set the experiment strategy',
   'experiment_plan.written': 'Chose what to test this round',
   'candidates.written': 'Wrote two competing versions',
   'candidate_reviews.completed': 'Adversarially reviewed both versions',
@@ -90,6 +92,7 @@ const EVENT_LABEL = {
   'prompt_bank.updated': 'Updated the prompt bank',
   'analysis.written': 'Analyzed the results',
   'state.updated': 'Recorded the decision',
+  'manager_plan.finalized': 'Recorded the next move',
   'run.completed': 'Loop complete',
 };
 
@@ -121,7 +124,7 @@ export default function App() {
   const [runningFirst, setRunningFirst] = useState(false);
   const [openEval, setOpenEval] = useState(null);
   const [evTab, setEvTab] = useState('summary');
-  const [draft, setDraft] = useState({ name: '', goal: '' });
+  const [draft, setDraft] = useState({ name: '', goal: '', targetIterations: 3 });
   const [skillSource, setSkillSource] = useState('champion');
   const [skillData, setSkillData] = useState(null);
   const [compareData, setCompareData] = useState(null);
@@ -173,6 +176,7 @@ export default function App() {
     try {
       const s = await fetchProjectSummary(projectId);
       setSummary(s);
+      setLoops(Math.max(1, s.state?.runPolicy?.targetIterations || s.config?.trigger?.targetIterations || 3));
       if (s.state.lastRunId) {
         const [detail, compare] = await Promise.all([
           fetchRunDetail(projectId).catch(() => null),
@@ -242,13 +246,13 @@ export default function App() {
       for (let attempt = 0; attempt < 30 && !created; attempt += 1) {
         const name = attempt === 0 ? baseName : `${baseName} ${attempt + 1}`;
         try {
-          created = await createProject({ projectName: name, goal: draft.goal, targetIterations: 50, triggerMode: 'manual' });
+          created = await createProject({ projectName: name, goal: draft.goal, targetIterations: draft.targetIterations || 3, triggerMode: 'manual' });
         } catch (err) {
           if (!/already exists/i.test(err.message)) throw err;
         }
       }
       if (!created) throw new Error('Could not find an available name — try a different one.');
-      setDraft({ name: '', goal: '' });
+      setDraft({ name: '', goal: '', targetIterations: 3 });
       await loadProjects();
       await openProject(created.projectId);
     } catch (err) { setError(err.message); }
@@ -476,7 +480,7 @@ function CreateView({ draft, setDraft, busy, onSubmit, onCancel }) {
       </div>
       <div className="eyebrow">New skill</div>
       <h1>Improve a new skill</h1>
-      <p className="lede">Define what the skill should do. You’ll choose how many loops to run on the next screen.</p>
+      <p className="lede">Define what the skill should do and how many improvement loops to run by default.</p>
       <form onSubmit={onSubmit}>
         <label className="field">
           <span>Skill name</span>
@@ -487,6 +491,11 @@ function CreateView({ draft, setDraft, busy, onSubmit, onCancel }) {
           <span>Goal</span>
           <textarea value={draft.goal} required placeholder="Help agents write correct, readable SQL across dialects."
             onChange={e => setDraft({ ...draft, goal: e.target.value })} />
+        </label>
+        <label className="field">
+          <span>Target loops</span>
+          <input className="num" type="number" min="1" value={draft.targetIterations}
+            onChange={e => setDraft({ ...draft, targetIterations: Math.max(1, Number.parseInt(e.target.value, 10) || 1) })} />
         </label>
         <div className="form-actions">
           <button type="button" className="btn ghost" onClick={onCancel} disabled={busy}>Cancel</button>
@@ -572,7 +581,7 @@ function Project(props) {
               totalLoops={runningLoops} baseRunCount={baseRunCount} defaultIteration={runs + 1} firstRun={runningFirst} />
           ) : (
             <>
-              <RunBar loops={loops} setLoops={setLoops} busy={busy} hasChampion={hasChampion} onStart={onStart} />
+              <RunBar summary={summary} loops={loops} setLoops={setLoops} busy={busy} hasChampion={hasChampion} onStart={onStart} />
               {runDetail?.recommendation && (
                 <Verdict summary={summary} runDetail={runDetail} comparison={comparison}
                   busy={busy} onStart={onStart} onEvidence={() => onOpenRun(null, 'home')} />
@@ -592,14 +601,25 @@ function Project(props) {
 
 /* ---------------- run control ---------------- */
 
-function RunBar({ loops, setLoops, busy, hasChampion, onStart }) {
+function RunBar({ summary, loops, setLoops, busy, hasChampion, onStart }) {
+  const policy = summary.state.runPolicy || summary.config?.trigger || {};
+  const budget = summary.config?.budget || {};
+  const usage = summary.state.budgetUsage || {};
+  const maxRuns = budget.maxRuns;
   return (
     <div className="run-bar">
       <div className="copy">
-        Run
-        <input className="num" type="number" min="1" value={loops}
-          onChange={e => setLoops(Math.max(1, Number.parseInt(e.target.value, 10) || 1))} />
-        improvement {loops === 1 ? 'loop' : 'loops'}
+        <div>
+          Run
+          <input className="num" type="number" min="1" value={loops}
+            onChange={e => setLoops(Math.max(1, Number.parseInt(e.target.value, 10) || 1))} />
+          improvement {loops === 1 ? 'loop' : 'loops'}
+        </div>
+        <div className="subtle">
+          {policy.triggerMode || policy.mode || 'manual'} · target {policy.targetIterations || loops}
+          {maxRuns ? ` · max ${maxRuns} runs` : ''}
+          {usage.estimatedTokens ? ` · ~${formatCompact(usage.estimatedTokens)} tokens used` : ''}
+        </div>
       </div>
       <button className="btn primary" disabled={busy} onClick={() => onStart(loops)}>
         {busy ? <Loader2 size={16} className="spin" /> : <Play size={16} />}
@@ -1243,6 +1263,13 @@ function formatName(id) {
 function decisionLabel(d) {
   return { promote: 'promoted', keep_current: 'kept', edit_current: 'edited', request_new_experiment: 'inconclusive' }[d]
     || String(d || '').replace(/_/g, ' ');
+}
+function formatCompact(value) {
+  const number = Number(value);
+  if (!Number.isFinite(number)) return '0';
+  if (number >= 1000000) return `${(number / 1000000).toFixed(1)}M`;
+  if (number >= 1000) return `${Math.round(number / 1000)}K`;
+  return `${number}`;
 }
 function recencyTs(project) {
   const t = Date.parse(project?.state?.updatedAt || '');

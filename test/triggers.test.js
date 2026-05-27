@@ -75,4 +75,12 @@ test('hook command records event and triggers one run', async () => {
   const hooksDir = path.join(cwd, '.skill-rsi', 'projects', 'hook-project', 'hooks');
   const hooks = await fs.readdir(hooksDir);
   assert.equal(hooks.length, 1);
+
+  const runsDir = path.join(cwd, '.skill-rsi', 'projects', 'hook-project', 'runs');
+  const [runId] = await fs.readdir(runsDir);
+  const manager = JSON.parse(await fs.readFile(path.join(runsDir, runId, 'manager', 'manager.json'), 'utf8'));
+  const plan = JSON.parse(await fs.readFile(path.join(runsDir, runId, 'deconstruction', 'experiment-plan.json'), 'utf8'));
+  assert.equal(manager.trigger.mode, 'hook');
+  assert.ok(manager.trigger.hook.focusParameterIds.includes('p08-output_contract'));
+  assert.ok(plan.focusParameterIds.includes('p08-output_contract'));
 });

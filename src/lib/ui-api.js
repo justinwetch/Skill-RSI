@@ -5,6 +5,7 @@ import { initProject } from './init.js';
 import { loadSkillPackage } from './skill-package.js';
 import { appendTimeline, readTimeline } from './timeline.js';
 import { ensureDir, pathExists, readJson, writeJson } from './store.js';
+import { loadProjectConfig } from './config.js';
 
 export async function createProjectForUi({ cwd, projectName, goal, targetIterations = 3, triggerMode = 'manual' }) {
   if (typeof projectName !== 'string' || projectName.trim() === '') {
@@ -56,6 +57,7 @@ export async function readProjectSummary({ cwd, projectName }) {
   const state = await readRequiredJson(paths.stateJson, `Project "${paths.projectId}" has not been initialized`);
   const history = await readRequiredJson(paths.historyIndex, `Project "${paths.projectId}" has no history index`);
   const promptBank = await readJson(paths.promptBankIndex, null);
+  const config = await loadProjectConfig({ cwd, projectName });
   const humanDecisions = await listHumanDecisions(paths);
 
   return {
@@ -69,6 +71,18 @@ export async function readProjectSummary({ cwd, projectName }) {
       currentChampion: state.currentChampion || null,
       updatedAt: state.updatedAt || null,
       runPolicy: normalizeRunPolicy(state.runPolicy),
+      budgetUsage: state.budgetUsage || { estimatedTokens: 0, estimatedSpendUsd: 0 },
+    },
+    config: {
+      trigger: config.trigger,
+      budget: config.budget,
+      eval: {
+        outputType: config.eval.outputType,
+        visualRunner: config.eval.visualRunner,
+        stablePromptCount: config.eval.stablePromptCount,
+        explorationPromptCount: config.eval.explorationPromptCount,
+      },
+      portability: config.portability,
     },
     history: {
       trajectoryLength: history.trajectory.length,
@@ -110,6 +124,7 @@ export async function readRunDetail({ cwd, projectName, runId = null }) {
   const run = await readRequiredJson(runPaths.runJson, `Run "${resolvedRunId}" was not found`);
   const [
     parameterization,
+    manager,
     experimentPlan,
     evalConfig,
     candidateDuel,
@@ -120,6 +135,7 @@ export async function readRunDetail({ cwd, projectName, runId = null }) {
     humanDecisions,
   ] = await Promise.all([
     readJson(runPaths.parameterizationJson, null),
+    readJson(runPaths.managerJson, null),
     readJson(runPaths.experimentPlanJson, null),
     readJson(runPaths.evalConfigJson, null),
     readJson(runPaths.candidateDuelJson, null),
@@ -136,6 +152,7 @@ export async function readRunDetail({ cwd, projectName, runId = null }) {
     runId: resolvedRunId,
     run,
     parameterization,
+    manager,
     experimentPlan,
     evalConfig,
     candidates: summarizeRunCandidates(run),
@@ -152,6 +169,7 @@ export async function readRunDetail({ cwd, projectName, runId = null }) {
       runJson: runPaths.runJson,
       timelineJsonl: runPaths.timelineJsonl,
       parameterizationJson: runPaths.parameterizationJson,
+      managerJson: runPaths.managerJson,
       experimentPlanJson: runPaths.experimentPlanJson,
       evalConfigJson: runPaths.evalConfigJson,
       candidateDuelJson: runPaths.candidateDuelJson,

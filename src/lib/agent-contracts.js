@@ -39,6 +39,8 @@ export async function runAgentContract({
   experimentArm = null,
   revision = null,
   refresh = false,
+  managerPlan = null,
+  maxTokens = null,
 }) {
   if (!AGENT_NAMES.includes(agentName)) {
     throw new Error(`Unknown agent "${agentName}"`);
@@ -65,6 +67,7 @@ export async function runAgentContract({
     ontology: await readJson(paths.ontologyCurrent, null),
     parameterization: await readJson(paths.parameterizationCurrent, null),
     experimentPlan: await readJson(paths.experimentPlanCurrent, null),
+    managerPlan,
     experimentArm,
     revision,
     refresh,
@@ -75,23 +78,29 @@ export async function runAgentContract({
   const prompt = buildAgentPrompt({ agentName, context });
   const artifact = mode === 'mock'
     ? await createMockArtifact({ agentName, context, runPaths })
-    : await createRealArtifact({ agentName, context, prompt, model, apiKeys, modelClient });
+    : await createRealArtifact({ agentName, context, prompt, model, apiKeys, modelClient, maxTokens });
 
   return {
     agentName,
     mode,
+    model: mode === 'real' ? model : null,
+    modelParameters: mode === 'real' ? {
+      maxTokens: resolveAgentMaxTokens(agentName, maxTokens),
+      jsonMode: true,
+    } : null,
+    createdAt: new Date().toISOString(),
     prompt,
     artifact,
   };
 }
 
-async function createRealArtifact({ agentName, context, prompt, model, apiKeys, modelClient }) {
+async function createRealArtifact({ agentName, context, prompt, model, apiKeys, modelClient, maxTokens }) {
   const text = await modelClient({
     model,
     apiKeys,
     systemPrompt: 'You are a Skill RSI subagent. Return only valid JSON matching the requested contract.',
     messages: [{ role: 'user', content: prompt }],
-    maxTokens: agentName === 'creator' ? 12000 : 8192,
+    maxTokens: resolveAgentMaxTokens(agentName, maxTokens),
     jsonMode: true,
   });
   let artifact;
@@ -200,6 +209,11 @@ export async function writeRealAgentContractArtifact({
     ? await materializeCreatorArtifact({ artifact: result.artifact, candidateDir })
     : null;
   return { ...result, outputPath: targetPath, materializedCandidate };
+}
+
+function resolveAgentMaxTokens(agentName, maxTokens) {
+  if (Number.isInteger(maxTokens) && maxTokens > 0) return maxTokens;
+  return agentName === 'creator' ? 12000 : 8192;
 }
 
 async function writeCurrentAgentArtifact({ cwd, projectName, agentName, artifact }) {
@@ -375,9 +389,13 @@ ${formatContextBlock(context.parameterization)}
 Experiment history summary:
 ${formatContextBlock(compactHistory(context.history))}
 
+Manager guidance for this run:
+${formatContextBlock(context.managerPlan)}
+
 Turn the parameterization into a focused A/B experiment. Return JSON matching ABExperimentPlan:
 runId, experimentQuestion, focusParameterIds, controlledParameterIds, hypothesis, arms {candidateA, candidateB}, evalFocus, successMetrics, promotionRisks, reasonNotTestingOtherHighPriorityParameters.
 Select one to three related parameters and hold unrelated parameters constant.
+Honor manager guidance. Do not select avoid.parameterIds unless you explicitly cite new evidence in reasonNotTestingOtherHighPriorityParameters. If strategy.experimentFamily is "high_divergence_reset", plan a high-divergence/reset experiment instead of another small local mutation.
 
 Use this exact arm shape:
 "arms": {
@@ -445,7 +463,8 @@ ${formatContextBlock(context.experimentPlan)}
 
 Interpret SkillEval results in context. Return JSON matching AnalystRecommendation:
 runId, decision, recommendedChampionCandidateId, confidence, reasoning, observations, nextRoundGuidance {vary, preserve, investigate}.
-Use one of these decisions: promote, keep_current, edit_current, request_new_experiment.`;
+Use one of these decisions: promote, keep_current, request_new_experiment.
+Do not return edit_current; the surgical edit branch is not implemented yet.`;
 }
 
 function formatContextBlock(value, maxChars = 12000) {
@@ -519,8 +538,19 @@ function validateAgentArtifact(agentName, artifact, context) {
   if (agentName === 'ontology') return validateOntology(normalizeOntology(artifact, context));
   if (agentName === 'deconstructor') return validateParameterization(normalizeParameterization(artifact, context));
   if (agentName === 'experiment-planner') return validateExperimentPlan(normalizeExperimentPlan(artifact, context));
-  if (agentName === 'analyst') return validateRecommendation(artifact);
+  if (agentName === 'analyst') return validateRecommendation(normalizeContractRecommendation(artifact, context));
   return validateCreatorArtifact(normalizeCreatorArtifact(artifact, context), context);
+}
+
+function normalizeContractRecommendation(artifact, context = {}) {
+  if (!artifact || typeof artifact !== 'object') return artifact;
+  const decision = artifact.decision === 'edit_current' ? 'request_new_experiment' : artifact.decision;
+  return {
+    ...artifact,
+    runId: artifact.runId || context.runId,
+    decision,
+    recommendedChampionCandidateId: decision === 'promote' ? artifact.recommendedChampionCandidateId : null,
+  };
 }
 
 function normalizeOntology(artifact, context = {}) {

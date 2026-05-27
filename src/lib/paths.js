@@ -54,6 +54,8 @@ export function getRunPaths(projectPaths, runId) {
     timelineJsonl: path.join(runDir, 'timeline.jsonl'),
     deconstructionDir: path.join(runDir, 'deconstruction'),
     parameterizationJson: path.join(runDir, 'deconstruction', 'parameterization.json'),
+    managerDir: path.join(runDir, 'manager'),
+    managerJson: path.join(runDir, 'manager', 'manager.json'),
     experimentPlanJson: path.join(runDir, 'deconstruction', 'experiment-plan.json'),
     candidatesDir: path.join(runDir, 'candidates'),
     candidateADir: path.join(runDir, 'candidates', 'candidate-a'),

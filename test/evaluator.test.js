@@ -65,6 +65,8 @@ test('runs a real text evaluation with an injected model client', async () => {
     runId: 'run-real-001',
     generationModel: 'fake-gen-model',
     judgeModel: 'fake-judge-model',
+    maxTokens: 1234,
+    judgeMaxTokens: 567,
     modelClient: async request => {
       calls.push(request);
       if (request.jsonMode) {
@@ -90,6 +92,11 @@ test('runs a real text evaluation with an injected model client', async () => {
   assert.equal(result.evaluations[0].judge.winner, 'skillA');
   assert.equal(result.stats.winner, 'skillA');
   assert.equal(calls.length, 3);
+  assert.equal(result.modelMetadata.generationModel, 'fake-gen-model');
+  assert.equal(result.modelMetadata.judgeModel, 'fake-judge-model');
+  assert.equal(result.modelMetadata.generationMaxTokens, 1234);
+  assert.equal(result.modelMetadata.judgeMaxTokens, 567);
+  assert.ok(result.timing.elapsedMs >= 0);
 });
 
 test('real evaluation requires model information at evaluator boundary', async () => {

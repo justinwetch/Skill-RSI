@@ -95,7 +95,7 @@ For current implementation status and the checkoff roadmap, see
 - stop rules for continuous/manual loops: max-run budget, promotion patience, and consecutive inconclusive-run caps
 - timeline inspection command with text/JSON output plus failed-run timeline entries
 - documented cron and macOS LaunchAgent scheduling around the bounded `continuous` command
-- UI-ready JSON surfaces for project lists, project summaries, run details, candidate comparisons, and human decision artifacts
+- UI-ready JSON surfaces for project lists, project summaries, run details, manager artifacts, candidate comparisons, and optional audit annotations
 - SkillEval-inspired React UI for project dashboards, run summaries, candidate comparison, eval results, prompt-bank health, timeline, and skill inspection
 - mock first-run flow that uses generated candidate packages plus the headless evaluator artifact shape
 - mock later-run flow with challenger-vs-champion gates

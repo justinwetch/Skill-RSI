@@ -31,6 +31,10 @@ export async function initProject({ cwd, projectName, goal, runPolicy = null }) 
     lastRunId: null,
     updatedAt: createdAt,
     runPolicy: normalizedRunPolicy,
+    budgetUsage: {
+      estimatedTokens: 0,
+      estimatedSpendUsd: 0,
+    },
   });
 
   const history = validateHistoryIndex({
@@ -54,8 +58,15 @@ export async function initProject({ cwd, projectName, goal, runPolicy = null }) 
   }
 
   if (!(await pathExists(paths.configJson))) {
-    // Machine-readable tunables the loop honors (promotion thresholds, eval batch sizes, models).
-    await writeJson(paths.configJson, DEFAULT_PROJECT_CONFIG);
+    // Machine-readable tunables the loop honors: triggers, budgets, promotion, eval, models, portability.
+    await writeJson(paths.configJson, {
+      ...DEFAULT_PROJECT_CONFIG,
+      trigger: {
+        ...DEFAULT_PROJECT_CONFIG.trigger,
+        mode: normalizedRunPolicy.triggerMode,
+        targetIterations: normalizedRunPolicy.targetIterations,
+      },
+    });
   }
 
   if (!(await pathExists(paths.stateJson))) {

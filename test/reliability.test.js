@@ -37,6 +37,66 @@ test('runProject enforces max run budget', async () => {
   }), /Run budget exceeded/);
 });
 
+test('runProject enforces configured token budget for unattended runs', async () => {
+  const cwd = await fs.mkdtemp(path.join(os.tmpdir(), 'skill-rsi-token-budget-'));
+  const initialized = await initProject({
+    cwd,
+    projectName: 'Token Budget Project',
+    goal: 'Test unattended budget behavior.',
+  });
+  await fs.writeFile(initialized.paths.configJson, JSON.stringify({
+    budget: {
+      maxEstimatedTokens: 1000,
+      estimatedTokensPerLoop: 750,
+      estimatedSpendUsdPerLoop: 0,
+    },
+  }, null, 2));
+
+  await assert.rejects(() => runProject({
+    cwd,
+    projectName: 'Token Budget Project',
+    goal: 'Test unattended budget behavior.',
+    loops: 2,
+    mode: 'mock',
+    triggerMode: 'continuous',
+  }), /Token budget exceeded/);
+
+  const manual = await runProject({
+    cwd,
+    projectName: 'Token Budget Project',
+    goal: 'Test unattended budget behavior.',
+    loops: 1,
+    mode: 'mock',
+    triggerMode: 'manual',
+  });
+  assert.equal(manual.state.budgetUsage.estimatedTokens, 750);
+});
+
+test('runProject honors configured trigger mode when caller does not override it', async () => {
+  const cwd = await fs.mkdtemp(path.join(os.tmpdir(), 'skill-rsi-config-trigger-budget-'));
+  const initialized = await initProject({
+    cwd,
+    projectName: 'Configured Trigger Project',
+    goal: 'Test configured trigger mode.',
+  });
+  await fs.writeFile(initialized.paths.configJson, JSON.stringify({
+    trigger: { mode: 'continuous' },
+    budget: {
+      maxEstimatedTokens: 1000,
+      estimatedTokensPerLoop: 750,
+      estimatedSpendUsdPerLoop: 0,
+    },
+  }, null, 2));
+
+  await assert.rejects(() => runProject({
+    cwd,
+    projectName: 'Configured Trigger Project',
+    goal: 'Test configured trigger mode.',
+    loops: 2,
+    mode: 'mock',
+  }), /Token budget exceeded/);
+});
+
 test('runProject writes a per-run timeline', async () => {
   const cwd = await fs.mkdtemp(path.join(os.tmpdir(), 'skill-rsi-timeline-'));
   const result = await runProject({

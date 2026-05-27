@@ -11,6 +11,11 @@ import { applyPromptBankUpdates } from './prompt-bank.js';
 import { reviewCandidatePackage } from './reviewer.js';
 import { acquireProjectLock } from './lock.js';
 import { loadProjectConfig } from './config.js';
+import {
+  applyManagerGuidanceToPlan,
+  createManagerArtifact,
+  finalizeManagerArtifact,
+} from './manager.js';
 import { appendTimeline } from './timeline.js';
 import { copyDir, ensureDir, hashDirectory, pathExists, readJson, writeJson, writeText } from './store.js';
 import {
@@ -40,6 +45,121 @@ async function reuseJson(filePath, validate) {
   try { return validate ? validate(existing) : existing; } catch { return null; }
 }
 
+function normalizeRunTrigger(value) {
+  return ['manual', 'continuous', 'cron', 'hook'].includes(value) ? value : 'manual';
+}
+
+function estimateBudgetForOneLoop(config) {
+  return {
+    estimatedTokens: config.budget.estimatedTokensPerLoop,
+    estimatedSpendUsd: config.budget.estimatedSpendUsdPerLoop,
+  };
+}
+
+function enforceUnattendedBudget({ config, state, loops, triggerMode }) {
+  if (config.budget.maxConcurrentRuns < 1) {
+    throw new Error('Budget config invalid: maxConcurrentRuns must be at least 1');
+  }
+  if (triggerMode === 'manual') return;
+
+  const usage = normalizeBudgetUsage(state.budgetUsage);
+  const addedTokens = config.budget.estimatedTokensPerLoop * loops;
+  const addedSpend = config.budget.estimatedSpendUsdPerLoop * loops;
+
+  if (config.budget.maxEstimatedTokens !== null && usage.estimatedTokens + addedTokens > config.budget.maxEstimatedTokens) {
+    throw new Error(`Token budget exceeded: current ${usage.estimatedTokens} + estimated ${addedTokens} > max ${config.budget.maxEstimatedTokens}`);
+  }
+  if (config.budget.maxEstimatedSpendUsd !== null && usage.estimatedSpendUsd + addedSpend > config.budget.maxEstimatedSpendUsd) {
+    throw new Error(`Spend budget exceeded: current ${usage.estimatedSpendUsd} + estimated ${addedSpend} > max ${config.budget.maxEstimatedSpendUsd}`);
+  }
+}
+
+function normalizeBudgetUsage(value) {
+  return {
+    estimatedTokens: Number.isFinite(value?.estimatedTokens) ? value.estimatedTokens : 0,
+    estimatedSpendUsd: Number.isFinite(value?.estimatedSpendUsd) ? value.estimatedSpendUsd : 0,
+  };
+}
+
+function applyBudgetUsage(state, budgetEstimate) {
+  const usage = normalizeBudgetUsage(state.budgetUsage);
+  return {
+    ...state,
+    budgetUsage: {
+      estimatedTokens: usage.estimatedTokens + (budgetEstimate?.estimatedTokens || 0),
+      estimatedSpendUsd: Number((usage.estimatedSpendUsd + (budgetEstimate?.estimatedSpendUsd || 0)).toFixed(6)),
+    },
+  };
+}
+
+function createRunModelMetadata({ agentModel, generationModel, judgeModel, modelParameters = {} }) {
+  return {
+    agent: agentModel || null,
+    generation: generationModel || null,
+    judge: judgeModel || null,
+    parameters: {
+      agentMaxTokens: modelParameters.agentMaxTokens || null,
+      creatorMaxTokens: modelParameters.creatorMaxTokens || null,
+      generationMaxTokens: modelParameters.generationMaxTokens || null,
+      judgeMaxTokens: modelParameters.judgeMaxTokens || null,
+    },
+  };
+}
+
+function summarizeTriggerContext(triggerContext = {}) {
+  return {
+    mode: normalizeRunTrigger(triggerContext.mode),
+    hook: triggerContext.hook ? {
+      id: triggerContext.hook.id || null,
+      path: triggerContext.hook.path || null,
+      source: triggerContext.hook.payload?.source || triggerContext.hook.source || null,
+    } : null,
+  };
+}
+
+async function prepareManager({
+  runPaths,
+  projectId,
+  runId,
+  runNumber,
+  mode,
+  state,
+  history,
+  parameterization,
+  triggerContext = { mode: 'manual', hook: null },
+}) {
+  const existing = await readJson(runPaths.managerJson, null);
+  if (existing) return existing;
+  const managerArtifact = createManagerArtifact({
+    projectId,
+    runId,
+    runNumber,
+    mode,
+    state,
+    history,
+    parameterization,
+    triggerContext,
+  });
+  await writeJson(runPaths.managerJson, managerArtifact);
+  await appendTimeline(runPaths.timelineJsonl, 'manager_plan.written', {
+    path: runPaths.managerJson,
+    posture: managerArtifact.strategy.posture,
+    experimentFamily: managerArtifact.strategy.experimentFamily,
+  });
+  return managerArtifact;
+}
+
+async function finishManager({ runPaths, managerArtifact, recommendation, nextState }) {
+  if (!managerArtifact) return null;
+  const completed = finalizeManagerArtifact(managerArtifact, { recommendation, nextState });
+  await writeJson(runPaths.managerJson, completed);
+  await appendTimeline(runPaths.timelineJsonl, 'manager_plan.finalized', {
+    decision: completed.finalAction.decision,
+    nextAction: completed.finalAction.nextAction,
+  });
+  return completed;
+}
+
 // Find the most recent run that started but never completed, so we can resume it.
 async function findIncompleteRun(paths) {
   if (!(await pathExists(paths.runsDir))) return null;
@@ -65,6 +185,8 @@ export async function runProject({
   apiKeys = {},
   modelClient = null,
   stopRules = {},
+  triggerMode = null,
+  hookContext = null,
 }) {
   if (!['stub', 'mock', 'agentic'].includes(mode)) {
     throw new Error('Run mode must be stub, mock, or agentic');
@@ -77,6 +199,13 @@ export async function runProject({
   generationModel = generationModel || config.models.generation;
   judgeModel = judgeModel || config.models.judge;
   agentModel = agentModel || config.models.agent;
+  const evalOutputType = config.eval.outputType || 'text';
+  const generationMaxTokens = config.models.generationMaxTokens;
+  const judgeMaxTokens = config.models.judgeMaxTokens;
+  const agentMaxTokens = config.models.agentMaxTokens;
+  const creatorMaxTokens = config.models.creatorMaxTokens;
+  const runTrigger = normalizeRunTrigger(triggerMode ?? config.trigger.mode);
+  const effectiveMaxRuns = maxRuns ?? config.budget.maxRuns;
   const lock = await acquireProjectLock(paths.projectDir);
   let state = validateRunState(await readJson(paths.stateJson));
   let history = validateHistoryIndex(await readJson(paths.historyIndex));
@@ -84,9 +213,10 @@ export async function runProject({
   let stopReason = null;
 
   try {
-    if (maxRuns !== null && state.runCount + loops > maxRuns) {
-      throw new Error(`Run budget exceeded: current ${state.runCount} + requested ${loops} > max ${maxRuns}`);
+    if (effectiveMaxRuns !== null && state.runCount + loops > effectiveMaxRuns) {
+      throw new Error(`Run budget exceeded: current ${state.runCount} + requested ${loops} > max ${effectiveMaxRuns}`);
     }
+    enforceUnattendedBudget({ config, state, loops, triggerMode: runTrigger });
 
     // If the previous run started but never finished (e.g. a model call failed mid-run), resume it
     // on the first iteration instead of starting a fresh run and discarding completed work.
@@ -119,10 +249,23 @@ export async function runProject({
           generationModel,
           judgeModel,
           agentModel: agentModel || generationModel,
+          modelParameters: {
+            agentMaxTokens,
+            creatorMaxTokens,
+            generationMaxTokens,
+            judgeMaxTokens,
+          },
           apiKeys,
           modelClient,
           promotion: config.promotion,
           evalBatch: config.eval,
+          evalOutputType,
+          budgetEstimate: estimateBudgetForOneLoop(config),
+          triggerContext: {
+            mode: runTrigger,
+            hook: hookContext,
+            hookFocusFields: config.trigger.hookFocusFields,
+          },
           resuming,
         });
       } catch (error) {
@@ -147,7 +290,24 @@ export async function runProject({
   return { projectId: paths.projectId, paths, state, history, completedRuns, init, stopReason };
 }
 
-async function runStubLoop({ paths, runPaths, projectId, goal, state, history, runId, runNumber }) {
+async function runStubLoop({
+  paths,
+  runPaths,
+  projectId,
+  goal,
+  state,
+  history,
+  runId,
+  runNumber,
+  generationModel,
+  judgeModel,
+  agentModel,
+  modelParameters = {},
+  evalMode,
+  evalOutputType = 'text',
+  budgetEstimate = null,
+  triggerContext = { mode: 'manual', hook: null },
+}) {
   await ensureDir(runPaths.runDir);
   await ensureDir(runPaths.evalRawDir);
   await ensureDir(runPaths.analysisDir);
@@ -162,6 +322,13 @@ async function runStubLoop({ paths, runPaths, projectId, goal, state, history, r
     startedAt,
     completedAt: null,
     currentChampionAtStart: state.currentChampion,
+    trigger: summarizeTriggerContext(triggerContext),
+    eval: {
+      mode: evalMode,
+      outputType: evalOutputType,
+    },
+    models: createRunModelMetadata({ agentModel, generationModel, judgeModel, modelParameters }),
+    budgetEstimate,
   };
   await writeJson(runPaths.runJson, runRecord);
 
@@ -177,7 +344,22 @@ async function runStubLoop({ paths, runPaths, projectId, goal, state, history, r
   await writeJson(runPaths.parameterizationJson, parameterization);
   await appendTimeline(runPaths.timelineJsonl, 'parameterization.written', { path: runPaths.parameterizationJson });
 
-  const experimentPlan = validateExperimentPlan(createStubExperimentPlan({ runId, runNumber, parameterization }));
+  const managerArtifact = await prepareManager({
+    runPaths,
+    projectId,
+    runId,
+    runNumber,
+    mode: 'stub',
+    state,
+    history,
+    parameterization,
+    triggerContext,
+  });
+  const experimentPlan = validateExperimentPlan(applyManagerGuidanceToPlan(
+    createStubExperimentPlan({ runId, runNumber, parameterization }),
+    managerArtifact,
+    parameterization,
+  ));
   await writeJson(runPaths.experimentPlanJson, experimentPlan);
   await appendTimeline(runPaths.timelineJsonl, 'experiment_plan.written', { path: runPaths.experimentPlanJson });
 
@@ -221,7 +403,9 @@ async function runStubLoop({ paths, runPaths, projectId, goal, state, history, r
     prompts: evalDesign.prompts,
     criteria: evalDesign.criteria,
     bank: evalDesign.bank,
-    outputType: 'text',
+    outputType: evalOutputType,
+    models: createRunModelMetadata({ agentModel, generationModel, judgeModel, modelParameters }),
+    budgetEstimate,
   });
   await appendTimeline(runPaths.timelineJsonl, 'eval_config.written', { path: runPaths.evalConfigJson });
   const prompts = evalDesign.prompts;
@@ -266,6 +450,7 @@ async function runStubLoop({ paths, runPaths, projectId, goal, state, history, r
     candidateA,
     candidateB,
     promotedCandidateId,
+    budgetEstimate,
   });
 
   const completedRunRecord = {
@@ -279,6 +464,7 @@ async function runStubLoop({ paths, runPaths, projectId, goal, state, history, r
   await writeJson(runPaths.runJson, completedRunRecord);
   await writeJson(paths.stateJson, nextState);
   await appendTimeline(runPaths.timelineJsonl, 'state.updated', { champion: nextState.currentChampion?.candidateId || null });
+  await finishManager({ runPaths, managerArtifact, recommendation, nextState });
 
   const nextHistory = await appendHistory({
     paths,
@@ -307,10 +493,14 @@ async function runAgenticLoop({
   generationModel,
   judgeModel,
   agentModel,
+  modelParameters = {},
   apiKeys,
   modelClient,
   promotion = null,
   evalBatch = null,
+  evalOutputType = 'text',
+  budgetEstimate = null,
+  triggerContext = { mode: 'manual', hook: null },
   resuming = false,
 }) {
   await ensureDir(runPaths.runDir);
@@ -323,6 +513,7 @@ async function runAgenticLoop({
     generationModel,
     judgeModel,
     agentModel,
+    outputType: evalOutputType,
   });
 
   // Preserve the original run record (and its start time) when resuming an incomplete run.
@@ -335,6 +526,13 @@ async function runAgenticLoop({
     startedAt: new Date().toISOString(),
     completedAt: null,
     currentChampionAtStart: state.currentChampion,
+    trigger: summarizeTriggerContext(triggerContext),
+    eval: {
+      mode: evalMode,
+      outputType: evalOutputType,
+    },
+    models: createRunModelMetadata({ agentModel, generationModel, judgeModel, modelParameters }),
+    budgetEstimate,
   };
   await writeJson(runPaths.runJson, runRecord);
 
@@ -356,6 +554,7 @@ async function runAgenticLoop({
       model: agentModel,
       apiKeys,
       modelClient: agentClient,
+      maxTokens: modelParameters.agentMaxTokens,
     });
     ontology = validateOntology(ontologyResult.artifact);
     await writeJson(paths.ontologyCurrent, ontology);
@@ -379,6 +578,7 @@ async function runAgenticLoop({
       apiKeys,
       modelClient: agentClient,
       refresh: true,
+      maxTokens: modelParameters.agentMaxTokens,
     });
     ontology = validateOntology(refreshed.artifact);
     await writeJson(paths.ontologyCurrent, ontology);
@@ -407,6 +607,7 @@ async function runAgenticLoop({
       model: agentModel,
       apiKeys,
       modelClient: agentClient,
+      maxTokens: modelParameters.agentMaxTokens,
     });
     parameterization = validateParameterization(deconstructorResult.artifact);
     await writeJson(paths.parameterizationCurrent, parameterization);
@@ -421,6 +622,18 @@ async function runAgenticLoop({
     });
   }
 
+  const managerArtifact = await prepareManager({
+    runPaths,
+    projectId,
+    runId,
+    runNumber,
+    mode: 'agentic',
+    state,
+    history,
+    parameterization,
+    triggerContext,
+  });
+
   let experimentPlan = await reuseJson(runPaths.experimentPlanJson, validateExperimentPlan);
   if (!experimentPlan) {
     const plannerResult = await runAgentContract({
@@ -432,8 +645,14 @@ async function runAgenticLoop({
       model: agentModel,
       apiKeys,
       modelClient: agentClient,
+      managerPlan: managerArtifact,
+      maxTokens: modelParameters.agentMaxTokens,
     });
-    experimentPlan = validateExperimentPlan(plannerResult.artifact);
+    experimentPlan = validateExperimentPlan(applyManagerGuidanceToPlan(
+      plannerResult.artifact,
+      managerArtifact,
+      parameterization,
+    ));
     await writeJson(paths.experimentPlanCurrent, experimentPlan);
     await writeJson(runPaths.experimentPlanJson, experimentPlan);
     await appendTimeline(runPaths.timelineJsonl, 'experiment_plan.written', {
@@ -453,6 +672,7 @@ async function runAgenticLoop({
     candidateId: 'candidate-a',
     experimentArm: 'candidateA',
     agentModel,
+    modelParameters,
     apiKeys,
     agentClient,
   });
@@ -468,6 +688,7 @@ async function runAgenticLoop({
     candidateId: 'candidate-b',
     experimentArm: 'candidateB',
     agentModel,
+    modelParameters,
     apiKeys,
     agentClient,
   });
@@ -533,7 +754,9 @@ async function runAgenticLoop({
       prompts: evalDesign.prompts,
       criteria: evalDesign.criteria,
       bank: evalDesign.bank,
-      outputType: 'text',
+      outputType: evalOutputType,
+      models: createRunModelMetadata({ agentModel, generationModel, judgeModel, modelParameters }),
+      budgetEstimate,
     });
     await appendTimeline(runPaths.timelineJsonl, 'eval_config.written', { path: runPaths.evalConfigJson });
   }
@@ -570,6 +793,7 @@ async function runAgenticLoop({
       experimentPlan,
       evalDesign,
       agentModel,
+      modelParameters,
       apiKeys,
       agentClient,
       agentSkillsStandard,
@@ -591,6 +815,7 @@ async function runAgenticLoop({
       experimentPlan,
       evalDesign,
       agentModel,
+      modelParameters,
       apiKeys,
       agentClient,
       agentSkillsStandard,
@@ -611,6 +836,8 @@ async function runAgenticLoop({
       parameterization,
       reviewA,
       reviewB,
+      managerArtifact,
+      budgetEstimate,
     });
   }
 
@@ -626,6 +853,9 @@ async function runAgenticLoop({
       runId: `${runId}-candidate-duel`,
       generationModel,
       judgeModel,
+      outputType: evalOutputType,
+      maxTokens: modelParameters.generationMaxTokens,
+      judgeMaxTokens: modelParameters.judgeMaxTokens,
       apiKeys,
       modelClient: agentClient,
     });
@@ -652,6 +882,9 @@ async function runAgenticLoop({
         runId: `${runId}-champion-gate`,
         generationModel,
         judgeModel,
+        outputType: evalOutputType,
+        maxTokens: modelParameters.generationMaxTokens,
+        judgeMaxTokens: modelParameters.judgeMaxTokens,
         apiKeys,
         modelClient: agentClient,
       });
@@ -707,6 +940,7 @@ async function runAgenticLoop({
     candidateA,
     candidateB,
     promotedCandidateId: recommendation.recommendedChampionCandidateId,
+    budgetEstimate,
   });
 
   const completedRunRecord = {
@@ -722,6 +956,7 @@ async function runAgenticLoop({
   await writeJson(runPaths.runJson, completedRunRecord);
   await writeJson(paths.stateJson, nextState);
   await appendTimeline(runPaths.timelineJsonl, 'state.updated', { champion: nextState.currentChampion?.candidateId || null });
+  await finishManager({ runPaths, managerArtifact, recommendation, nextState });
 
   // Guard against double-appending if a resume re-enters after history was already written.
   const alreadyInHistory = Array.isArray(history.trajectory) && history.trajectory.some(entry => entry.runId === runId);
@@ -748,6 +983,7 @@ async function createAndMaterializeCandidate({
   candidateId,
   experimentArm,
   agentModel,
+  modelParameters = {},
   apiKeys,
   agentClient,
 }) {
@@ -769,6 +1005,7 @@ async function createAndMaterializeCandidate({
           modelClient: agentClient,
           experimentArm,
           revision,
+          maxTokens: modelParameters.creatorMaxTokens,
         });
         artifact = creatorResult.artifact;
         const attemptPath = attempt === 1
@@ -896,9 +1133,14 @@ async function runMockLoop({
   evalMode,
   generationModel,
   judgeModel,
+  agentModel,
+  modelParameters = {},
   apiKeys,
   modelClient,
   evalBatch = null,
+  evalOutputType = 'text',
+  budgetEstimate = null,
+  triggerContext = { mode: 'manual', hook: null },
 }) {
   await ensureDir(runPaths.runDir);
   await ensureDir(runPaths.evalRawDir);
@@ -909,6 +1151,8 @@ async function runMockLoop({
     evalMode,
     generationModel,
     judgeModel,
+    agentModel,
+    outputType: evalOutputType,
   });
 
   const startedAt = new Date().toISOString();
@@ -920,6 +1164,13 @@ async function runMockLoop({
     startedAt,
     completedAt: null,
     currentChampionAtStart: state.currentChampion,
+    trigger: summarizeTriggerContext(triggerContext),
+    eval: {
+      mode: evalMode,
+      outputType: evalOutputType,
+    },
+    models: createRunModelMetadata({ agentModel, generationModel, judgeModel, modelParameters }),
+    budgetEstimate,
   };
   await writeJson(runPaths.runJson, runRecord);
 
@@ -935,7 +1186,22 @@ async function runMockLoop({
   await writeJson(runPaths.parameterizationJson, parameterization);
   await appendTimeline(runPaths.timelineJsonl, 'parameterization.written', { path: runPaths.parameterizationJson });
 
-  const experimentPlan = validateExperimentPlan(createStubExperimentPlan({ runId, runNumber, parameterization }));
+  const managerArtifact = await prepareManager({
+    runPaths,
+    projectId,
+    runId,
+    runNumber,
+    mode: 'mock',
+    state,
+    history,
+    parameterization,
+    triggerContext,
+  });
+  const experimentPlan = validateExperimentPlan(applyManagerGuidanceToPlan(
+    createStubExperimentPlan({ runId, runNumber, parameterization }),
+    managerArtifact,
+    parameterization,
+  ));
   await writeJson(runPaths.experimentPlanJson, experimentPlan);
   await appendTimeline(runPaths.timelineJsonl, 'experiment_plan.written', { path: runPaths.experimentPlanJson });
 
@@ -981,7 +1247,9 @@ async function runMockLoop({
     prompts: evalDesign.prompts,
     criteria: evalDesign.criteria,
     bank: evalDesign.bank,
-    outputType: 'text',
+    outputType: evalOutputType,
+    models: createRunModelMetadata({ agentModel, generationModel, judgeModel, modelParameters }),
+    budgetEstimate,
   });
   await appendTimeline(runPaths.timelineJsonl, 'eval_config.written', { path: runPaths.evalConfigJson });
 
@@ -995,6 +1263,9 @@ async function runMockLoop({
     runId: `${runId}-candidate-duel`,
     generationModel,
     judgeModel,
+    outputType: evalOutputType,
+    maxTokens: modelParameters.generationMaxTokens,
+    judgeMaxTokens: modelParameters.judgeMaxTokens,
     apiKeys,
     modelClient: modelClient || undefined,
   });
@@ -1022,6 +1293,9 @@ async function runMockLoop({
       runId: `${runId}-champion-gate`,
       generationModel,
       judgeModel,
+      outputType: evalOutputType,
+      maxTokens: modelParameters.generationMaxTokens,
+      judgeMaxTokens: modelParameters.judgeMaxTokens,
       apiKeys,
       modelClient: modelClient || undefined,
     });
@@ -1085,6 +1359,7 @@ async function runMockLoop({
     candidateA,
     candidateB,
     promotedCandidateId: finalPromotedCandidateId,
+    budgetEstimate,
   });
 
   const completedRunRecord = {
@@ -1100,6 +1375,7 @@ async function runMockLoop({
   await writeJson(runPaths.runJson, completedRunRecord);
   await writeJson(paths.stateJson, nextState);
   await appendTimeline(runPaths.timelineJsonl, 'state.updated', { champion: nextState.currentChampion?.candidateId || null });
+  await finishManager({ runPaths, managerArtifact, recommendation, nextState });
 
   // Guard against double-appending if a resume re-enters after history was already written.
   const alreadyInHistory = Array.isArray(history.trajectory) && history.trajectory.some(entry => entry.runId === runId);
@@ -1131,6 +1407,8 @@ async function completeReviewBlockedRun({
   parameterization,
   reviewA,
   reviewB,
+  managerArtifact = null,
+  budgetEstimate = null,
 }) {
   const recommendation = validateRecommendation({
     runId,
@@ -1178,14 +1456,15 @@ async function completeReviewBlockedRun({
   await writeText(runPaths.reportMd, renderReviewBlockedReport({ runId, recommendation, reviewA, reviewB }));
   await appendTimeline(runPaths.timelineJsonl, 'analysis.written', { decision: recommendation.decision, reason: 'candidate_review_blocked' });
 
-  const nextState = validateRunState({
+  const nextState = validateRunState(applyBudgetUsage({
     projectId: state.projectId,
     runCount: runNumber,
     currentChampion: state.currentChampion,
     lastRunId: runId,
     updatedAt: new Date().toISOString(),
     runPolicy: state.runPolicy,
-  });
+    budgetUsage: state.budgetUsage,
+  }, budgetEstimate));
 
   const completedRunRecord = {
     ...runRecord,
@@ -1201,6 +1480,7 @@ async function completeReviewBlockedRun({
   await writeJson(runPaths.runJson, completedRunRecord);
   await writeJson(paths.stateJson, nextState);
   await appendTimeline(runPaths.timelineJsonl, 'state.updated', { champion: nextState.currentChampion?.candidateId || null });
+  await finishManager({ runPaths, managerArtifact, recommendation, nextState });
 
   const nextHistory = await appendHistory({
     paths,
@@ -1231,6 +1511,7 @@ async function reviseBlockedCandidate({
   experimentPlan,
   evalDesign,
   agentModel,
+  modelParameters = {},
   apiKeys,
   agentClient,
   agentSkillsStandard,
@@ -1258,6 +1539,7 @@ async function reviseBlockedCandidate({
       originalArtifact,
       review,
     },
+    maxTokens: modelParameters.creatorMaxTokens,
   });
   await writeJson(path.join(revisionDir, 'creator-artifact.json'), revisionResult.artifact);
   const revisedCandidate = validateCandidate(await materializeCreatorArtifact({
@@ -1361,7 +1643,7 @@ function createStubRecommendation({ runId, promotedCandidateId, candidateDuel, c
   };
 }
 
-async function applyDecision({ paths, runPaths, state, runId, runNumber, candidateA, candidateB, promotedCandidateId }) {
+async function applyDecision({ paths, runPaths, state, runId, runNumber, candidateA, candidateB, promotedCandidateId, budgetEstimate = null }) {
   let currentChampion = state.currentChampion;
 
   if (promotedCandidateId) {
@@ -1377,14 +1659,15 @@ async function applyDecision({ paths, runPaths, state, runId, runNumber, candida
     };
   }
 
-  return validateRunState({
+  return validateRunState(applyBudgetUsage({
     projectId: state.projectId,
     runCount: runNumber,
     currentChampion,
     lastRunId: runId,
     updatedAt: new Date().toISOString(),
     runPolicy: state.runPolicy,
-  });
+    budgetUsage: state.budgetUsage,
+  }, budgetEstimate));
 }
 
 function renderReport({ runId, recommendation, candidateDuel, championGate }) {

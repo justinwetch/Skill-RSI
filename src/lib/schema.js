@@ -40,6 +40,15 @@ export function validateRunState(state) {
     requireString(label, state.currentChampion, 'candidateId');
     requireString(label, state.currentChampion, 'skillHash');
   }
+  if (state.budgetUsage !== null && state.budgetUsage !== undefined) {
+    if (!isObject(state.budgetUsage)) fail(label, 'budgetUsage must be an object');
+    if (!Number.isFinite(state.budgetUsage.estimatedTokens) || state.budgetUsage.estimatedTokens < 0) {
+      fail(label, 'budgetUsage.estimatedTokens must be a non-negative number');
+    }
+    if (!Number.isFinite(state.budgetUsage.estimatedSpendUsd) || state.budgetUsage.estimatedSpendUsd < 0) {
+      fail(label, 'budgetUsage.estimatedSpendUsd must be a non-negative number');
+    }
+  }
   return state;
 }
 
@@ -203,7 +212,7 @@ export function validateRecommendation(recommendation) {
   const label = 'Recommendation';
   if (!isObject(recommendation)) fail(label, 'must be an object');
   requireString(label, recommendation, 'runId');
-  if (!['promote', 'keep_current', 'edit_current', 'request_new_experiment'].includes(recommendation.decision)) {
+  if (!['promote', 'keep_current', 'request_new_experiment'].includes(recommendation.decision)) {
     fail(label, 'decision is not recognized');
   }
   if (!['low', 'medium', 'high'].includes(recommendation.confidence)) {

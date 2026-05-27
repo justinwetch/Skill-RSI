@@ -35,19 +35,19 @@ strategy/source-of-truth document, and update this tracker whenever a chunk land
 
 ## Phase 2: Manager Behavior And Experiment Memory
 
-- [ ] Add an explicit manager artifact per run that records strategic context, selected prior artifacts, experiment intent, and final next action.
-- [ ] Detect repeated failed experiments and avoid retrying the same parameter/strategy without new evidence.
-- [ ] Detect local maxima from repeated non-promotion or low-signal runs.
-- [ ] Add a high-divergence/reset experiment template for local-maxima recovery.
-- [ ] Make `edit_current` a real surgical-edit branch, or remove it from advertised outcomes until implemented.
+- [x] Add an explicit manager artifact per run that records strategic context, selected prior artifacts, experiment intent, and final next action.
+- [x] Detect repeated failed experiments and avoid retrying the same parameter/strategy without new evidence.
+- [x] Detect local maxima from repeated non-promotion or low-signal runs.
+- [x] Add a high-divergence/reset experiment template for local-maxima recovery.
+- [x] Make `edit_current` a real surgical-edit branch, or remove it from advertised outcomes until implemented.
 
 ## Phase 3: Budget, Config, And Trigger Hardening
 
-- [ ] Expand `config.json` to cover budget, trigger, portability, eval output type, and visual-runner settings.
-- [ ] Enforce token, spend, and concurrency budgets before unattended runs.
-- [ ] Persist model IDs and relevant generation/judging parameters consistently across agent calls and eval runs.
-- [ ] Let hook metadata influence experiment focus, instead of only recording the event before a normal one-loop run.
-- [ ] Surface run policy, trigger mode, and budget limits clearly in the UI.
+- [x] Expand `config.json` to cover budget, trigger, portability, eval output type, and visual-runner settings.
+- [x] Enforce token, spend, and concurrency budgets before unattended runs.
+- [x] Persist model IDs and relevant generation/judging parameters consistently across agent calls and eval runs.
+- [x] Let hook metadata influence experiment focus, instead of only recording the event before a normal one-loop run.
+- [x] Surface run policy, trigger mode, and budget limits clearly in the UI.
 
 ## Phase 4: Evaluator Reliability And SkillEval Parity
 

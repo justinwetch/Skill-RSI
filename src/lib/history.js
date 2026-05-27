@@ -130,7 +130,7 @@ function updateParameterLog(existing, tested, recommendation, { runRecord, param
       testedInRuns: [],
       currentBelief: 'untested',
       status: 'inconclusive',
-      outcomeCounts: { promote: 0, keep_current: 0, edit_current: 0, request_new_experiment: 0 },
+      outcomeCounts: { promote: 0, keep_current: 0, request_new_experiment: 0 },
       staleEvidence: [],
     };
     const priorCurrentEvidence = current.currentEvidence || null;
@@ -138,7 +138,6 @@ function updateParameterLog(existing, tested, recommendation, { runRecord, param
     const outcomeCounts = {
       promote: current.outcomeCounts?.promote || 0,
       keep_current: current.outcomeCounts?.keep_current || 0,
-      edit_current: current.outcomeCounts?.edit_current || 0,
       request_new_experiment: current.outcomeCounts?.request_new_experiment || 0,
     };
     outcomeCounts[recommendation.decision] = (outcomeCounts[recommendation.decision] || 0) + 1;
@@ -200,7 +199,7 @@ function getParameterStatus({ recommendation, testedInRuns, outcomeCounts, nonPr
   if (nonPromotionTests >= 2 && outcomeCounts.promote === 0 && testedInRuns.length >= 2) {
     return 'do_not_retry_without_new_evidence';
   }
-  if (recommendation.decision === 'keep_current' || recommendation.decision === 'edit_current') {
+  if (recommendation.decision === 'keep_current') {
     return 'deprioritized';
   }
   return 'inconclusive';

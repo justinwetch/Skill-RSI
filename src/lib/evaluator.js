@@ -22,6 +22,8 @@ export async function runHeadlessEval({
   maxTokens = 8192,
   judgeMaxTokens = 4096,
 }) {
+  const startedAt = new Date().toISOString();
+  const startedMs = Date.now();
   if (!['mock', 'real'].includes(mode)) {
     throw new Error('Evaluator mode must be mock or real');
   }
@@ -67,11 +69,24 @@ export async function runHeadlessEval({
     });
 
   const stats = summarizeEvaluations(evaluations);
+  const completedAt = new Date().toISOString();
   const result = validateHeadlessEvalRun({
     runId,
     mode,
-    createdAt: new Date().toISOString(),
+    createdAt: startedAt,
+    completedAt,
     outputType: 'text',
+    modelMetadata: {
+      generationModel: generationModel || null,
+      judgeModel: judgeModel || null,
+      generationMaxTokens: maxTokens,
+      judgeMaxTokens,
+    },
+    timing: {
+      startedAt,
+      completedAt,
+      elapsedMs: Date.now() - startedMs,
+    },
     skills: {
       skillA: summarizeSkill(skillA),
       skillB: summarizeSkill(skillB),

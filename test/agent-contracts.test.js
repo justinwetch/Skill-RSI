@@ -352,7 +352,7 @@ test('agent prompts receive compact Phase 1 history memory', async () => {
       status: 'do_not_retry_without_new_evidence',
       lastTestedRunId: 'run-002',
       lastDecision: 'request_new_experiment',
-      outcomeCounts: { promote: 0, keep_current: 0, edit_current: 0, request_new_experiment: 2 },
+      outcomeCounts: { promote: 0, keep_current: 0, request_new_experiment: 2 },
       currentEvidence: {
         runId: 'run-002',
         decision: 'request_new_experiment',
@@ -394,4 +394,59 @@ test('agent prompts receive compact Phase 1 history memory', async () => {
   assert.match(result.prompt, /Repeated weak activation test/);
   assert.match(result.prompt, /Activation metadata has been noisy twice/);
   assert.match(result.prompt, /Try next: output contract/);
+});
+
+test('experiment planner prompt receives explicit manager guidance', async () => {
+  const cwd = await fs.mkdtemp(path.join(os.tmpdir(), 'skill-rsi-manager-prompt-'));
+  await initProject({ cwd, projectName: 'UX Design', goal: 'Help agents design better UX.' });
+
+  const result = await runAgentContract({
+    cwd,
+    projectName: 'ux-design',
+    agentName: 'experiment-planner',
+    runId: 'planner-manager-guidance',
+    mode: 'mock',
+    managerPlan: {
+      strategy: { experimentFamily: 'high_divergence_reset' },
+      avoid: { parameterIds: ['p01-activation_metadata'], reasons: ['No signal from p01.'] },
+      experimentIntent: {
+        plannerInstructions: ['Use reset planning and avoid p01 unless new evidence exists.'],
+      },
+    },
+  });
+
+  assert.match(result.prompt, /Manager guidance for this run/);
+  assert.match(result.prompt, /high_divergence_reset/);
+  assert.match(result.prompt, /p01-activation_metadata/);
+  assert.match(result.prompt, /Do not select avoid\.parameterIds/);
+});
+
+test('real analyst contract maps unimplemented edit_current to a new experiment', async () => {
+  const cwd = await fs.mkdtemp(path.join(os.tmpdir(), 'skill-rsi-analyst-no-edit-'));
+  await initProject({ cwd, projectName: 'UX Design', goal: 'Help agents design better UX.' });
+
+  const result = await runAgentContract({
+    cwd,
+    projectName: 'ux-design',
+    agentName: 'analyst',
+    runId: 'analyst-no-edit',
+    mode: 'real',
+    model: 'fake-agent-model',
+    modelClient: async () => JSON.stringify({
+      runId: 'analyst-no-edit',
+      decision: 'edit_current',
+      recommendedChampionCandidateId: 'candidate-a',
+      confidence: 'medium',
+      reasoning: 'Try a surgical edit.',
+      observations: ['The model requested an unimplemented branch.'],
+      nextRoundGuidance: {
+        vary: 'same parameter',
+        preserve: 'current champion',
+        investigate: 'edit branch',
+      },
+    }),
+  });
+
+  assert.equal(result.artifact.decision, 'request_new_experiment');
+  assert.equal(result.artifact.recommendedChampionCandidateId, null);
 });

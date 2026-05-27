@@ -121,7 +121,7 @@ test('evaluation designer reuses provisional prompts for champion-gate confirmat
   assert.equal(design.bank.explorationPromptIds.length, 3);
 });
 
-test('evaluation designer enforces code plus visual output contract', () => {
+test('evaluation designer enforces UI-code output contract', () => {
   const design = designEvalBatch({
     runId: 'run-code-visual',
     goal: 'Help agents design better front-end UX.',

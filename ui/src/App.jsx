@@ -672,7 +672,8 @@ function CreateView({ draft, setDraft, busy, onSubmit, onCancel }) {
       key: 'code_visual',
       icon: Layout,
       title: 'Code + visuals',
-      desc: 'Prompts require implemented UI/code with styling, accessibility, and interaction detail.',
+      desc: 'Deferred until rendered screenshot and visual judging are wired in.',
+      disabled: true,
     },
     {
       key: 'visual',

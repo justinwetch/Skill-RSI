@@ -1,105 +1,219 @@
-# Skill RSI
+# 🔄 Skill RSI
 
-Recursive Self-Improvement for Agent Skills.
+Recursive self-improvement for Agent Skills.
 
-This repository currently has the local Skill RSI scaffold plus a focused headless SkillEval integration. Mock modes remain available for offline development, and `evaluate` can now run text-only real model generation and judging through provider APIs with prompt-level failure capture and retry metadata.
+Given a skill and a goal, Skill RSI deconstructs what the current version gets wrong, generates two independent challengers based on a focused hypothesis, evaluates them against the champion, and promotes the winner into the next round. Every loop builds on what the last one learned.
 
-## Commands
+For the full origin story, see [Open Sourcing SkillEval](https://www.justinwetch.com/blog/skilleval).
 
-```bash
-npm test
-node src/cli.js init ux-design --goal "Help agents design better UX for production applications."
-node src/cli.js run ux-design --stub --loops 3
-node src/cli.js run ux-design-mock --mock --loops 1 --goal "Help agents design better UX for production applications."
-node src/cli.js run ux-design-real-eval --mock --real-eval --loops 1 --goal "Help agents design better UX for production applications."
-node src/cli.js run ux-design-agentic --agentic --loops 1 --agent-model gpt-5.4-mini --goal "Help agents design better UX for production applications."
-node src/cli.js run ux-design-loop --mock --loops 3 --max-runs 5
-node src/cli.js step ux-design-loop --mock
-node src/cli.js continuous ux-design-loop --mock --max-runs 5 --patience 3 --max-inconclusive 2
-node src/cli.js hook ux-design-loop --mock --event hook.json
-node src/cli.js projects
-node src/cli.js status ux-design
-node src/cli.js summary ux-design-loop
-node src/cli.js run-detail ux-design-loop
-node src/cli.js compare ux-design-loop
-node src/cli.js decide ux-design-loop --decision annotate --note "Reviewed current run."
-node src/cli.js report ux-design
-node src/cli.js timeline ux-design-loop
-node src/cli.js timeline ux-design-loop --json
-node src/cli.js inspect-skill .skill-rsi/projects/ux-design/champion/skill
-node src/cli.js evaluate eval-demo --a ./skill-a --b ./skill-b --prompts prompts.json --criteria criteria.json --mock --out result.json
-node src/cli.js evaluate eval-demo --a ./skill-a --b ./skill-b --prompts prompts.json --criteria criteria.json --gen-model gpt-5.4-mini --judge-model gpt-5.4-mini --out result.json
-node src/cli.js agent ux-design --name deconstructor --run-id contract-001 --out deconstructor.json
-node src/cli.js agent ux-design --name deconstructor --real --model gpt-5.4-mini --save-current --out deconstructor.json
-node src/cli.js agent ux-design --name creator --real --model gpt-5.4-mini --arm candidateA --candidate-dir .skill-rsi/projects/ux-design/scratch/candidate-a --out creator-a.json
+---
+
+After building [SkillEval](https://github.com/justinwetch/SkillEval), I kept running into the same bottleneck. The eval loop worked fine — scoring skills across batches of prompts was no longer the problem. What to test next was still fully manual. You'd finish a round, see that one skill won on edge cases but regressed on output format, and then sit down to figure out what hypothesis to try next time. SkillEval gave me data. It didn't give me the upstream answer.
+
+That question became Skill RSI. The system deconstructs the current champion into a granular map of improvable surfaces, picks one or two to focus on, designs a concrete A/B experiment, and generates two independent challengers from it. A headless eval harness runs the matchups. An analyst agent interprets the results and recommends whether to promote, keep, or mark the run inconclusive. A compact experiment history accumulates across runs, so the system knows what it's already tried, what regressed, and where the most promising hypotheses are. The next loop reads that history instead of starting blind.
+
+I wanted to put a flag in the ground on recursive self-improvement as something that actually runs, not a research concept. The claim is in the name. Given a goal and enough iterations, the system should be able to improve its way toward it.
+
+---
+
+## How it works
+
+Each loop follows a fixed sequence of agent stages:
+
+```
+load state and history
+  → deconstruct current champion (parameter map)
+  → plan A/B experiment (which surfaces to test, which to hold)
+  → generate candidate A
+  → generate candidate B
+  → adversarial preflight review
+  → candidate duel (A vs B on exploration batch)
+  → champion gate (winner vs current champion on stable batch)
+  → analyst recommendation
+  → promote / keep / edit / request new experiment
+  → write history
 ```
 
-## UI
+The first run starts with an ontology pass to map the skill's domain before generating candidates. Later runs skip that and go straight to deconstruction, using the experiment history to focus on the most promising open hypotheses.
 
-Build the UI and start the local Skill RSI server:
+You stay in the loop as supervisor and budget owner. The system invents the variants.
+
+## Quick start
+
+```bash
+git clone https://github.com/justinwetch/SkillRSI.git
+cd skill-rsi
+npm install
+cp .env.example .env   # add OPENAI_API_KEY or equivalent
+```
+
+Initialize a project and run your first loop in stub mode (no API calls):
+
+```bash
+node src/cli.js init my-skill --goal "Help agents write clear technical documentation."
+node src/cli.js run my-skill --stub --loops 3
+```
+
+Run a real loop with model-backed agents:
+
+```bash
+node src/cli.js run my-skill --agentic --loops 1 --agent-model gpt-5.4-mini
+```
+
+Check the result:
+
+```bash
+node src/cli.js status my-skill
+node src/cli.js summary my-skill
+```
+
+**UI.** Build and start the local server, then open [http://127.0.0.1:8765](http://127.0.0.1:8765):
 
 ```bash
 npm run build:ui
 npm run server
 ```
 
-Open [http://127.0.0.1:8765](http://127.0.0.1:8765).
+For hot-reload UI development, run `npm run server` and `npm run dev:ui` in separate terminals.
 
-For UI development, run the API server and Vite client in separate terminals:
+## Operating modes
+
+**Manual.** Run one loop and stop. Good for reviewing each result before continuing.
 
 ```bash
-npm run server
-npm run dev:ui
+node src/cli.js run ux-design --agentic --loops 1
 ```
 
-The UI reuses SkillEval's graphite workbench style and reads the same JSON surfaces exposed by the CLI.
+**Continuous.** Run until a stop condition fires: budget exhausted, a patience threshold of runs without improvement, or too many inconclusive results in a row.
 
-## API Keys
+```bash
+node src/cli.js continuous ux-design --max-runs 5 --patience 3 --max-inconclusive 2
+```
 
-Copy `.env.example` to `.env` and add:
+**Hook-triggered.** Start a run from an external event, like a skill edit, a merged PR, or a failed eval. The hook payload includes source event, changed files, and a suggested evaluation focus.
+
+```bash
+node src/cli.js hook ux-design --event hook.json
+```
+
+For scheduled (cron or macOS LaunchAgent) setup, see [docs/SCHEDULING.md](docs/SCHEDULING.md).
+
+## What a run produces
+
+```
+runs/<run-id>/
+├── candidates/
+│   ├── candidate-a/skill/      # challenger package + rationale + review
+│   └── candidate-b/skill/
+├── eval/
+│   ├── candidate-duel.json     # A vs B results
+│   └── champion-gate.json      # winner vs current champion
+└── analysis/
+    ├── recommendation.json
+    └── report.md
+```
+
+After a promotion, `champion/skill/` is updated and `history/current-summary.md` appends a summary of what changed, what was learned, and what to try next.
+
+## CLI reference
+
+```bash
+# Project management
+node src/cli.js init <name> --goal "..."
+node src/cli.js projects
+node src/cli.js status <project>
+
+# Running loops
+node src/cli.js run <project> --stub --loops 3
+node src/cli.js run <project> --agentic --loops 1 --agent-model gpt-5.4-mini
+node src/cli.js step <project>
+node src/cli.js continuous <project> --max-runs 5 --patience 3
+node src/cli.js hook <project> --event hook.json
+
+# Inspection
+node src/cli.js summary <project>
+node src/cli.js compare <project>
+node src/cli.js timeline <project>
+node src/cli.js report <project>
+node src/cli.js run-detail <project>
+node src/cli.js inspect-skill <path/to/skill>
+
+# Standalone evaluation (headless SkillEval)
+node src/cli.js evaluate <project> \
+  --a ./skill-a --b ./skill-b \
+  --prompts prompts.json --criteria criteria.json \
+  --gen-model gpt-5.4-mini --judge-model gpt-5.4-mini \
+  --out result.json
+
+# Annotation
+node src/cli.js decide <project> --decision annotate --note "Reviewed."
+```
+
+## Project workspace
+
+All state lives under `.skill-rsi/projects/<name>/` as plain JSON. Git-friendly and easy to inspect or repair manually.
+
+```
+.skill-rsi/
+└── projects/
+    └── ux-design/
+        ├── project.yaml             # goal, models, promotion policy, budgets
+        ├── state.json
+        ├── champion/skill/          # current best skill package
+        ├── ontology/current.json
+        ├── parameterization/current.json
+        ├── prompt-bank/             # stable + exploration prompts and criteria
+        ├── runs/
+        │   └── <run-id>/
+        │       ├── candidates/
+        │       ├── eval/
+        │       └── analysis/
+        └── history/
+            ├── current-summary.md
+            ├── index.json
+            └── detailed/
+```
+
+## Configuration
+
+`project.yaml` controls the goal, models, promotion policy, and budgets:
+
+```yaml
+name: ux-design
+goal: Help agents design better UX for production applications.
+models:
+  creator: gpt-5.4-mini
+  judge: gpt-5.4-mini
+  analyst: gpt-5.4-mini
+eval:
+  default_batch_size: 10
+  stable_prompt_count: 6
+  exploration_prompt_count: 4
+promotion:
+  min_win_delta: 2
+  min_score_delta: 4
+  require_no_critical_regressions: true
+budget:
+  max_loops_per_run: 1
+  max_eval_tokens_per_loop: 300000
+triggers:
+  mode: manual
+```
+
+## API keys
+
+Copy `.env.example` to `.env` and add your provider key:
 
 ```bash
 OPENAI_API_KEY=sk-...
 ```
 
-`.env` is gitignored. If no model is provided for real `evaluate`, the CLI defaults both generation and judging to `gpt-5.4-mini` to keep test runs cheap.
+If no model is specified for a real `evaluate` run, both generation and judging default to `gpt-5.4-mini`. `.env` is gitignored.
 
-Generated experiment data is written under `.skill-rsi/projects/<project>/`.
+## Built on
 
-For unattended runs, see [`docs/SCHEDULING.md`](docs/SCHEDULING.md).
-For the architecture and product roadmap, see [`IMPLEMENTATION_PLAN.md`](IMPLEMENTATION_PLAN.md).
+Skill RSI's evaluation engine is a headless adaptation of [SkillEval](https://github.com/justinwetch/SkillEval). Skill packages follow the [Agent Skills standard](https://agentskills.io/specification). For architecture and full product roadmap, see [IMPLEMENTATION_PLAN.md](IMPLEMENTATION_PLAN.md).
 
-## Implemented
+---
 
-- CLI scaffold for `init`, `run --stub`, and `status`
-- local project workspace under `.skill-rsi/projects/<name>/`
-- run folders with candidates, deconstruction, eval placeholders, analysis, and promoted skill artifacts
-- schema validators for config, state, ontology, parameterization, experiment plan, candidates, eval results, recommendations, and history
-- deterministic stub loop that can complete three iterations and update champion state
-- append-only history index plus compact current summary
-- skill package inspection for directories, single `.md`/`.txt` files, and zipped packages
-- mock headless evaluator with blind A/B labels and structured JSON output
-- real text-only headless evaluator using provider model APIs
-- mock agent contracts for ontology, deconstructor, experiment planner, creator, and analyst
-- real model-backed agent contract runner for ontology, deconstructor, experiment planner, creator, and analyst
-- research-grounded Step 1 for real agentic runs, with best-effort model-native OpenAI web search, inference fallback, authority maps, evidence claims, and persisted research packets
-- ontology and deconstruction quality gates with one warn-and-revise pass plus persisted quality reports
-- deconstruction prompt context includes the full champion package summary and Agent Skills standard, not just champion `SKILL.md`
-- real creator artifact materialization into a candidate skill package directory
-- `run --agentic` orchestration for model-backed deconstruction, planning, and candidate creation with mock or real eval
-- parameter-targeted evaluation designer with 6 stable prompts, 4 exploration prompts, and 4-6 criteria
-- prompt-bank lifecycle with stable prompt reuse, exploration prompt history, and criteria version metadata
-- prompt-bank updates that promote high-signal exploration prompts and retire weak prompts after eval
-- analyst-backed recommendation with deterministic promotion policy gate
-- adversarial candidate preflight review that blocks invalid packages, unsafe scripts, and eval prompt leakage before evaluation
-- review-blocked agentic runs now complete cleanly with `request_new_experiment`, persisted review artifacts, and no eval spend
-- one bounded creator revision retry for candidates blocked by adversarial review, with revision artifacts under `revision-001/`
-- stop rules for continuous/manual loops: max-run budget, promotion patience, and consecutive inconclusive-run caps
-- timeline inspection command with text/JSON output plus failed-run timeline entries
-- documented cron and macOS LaunchAgent scheduling around the bounded `continuous` command
-- UI-ready JSON surfaces for project lists, project summaries, run details, manager artifacts, candidate comparisons, and optional audit annotations
-- SkillEval-inspired React UI for project dashboards, run summaries, candidate comparison, eval results, prompt-bank health, timeline, and skill inspection
-- mock first-run flow that uses generated candidate packages plus the headless evaluator artifact shape
-- mock later-run flow with challenger-vs-champion gates
-- project run lock, max-run budget guard, and per-run `timeline.jsonl` logs
-- manual step, continuous, hook-triggered, status, and report command surfaces
+Built by [Justin Wetch](https://www.justinwetch.com)

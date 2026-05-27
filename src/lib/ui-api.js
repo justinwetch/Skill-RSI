@@ -502,14 +502,29 @@ async function summarizeProgressArtifacts(runPaths) {
       reviewB ? `Candidate B review: ${reviewB.approveForEval ? 'approved' : 'blocked'}; ${reviewB.blockingIssues?.length || 0} blocking issue(s)` : null,
     ].filter(Boolean),
     evaluate: [
-      candidateDuel ? `Candidate duel: ${candidateDuel.stats?.winner || 'unknown'} by ${candidateDuel.stats?.scoreDelta ?? 'n/a'}` : null,
-      championGate ? `Champion gate: ${championGate.stats?.winner || 'unknown'} by ${championGate.stats?.scoreDelta ?? 'n/a'}` : null,
+      candidateDuel ? `Candidate duel: ${formatEvalOutcome(candidateDuel, {
+        skillA: 'Candidate A',
+        skillB: 'Candidate B',
+      })}` : null,
+      championGate ? `Champion gate: ${formatEvalOutcome(championGate, {
+        skillA: 'challenger',
+        skillB: 'current champion',
+      })}` : null,
     ].filter(Boolean),
     decide: [
       recommendation ? `Decision: ${recommendation.decision} (${recommendation.confidence} confidence)` : null,
       recommendation?.nextRoundGuidance?.vary ? `Try next: ${recommendation.nextRoundGuidance.vary}` : null,
     ].filter(Boolean),
   };
+}
+
+function formatEvalOutcome(evalRun, labels = {}) {
+  const winner = evalRun?.stats?.winner || 'unknown';
+  const delta = evalRun?.stats?.scoreDelta;
+  const label = labels[winner] || winner;
+  if (winner === 'tie') return 'tie';
+  if (!Number.isFinite(delta)) return `${label}, margin n/a`;
+  return `${label} by ${Math.abs(delta)}`;
 }
 
 function listNames(items = []) {

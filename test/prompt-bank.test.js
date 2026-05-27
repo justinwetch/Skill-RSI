@@ -2,15 +2,16 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { applyPromptBankUpdates, diagnoseEvalPrompts } from '../src/lib/prompt-bank.js';
 
-test('prompt diagnostics promote useful exploration prompts and retire weak prompts', () => {
+test('prompt diagnostics make useful duel prompts provisional and keep stable ties', () => {
   const diagnostics = diagnoseEvalPrompts(fakeEvalRun());
 
-  assert.deepEqual(diagnostics.promotePromptIds, ['explore-strong']);
-  assert.ok(diagnostics.retirePromptIds.includes('stable-tie'));
+  assert.deepEqual(diagnostics.promotePromptIds, []);
+  assert.deepEqual(diagnostics.provisionalPromptIds, ['explore-strong']);
+  assert.ok(!diagnostics.retirePromptIds.includes('stable-tie'));
   assert.ok(diagnostics.retirePromptIds.includes('explore-no-parameter'));
 });
 
-test('prompt bank update promotes exploration prompts, retires weak prompts, and caps stable prompts', () => {
+test('prompt bank update requires champion-gate evidence before stable promotion', () => {
   const bank = {
     stablePromptCount: 6,
     stablePromptIds: ['s1', 's2', 's3', 's4', 's5', 's6'],
@@ -22,7 +23,7 @@ test('prompt bank update promotes exploration prompts, retires weak prompts, and
 
   const { bank: next, update } = applyPromptBankUpdates({
     bank,
-    evalRun: fakeEvalRun(),
+    candidateDuel: fakeEvalRun(),
     recommendation: {
       promptBankRecommendations: {
         promotePromptIds: ['explore-strong'],
@@ -33,12 +34,42 @@ test('prompt bank update promotes exploration prompts, retires weak prompts, and
     runId: 'run-002',
   });
 
-  assert.ok(next.stablePromptIds.includes('explore-strong'));
+  assert.ok(!next.stablePromptIds.includes('explore-strong'));
+  assert.ok(next.provisionalPromptIds.includes('explore-strong'));
   assert.equal(next.stablePromptIds.length, 6);
-  assert.ok(!next.stablePromptIds.includes('stable-tie'));
-  assert.ok(next.retired.some(item => item.promptId === 'stable-tie'));
+  assert.ok(next.stablePromptIds.includes('s1'));
+  assert.ok(!next.retired.some(item => item.promptId === 'stable-tie'));
+  assert.ok(update.provisionalPromptIds.includes('explore-strong'));
+  assert.ok(!update.promotedPromptIds.includes('explore-strong'));
+  assert.ok(update.retiredPromptIds.includes('explore-no-parameter'));
+  assert.equal(next.promptEvidence['explore-strong'].status, 'provisional');
+});
+
+test('champion gate promotes provisional prompts to stable', () => {
+  const bank = {
+    stablePromptCount: 6,
+    stablePromptIds: ['s1', 's2', 's3', 's4', 's5', 's6'],
+    provisionalPromptIds: ['explore-strong'],
+    explorationPromptIds: [],
+    stablePrompts: ['s1', 's2', 's3', 's4', 's5', 's6'].map(id => prompt(id, 'stable')),
+    provisionalPrompts: [prompt('explore-strong', 'provisional', ['p02'])],
+    explorationPrompts: [],
+    retired: [],
+  };
+
+  const { bank: next, update } = applyPromptBankUpdates({
+    bank,
+    candidateDuel: fakeEvalRun(),
+    championGate: fakeChampionGate(),
+    recommendation: { decision: 'promote', promptBankRecommendations: {} },
+    runId: 'run-003',
+  });
+
+  assert.ok(next.stablePromptIds.includes('explore-strong'));
+  assert.ok(!next.provisionalPromptIds.includes('explore-strong'));
   assert.ok(update.promotedPromptIds.includes('explore-strong'));
-  assert.ok(update.retiredPromptIds.includes('stable-tie'));
+  assert.equal(next.promptEvidence['explore-strong'].status, 'stable');
+  assert.equal(next.promptEvidence['explore-strong'].stableReason, 'champion_gate_confirmed');
 });
 
 function fakeEvalRun() {
@@ -53,6 +84,18 @@ function fakeEvalRun() {
       evaluation('stable-tie', 'stable', ['p01'], 'tie', 3, 3, 'Tie.'),
       evaluation('explore-strong', 'exploration', ['p02'], 'skillA', 5, 2, 'Strong signal.'),
       evaluation('explore-no-parameter', 'exploration', [], 'skillB', 4, 2, 'Missing metadata.'),
+    ],
+  };
+}
+
+function fakeChampionGate() {
+  return {
+    runId: 'eval-002',
+    prompts: [
+      prompt('explore-strong', 'provisional', ['p02']),
+    ],
+    evaluations: [
+      evaluation('explore-strong', 'provisional', ['p02'], 'skillA', 5, 2, 'Strong gate signal.'),
     ],
   };
 }

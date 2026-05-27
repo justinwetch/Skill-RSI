@@ -120,8 +120,10 @@ export async function readProjectSummary({ cwd, projectName }) {
     promptBank: promptBank ? {
       currentRunId: promptBank.currentRunId || null,
       stablePromptCount: promptBank.stablePromptIds?.length || 0,
-      explorationPromptCount: promptBank.explorationPrompts?.length || 0,
+      provisionalPromptCount: promptBank.provisionalPromptIds?.length || promptBank.provisionalPrompts?.length || 0,
+      explorationPromptCount: promptBank.explorationPrompts?.length || promptBank.explorationPromptIds?.length || 0,
       retiredPromptCount: promptBank.retired?.length || 0,
+      evidenceRecordCount: Object.keys(promptBank.promptEvidence || {}).length,
       criteriaVersionCount: promptBank.criteriaVersions?.length || 0,
     } : null,
     humanDecisionCount: humanDecisions.length,

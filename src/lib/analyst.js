@@ -346,11 +346,13 @@ function diagnosePromptBank(evalRun) {
     const delta = Math.abs((judge.scoreA || 0) - (judge.scoreB || 0));
     if (prompt.bucket === 'exploration' && judge.winner !== 'tie' && delta >= 2 && prompt.parameterIds?.length) {
       promotePromptIds.push(prompt.id);
-      promptBankNotes.push(`Promote ${prompt.id}: exploration prompt produced score delta ${delta}.`);
+      promptBankNotes.push(`Candidate ${prompt.id}: exploration prompt produced score delta ${delta}; prompt-bank update must verify it before stable promotion.`);
     }
-    if (judge.winner === 'tie' || delta === 0 || !prompt.parameterIds?.length || !judge.reasoning) {
+    if (prompt.bucket !== 'stable' && (judge.winner === 'tie' || delta === 0 || !prompt.parameterIds?.length || !judge.reasoning)) {
       retirePromptIds.push(prompt.id);
       promptBankNotes.push(`Retire ${prompt.id}: weak or missing signal.`);
+    } else if (prompt.bucket === 'stable' && (judge.winner === 'tie' || delta === 0)) {
+      promptBankNotes.push(`Keep ${prompt.id}: stable prompt tied and remains useful as a neutral anchor.`);
     }
   }
 

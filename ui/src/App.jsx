@@ -1054,8 +1054,10 @@ function SecondaryRow({ summary, runDetail }) {
           <p className="card-label">Prompt bank</p>
           <dl className="kv">
             <dt>Stable prompts</dt><dd>{pb.stablePromptCount}</dd>
+            <dt>Provisional</dt><dd>{pb.provisionalPromptCount}</dd>
             <dt>Exploration</dt><dd>{pb.explorationPromptCount}</dd>
             <dt>Retired</dt><dd>{pb.retiredPromptCount}</dd>
+            <dt>Evidence records</dt><dd>{pb.evidenceRecordCount}</dd>
             <dt>Criteria versions</dt><dd>{pb.criteriaVersionCount}</dd>
           </dl>
         </div>

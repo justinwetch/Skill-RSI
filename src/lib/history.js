@@ -409,9 +409,12 @@ function formatPromptBankUpdate(update) {
   if (!update) return 'No prompt-bank update was recorded.';
   return [
     `Promoted prompts: ${formatList(update.promotedPromptIds)}`,
+    `Provisional prompts: ${formatList(update.provisionalPromptIds)}`,
     `Retired prompts: ${formatList(update.retiredPromptIds)}`,
     `Stable prompts: ${formatList(update.stablePromptIds)}`,
+    `Provisional prompts after update: ${formatList(update.provisionalPromptIdsAfterUpdate)}`,
     `Exploration prompts: ${formatList(update.explorationPromptIds)}`,
+    `Evidence records added: ${update.evidenceAdded ?? 0}`,
     `Diagnostics: ${formatList(update.diagnostics?.promptBankNotes)}`,
   ].join('\n');
 }

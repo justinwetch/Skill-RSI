@@ -165,6 +165,7 @@ export async function naturalizeEvalPrompts({ design, goal, model, apiKeys = {},
   design.prompts = apply(design.prompts);
   if (design.bank) {
     design.bank.stablePrompts = apply(design.bank.stablePrompts);
+    design.bank.provisionalPrompts = apply(design.bank.provisionalPrompts);
     design.bank.explorationPrompts = apply(design.bank.explorationPrompts);
   }
   return design;
@@ -217,7 +218,21 @@ export function designEvalBatch({
     }),
   ];
 
-  const exploration = Array.from({ length: explorationPromptCount }, (_, offset) => {
+  const activePriorProvisional = Array.isArray(previousBank?.provisionalPrompts)
+    ? previousBank.provisionalPrompts.filter(prompt => !isRetiredPrompt(previousBank, prompt.id))
+    : [];
+  const reusedProvisional = activePriorProvisional
+    .slice(0, explorationPromptCount)
+    .map(prompt => ({
+      ...prompt,
+      bucket: 'provisional',
+      status: 'provisional',
+      reusedFromBank: true,
+      verificationTarget: 'champion_gate',
+    }));
+
+  const freshExplorationCount = Math.max(0, explorationPromptCount - reusedProvisional.length);
+  const exploration = Array.from({ length: freshExplorationCount }, (_, offset) => {
     const index = stablePromptCount + offset;
     const parameterId = focusIds[index % focusIds.length] || `p${index + 1}`;
     return createPrompt({
@@ -241,20 +256,23 @@ export function designEvalBatch({
 
   const design = validateEvalDesign({
     runId,
-    prompts: [...stable, ...exploration],
+    prompts: [...stable, ...reusedProvisional, ...exploration],
     criteria,
     bank: {
-      version: 2,
+      version: 3,
       createdAt: previousBank?.createdAt || new Date().toISOString(),
       updatedAt: new Date().toISOString(),
       currentRunId: runId,
       stablePromptCount,
       explorationPromptCount,
       stablePromptIds: stable.map(prompt => prompt.id),
+      provisionalPromptIds: activePriorProvisional.map(prompt => prompt.id),
       explorationPromptIds: exploration.map(prompt => prompt.id),
       stablePrompts: stable.map(prompt => ({ ...prompt, reusedFromBank: undefined })),
+      provisionalPrompts: activePriorProvisional,
       explorationPrompts: [...priorExploration, ...exploration],
       retired,
+      promptEvidence: previousBank?.promptEvidence || {},
       criteria,
       criteriaVersion,
       criteriaVersions: updateCriteriaVersions({ previousBank, criteria, criteriaVersion, runId }),
@@ -299,6 +317,9 @@ function createPrompt({
     parameterIds: [parameterId],
     difficulty,
     bucket,
+    status: bucket,
+    origin: bucket === 'stable' ? 'ontology_seed' : 'experiment_probe',
+    createdAtRunId: runId,
     taxonomy: [targetTask, qualityAxis, surface].filter(Boolean),
     expectedSignals: [
       `Observes ${surface}`,

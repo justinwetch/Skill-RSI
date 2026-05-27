@@ -408,7 +408,9 @@ test('mock mode updates prompt bank across loops', async () => {
 
   assert.equal(secondBank.stablePromptIds.length, 6);
   assert.notEqual(secondBank.currentRunId, firstBank.currentRunId);
-  assert.ok(secondBank.explorationPrompts.length >= firstBank.explorationPrompts.length + 4);
+  assert.ok(Array.isArray(secondBank.provisionalPrompts));
+  assert.ok(Object.keys(secondBank.promptEvidence || {}).length >= 10);
+  assert.ok(secondBank.explorationPrompts.length >= secondBank.explorationPromptIds.length);
   assert.ok(secondBank.criteriaVersions.length >= firstBank.criteriaVersions.length);
 
   const update = JSON.parse(await fs.readFile(path.join(
@@ -419,6 +421,7 @@ test('mock mode updates prompt bank across loops', async () => {
   ), 'utf8'));
   assert.equal(update.stablePromptIds.length, 6);
   assert.equal(update.runId, second.completedRuns[0].runId);
+  assert.ok(Array.isArray(update.provisionalPromptIds));
   assert.ok(update.diagnostics);
 });
 

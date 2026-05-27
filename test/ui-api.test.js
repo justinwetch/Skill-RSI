@@ -36,6 +36,8 @@ test('ui api exposes stable project and run detail surfaces', async () => {
   assert.equal(summary.config.budget.maxConcurrentRuns, 1);
   assert.equal(summary.history.trajectoryLength, 1);
   assert.equal(summary.promptBank.stablePromptCount, 6);
+  assert.ok(Number.isInteger(summary.promptBank.provisionalPromptCount));
+  assert.ok(summary.promptBank.evidenceRecordCount >= 10);
   assert.ok(summary.artifacts.historyIndex.endsWith('history/index.json'));
 
   const summaries = await readProjectSummaries({ cwd });

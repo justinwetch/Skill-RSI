@@ -1263,7 +1263,8 @@ async function runAgenticLoop({
     });
     const promptBankUpdate = applyPromptBankUpdates({
       bank: evalDesign.bank,
-      evalRun: candidateDuel,
+      candidateDuel,
+      championGate,
       recommendation,
       runId,
     });
@@ -1271,6 +1272,7 @@ async function runAgenticLoop({
     await writeJson(runPaths.promptBankUpdateJson, promptBankUpdate.update);
     await appendTimeline(runPaths.timelineJsonl, 'prompt_bank.updated', {
       promoted: promptBankUpdate.update.promotedPromptIds.length,
+      provisional: promptBankUpdate.update.provisionalPromptIds.length,
       retired: promptBankUpdate.update.retiredPromptIds.length,
     });
     await writeJson(runPaths.recommendationJson, recommendation);
@@ -1690,7 +1692,8 @@ async function runMockLoop({
   });
   const promptBankUpdate = applyPromptBankUpdates({
     bank: await readJson(paths.promptBankIndex, null),
-    evalRun: candidateDuel,
+    candidateDuel,
+    championGate,
     recommendation,
     runId,
   });
@@ -1698,6 +1701,7 @@ async function runMockLoop({
   await writeJson(runPaths.promptBankUpdateJson, promptBankUpdate.update);
   await appendTimeline(runPaths.timelineJsonl, 'prompt_bank.updated', {
     promoted: promptBankUpdate.update.promotedPromptIds.length,
+    provisional: promptBankUpdate.update.provisionalPromptIds.length,
     retired: promptBankUpdate.update.retiredPromptIds.length,
   });
   await writeJson(runPaths.recommendationJson, recommendation);

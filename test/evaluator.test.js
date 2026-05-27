@@ -33,12 +33,44 @@ test('runs a mock headless evaluation over two skill packages', async () => {
   });
 
   assert.equal(result.evaluations.length, 2);
+  assert.equal(result.outputType, 'text');
   assert.equal(result.stats.totalEvals, 2);
   assert.ok(['skillA', 'skillB', 'tie'].includes(result.stats.winner));
   assert.notEqual(result.blindLabels.skillA, result.blindLabels.skillB);
 
   const written = JSON.parse(await fs.readFile(outputPath, 'utf8'));
   assert.equal(written.runId, 'run-eval-001');
+});
+
+test('headless evaluator accepts non-visual code output contracts', async () => {
+  const cwd = await fs.mkdtemp(path.join(os.tmpdir(), 'skill-rsi-eval-output-type-'));
+  const skillA = await writeSkill(cwd, 'skill-a', 'Skill A');
+  const skillB = await writeSkill(cwd, 'skill-b', 'Skill B');
+  const promptsPath = path.join(cwd, 'prompts.json');
+  const criteriaPath = path.join(cwd, 'criteria.json');
+
+  await fs.writeFile(promptsPath, JSON.stringify([{ id: 'p1', text: 'Build the component.' }]));
+  await fs.writeFile(criteriaPath, JSON.stringify([{ id: 'implemented_visual_output', name: 'Implemented Visual Output' }]));
+
+  const result = await runHeadlessEval({
+    skillAPath: skillA,
+    skillBPath: skillB,
+    promptsPath,
+    criteriaPath,
+    mode: 'mock',
+    runId: 'run-code-visual-eval',
+    outputType: 'code_visual',
+  });
+
+  assert.equal(result.outputType, 'code_visual');
+  await assert.rejects(() => runHeadlessEval({
+    skillAPath: skillA,
+    skillBPath: skillB,
+    promptsPath,
+    criteriaPath,
+    mode: 'mock',
+    outputType: 'visual',
+  }), /Unsupported output evaluation type: visual/);
 });
 
 test('runs a real text evaluation with an injected model client', async () => {

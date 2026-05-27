@@ -632,6 +632,7 @@ async function runStubLoop({
     experimentPlan,
     history,
     previousBank: await readJson(paths.promptBankIndex, null),
+    outputType: evalOutputType,
   });
   await writeJson(paths.promptBankIndex, evalDesign.bank);
   await writeJson(paths.promptBankPrompts, evalDesign.prompts);
@@ -1018,6 +1019,7 @@ async function runAgenticLoop({
     modelParameters,
     apiKeys,
     agentClient,
+    outputType: evalOutputType,
   });
   let creatorAArtifact = candidateAResult.artifact;
   let candidateA = candidateAResult.candidate;
@@ -1034,6 +1036,7 @@ async function runAgenticLoop({
     modelParameters,
     apiKeys,
     agentClient,
+    outputType: evalOutputType,
   });
   let creatorBArtifact = candidateBResult.artifact;
   let candidateB = candidateBResult.candidate;
@@ -1056,7 +1059,13 @@ async function runAgenticLoop({
     let coreCriteria = null;
     if (!lockedCore.length) {
       coreCriteria = await generateEvalCriteria({
-        goal, candidateA, candidateB, model: judgeModel || agentModel, apiKeys, modelClient: agentClient,
+        goal,
+        candidateA,
+        candidateB,
+        model: judgeModel || agentModel,
+        apiKeys,
+        modelClient: agentClient,
+        outputType: evalOutputType,
       });
       if (coreCriteria) {
         await appendTimeline(runPaths.timelineJsonl, 'criteria.generated', {
@@ -1075,6 +1084,7 @@ async function runAgenticLoop({
       stablePromptCount: evalBatch?.stablePromptCount,
       explorationPromptCount: evalBatch?.explorationPromptCount,
       coreCriteria,
+      outputType: evalOutputType,
     });
     // SkillEval-style: have the model write realistic eval prompts (falls back to templates on failure)
     await naturalizeEvalPrompts({
@@ -1083,6 +1093,7 @@ async function runAgenticLoop({
       model: judgeModel || agentModel,
       apiKeys,
       modelClient: agentClient,
+      outputType: evalOutputType,
     });
     await appendTimeline(runPaths.timelineJsonl, 'eval_prompts.generated', {
       mode: 'real',
@@ -1142,6 +1153,7 @@ async function runAgenticLoop({
       apiKeys,
       agentClient,
       agentSkillsStandard,
+      outputType: evalOutputType,
     }));
   }
   for (let attempt = 1; attempt <= MAX_CANDIDATE_REVISIONS && !reviewB.approveForEval; attempt += 1) {
@@ -1164,6 +1176,7 @@ async function runAgenticLoop({
       apiKeys,
       agentClient,
       agentSkillsStandard,
+      outputType: evalOutputType,
     }));
   }
   if (!reviewA.approveForEval || !reviewB.approveForEval) {
@@ -1335,6 +1348,7 @@ async function createAndMaterializeCandidate({
   modelParameters = {},
   apiKeys,
   agentClient,
+  outputType = 'text',
 }) {
   const artifactPath = path.join(candidateDir, 'creator-artifact.json');
   let artifact = await readJson(artifactPath, null);
@@ -1354,6 +1368,7 @@ async function createAndMaterializeCandidate({
           modelClient: agentClient,
           experimentArm,
           revision,
+          outputType,
           maxTokens: modelParameters.creatorMaxTokens,
         });
         artifact = creatorResult.artifact;
@@ -1590,6 +1605,7 @@ async function runMockLoop({
     previousBank: await readJson(paths.promptBankIndex, null),
     stablePromptCount: evalBatch?.stablePromptCount,
     explorationPromptCount: evalBatch?.explorationPromptCount,
+    outputType: evalOutputType,
   });
   await writeJson(paths.promptBankIndex, evalDesign.bank);
   await writeJson(paths.promptBankPrompts, evalDesign.prompts);
@@ -1873,6 +1889,7 @@ async function reviseBlockedCandidate({
   apiKeys,
   agentClient,
   agentSkillsStandard,
+  outputType = 'text',
 }) {
   const suffix = String(attempt).padStart(3, '0');
   await appendTimeline(runPaths.timelineJsonl, 'candidate_revision.started', {
@@ -1897,6 +1914,7 @@ async function reviseBlockedCandidate({
       originalArtifact,
       review,
     },
+    outputType,
     maxTokens: modelParameters.creatorMaxTokens,
   });
   await writeJson(path.join(revisionDir, 'creator-artifact.json'), revisionResult.artifact);

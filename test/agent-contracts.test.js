@@ -344,6 +344,57 @@ test('creator prompt includes Agent Skills standard and Skill Creator guidance',
   assert.match(result.prompt, /Do not create auxiliary documentation/);
 });
 
+test('creator prompt includes the project output contract', async () => {
+  const cwd = await fs.mkdtemp(path.join(os.tmpdir(), 'skill-rsi-creator-output-contract-'));
+  await initProject({
+    cwd,
+    projectName: 'Frontend Design',
+    goal: 'Help agents design and implement better front-end UX.',
+    evalOutputType: 'code_visual',
+  });
+
+  const result = await runAgentContract({
+    cwd,
+    projectName: 'frontend-design',
+    agentName: 'creator',
+    runId: 'creator-output-contract',
+    mode: 'mock',
+    experimentArm: 'candidateA',
+  });
+
+  assert.match(result.prompt, /Expected user-output contract:/);
+  assert.match(result.prompt, /production-ready code for visual\/interface artifacts/);
+  assert.match(result.prompt, /Conceptual visual direction alone is incomplete/);
+});
+
+test('ontology and deconstructor prompts receive the project output contract', async () => {
+  const cwd = await fs.mkdtemp(path.join(os.tmpdir(), 'skill-rsi-output-contract-all-agents-'));
+  await initProject({
+    cwd,
+    projectName: 'Code Assistant',
+    goal: 'Help agents write implementation code.',
+    evalOutputType: 'code',
+  });
+
+  const ontology = await runAgentContract({
+    cwd,
+    projectName: 'code-assistant',
+    agentName: 'ontology',
+    runId: 'ontology-output-contract',
+    mode: 'mock',
+  });
+  const deconstructor = await runAgentContract({
+    cwd,
+    projectName: 'code-assistant',
+    agentName: 'deconstructor',
+    runId: 'deconstructor-output-contract',
+    mode: 'mock',
+  });
+
+  assert.match(ontology.prompt, /production-ready code artifacts/);
+  assert.match(deconstructor.prompt, /Advice-only responses are incomplete/);
+});
+
 test('real creator contract normalizes omitted optional list fields', async () => {
   const cwd = await fs.mkdtemp(path.join(os.tmpdir(), 'skill-rsi-creator-normalize-'));
   await initProject({ cwd, projectName: 'UX Design', goal: 'Help agents design better UX.' });

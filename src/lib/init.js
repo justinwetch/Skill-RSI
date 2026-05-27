@@ -7,10 +7,11 @@ function yamlScalar(value) {
   return JSON.stringify(String(value));
 }
 
-export async function initProject({ cwd, projectName, goal, runPolicy = null }) {
+export async function initProject({ cwd, projectName, goal, runPolicy = null, evalOutputType = 'text' }) {
   const paths = getProjectPaths(cwd, projectName);
   const createdAt = new Date().toISOString();
   const normalizedRunPolicy = normalizeRunPolicy(runPolicy);
+  const normalizedEvalOutputType = normalizeEvalOutputType(evalOutputType);
 
   await ensureDir(paths.projectDir);
   await ensureDir(paths.championSkillDir);
@@ -66,6 +67,10 @@ export async function initProject({ cwd, projectName, goal, runPolicy = null }) 
         mode: normalizedRunPolicy.triggerMode,
         targetIterations: normalizedRunPolicy.targetIterations,
       },
+      eval: {
+        ...DEFAULT_PROJECT_CONFIG.eval,
+        outputType: normalizedEvalOutputType,
+      },
     });
   }
 
@@ -82,6 +87,10 @@ export async function initProject({ cwd, projectName, goal, runPolicy = null }) 
   }
 
   return { projectId: paths.projectId, projectDir: paths.projectDir, paths, config, state };
+}
+
+function normalizeEvalOutputType(outputType) {
+  return ['text', 'code', 'code_visual'].includes(outputType) ? outputType : 'text';
 }
 
 function normalizeRunPolicy(runPolicy) {

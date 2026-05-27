@@ -9,6 +9,7 @@ import { ensureDir, hashDirectory, pathExists, readJson, writeJson, writeText } 
 import { loadProjectConfig } from './config.js';
 
 const MAX_BASELINE_ZIP_BYTES = 25 * 1024 * 1024;
+const UI_OUTPUT_TYPES = ['text', 'code', 'code_visual'];
 
 export async function createProjectForUi({
   cwd,
@@ -16,6 +17,7 @@ export async function createProjectForUi({
   goal,
   targetIterations = 3,
   triggerMode = 'manual',
+  outputType = 'text',
   baselineFiles = [],
   baselineArchive = null,
 }) {
@@ -29,6 +31,7 @@ export async function createProjectForUi({
   if (!Number.isInteger(normalizedTargetIterations) || normalizedTargetIterations < 1) {
     throw badRequest('Target iterations must be a positive integer');
   }
+  const normalizedOutputType = UI_OUTPUT_TYPES.includes(outputType) ? outputType : 'text';
   const paths = getProjectPaths(cwd, projectName);
   if (await pathExists(paths.stateJson)) {
     const error = new Error(`Project "${paths.projectId}" already exists`);
@@ -57,6 +60,7 @@ export async function createProjectForUi({
         triggerMode,
         targetIterations: normalizedTargetIterations,
       },
+      evalOutputType: normalizedOutputType,
     });
     if (preflightSource) await installBaselineSkill({ paths, sourcePath: preflightSource.sourcePath });
     return readProjectSummary({ cwd, projectName });

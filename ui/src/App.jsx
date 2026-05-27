@@ -3,7 +3,7 @@ import {
   FlaskConical, Moon, Sun, Plus, RefreshCw, ChevronLeft, ChevronRight, ChevronDown, ChevronUp,
   ArrowRight, Play, Trophy, Check, CheckCircle2, ArrowUp, Minus, FileText,
   Loader2, Database, Layout, GitPullRequest, MessageSquare, TrendingUp, Scale,
-  Beaker, Swords, Search, Flag, Pencil, Trash2, Upload,
+  Beaker, Swords, Search, Flag, Pencil, Trash2, Upload, Sparkles, Package,
 } from 'lucide-react';
 import {
   createProject, deleteProject, fetchProjects, fetchProjectSummary, fetchRunDetail,
@@ -135,7 +135,15 @@ export default function App() {
   const [runningFirst, setRunningFirst] = useState(false);
   const [openEval, setOpenEval] = useState(null);
   const [evTab, setEvTab] = useState('summary');
-  const [draft, setDraft] = useState({ name: '', goal: '', baselineFiles: [], baselineZip: null });
+  const [draft, setDraft] = useState({
+    mode: 'scratch',
+    outputType: 'text',
+    name: '',
+    goal: '',
+    baselineFiles: [],
+    baselineZip: null,
+    baselineMarkdown: null,
+  });
   const [skillSource, setSkillSource] = useState('champion');
   const [skillData, setSkillData] = useState(null);
   const [compareData, setCompareData] = useState(null);
@@ -250,10 +258,24 @@ export default function App() {
   async function handleCreate(e) {
     e.preventDefault();
     setBusy(true); setError('');
-    const baseName = draft.name.trim();
+    const fromExisting = draft.mode === 'existing';
     try {
-      const baselineFiles = await readDraftBaselineFiles(draft.baselineFiles);
-      const baselineArchive = await readDraftBaselineZip(draft.baselineZip);
+      if (fromExisting && !draft.baselineZip && !draft.baselineFiles?.length && !draft.baselineMarkdown) {
+        throw new Error('Choose a baseline skill .zip or folder before starting from an existing skill.');
+      }
+      // Only carry a baseline when starting from an existing skill.
+      const baselineFiles = fromExisting ? await readDraftBaselineFiles(draft.baselineFiles, draft.baselineMarkdown) : [];
+      const baselineArchive = fromExisting ? await readDraftBaselineZip(draft.baselineZip) : null;
+
+      // Name/goal are optional in the existing-skill path (auto-filled from SKILL.md). Derive
+      // sensible fallbacks so the backend's non-empty validation still passes.
+      let baseName = draft.name.trim();
+      if (!baseName && fromExisting) {
+        baseName = getDraftBaselineDisplayName(draft) || 'Imported skill';
+      }
+      let goal = draft.goal.trim();
+      if (!goal && fromExisting) goal = `Improve the "${baseName}" skill.`;
+
       let created = null;
       // Auto-increment the name if it collides with an existing project (e.g. "Natural Prose" -> "Natural Prose 2").
       for (let attempt = 0; attempt < 30 && !created; attempt += 1) {
@@ -261,8 +283,9 @@ export default function App() {
         try {
           created = await createProject({
             projectName: name,
-            goal: draft.goal,
+            goal,
             triggerMode: 'manual',
+            outputType: draft.outputType || 'text',
             baselineFiles,
             baselineArchive,
           });
@@ -271,7 +294,15 @@ export default function App() {
         }
       }
       if (!created) throw new Error('Could not find an available name — try a different one.');
-      setDraft({ name: '', goal: '', baselineFiles: [], baselineZip: null });
+      setDraft({
+        mode: 'scratch',
+        outputType: 'text',
+        name: '',
+        goal: '',
+        baselineFiles: [],
+        baselineZip: null,
+        baselineMarkdown: null,
+      });
       await loadProjects();
       await openProject(created.projectId);
     } catch (err) { setError(err.message); }
@@ -368,7 +399,103 @@ export default function App() {
   );
 }
 
-async function readDraftBaselineFiles(files = []) {
+// --- baseline SKILL.md auto-fill -------------------------------------------
+// Parse YAML frontmatter for the two fields we care about: name + description.
+function parseSkillFrontmatter(text = '') {
+  const m = text.match(/^﻿?---\s*\r?\n([\s\S]*?)\r?\n---/);
+  if (!m) return {};
+  const block = m[1];
+  const grab = key => {
+    const line = block.match(new RegExp(`^\\s*${key}\\s*:\\s*(.+?)\\s*$`, 'mi'));
+    if (!line) return null;
+    return line[1].trim().replace(/^['"]|['"]$/g, '').trim() || null;
+  };
+  return { name: grab('name'), description: grab('description') };
+}
+
+// "linkedin-post-writing" -> "Linkedin Post Writing" (a friendly starting title).
+function prettifySkillName(slug = '') {
+  return slug.replace(/[-_]+/g, ' ').replace(/\s+/g, ' ').trim()
+    .replace(/\b\w/g, c => c.toUpperCase());
+}
+
+function getDraftBaselineDisplayName(draft) {
+  const zipName = (draft.baselineZip?.name || '').replace(/\.zip$/i, '');
+  if (zipName) return prettifySkillName(zipName);
+  const markdownName = (draft.baselineMarkdown?.name || '').replace(/\.(md|markdown|txt)$/i, '');
+  if (markdownName) return prettifySkillName(markdownName);
+  const firstPath = draft.baselineFiles?.[0]?.webkitRelativePath || '';
+  const root = firstPath.split('/').filter(Boolean)[0] || '';
+  return prettifySkillName(root);
+}
+
+// From a selected folder's File[], find SKILL.md and read its frontmatter.
+async function readFrontmatterFromFiles(files = []) {
+  const skill = Array.from(files).find(f => /(^|\/)SKILL\.md$/i.test(f.webkitRelativePath || f.name));
+  if (!skill) return {};
+  try {
+    const text = await skill.text();
+    return parseSkillFrontmatter(text);
+  } catch { return {}; }
+}
+
+// From a .zip, locate SKILL.md via local-file headers and inflate it (native DecompressionStream).
+async function readFrontmatterFromZip(file) {
+  try {
+    const buf = new Uint8Array(await file.arrayBuffer());
+    const dv = new DataView(buf.buffer);
+    const td = new TextDecoder();
+    let off = 0;
+    while (off + 30 <= buf.length && dv.getUint32(off, true) === 0x04034b50) {
+      const method = dv.getUint16(off + 8, true);
+      const compSize = dv.getUint32(off + 18, true);
+      const nameLen = dv.getUint16(off + 26, true);
+      const extraLen = dv.getUint16(off + 28, true);
+      const nameStart = off + 30;
+      const fname = td.decode(buf.subarray(nameStart, nameStart + nameLen));
+      const dataStart = nameStart + nameLen + extraLen;
+      if (/(^|\/)SKILL\.md$/i.test(fname) && compSize > 0) {
+        const raw = buf.subarray(dataStart, dataStart + compSize);
+        let text = null;
+        if (method === 0) {
+          text = td.decode(raw);
+        } else if (method === 8 && typeof DecompressionStream !== 'undefined') {
+          const stream = new Blob([raw]).stream().pipeThrough(new DecompressionStream('deflate-raw'));
+          text = td.decode(await new Response(stream).arrayBuffer());
+        }
+        if (text) {
+          const fm = parseSkillFrontmatter(text);
+          if (fm.name || fm.description) return fm;
+        }
+      }
+      off = dataStart + compSize;
+    }
+  } catch { /* best effort — leave fields for the user to fill */ }
+  return {};
+}
+
+async function readFrontmatterFromMarkdown(file) {
+  if (!file) return {};
+  try {
+    return parseSkillFrontmatter(await file.text());
+  } catch { return {}; }
+}
+
+// Merge auto-filled name/goal into a draft without clobbering anything the user already typed.
+function applyBaselineAutofill(draft, fm) {
+  const next = {};
+  if (fm.name && !draft.name.trim()) next.name = prettifySkillName(fm.name);
+  if (fm.description && !draft.goal.trim()) next.goal = fm.description;
+  return next;
+}
+
+async function readDraftBaselineFiles(files = [], markdownFile = null) {
+  if (markdownFile) {
+    return [{
+      path: 'SKILL.md',
+      content: await markdownFile.text(),
+    }];
+  }
   if (!files.length) return [];
   return Promise.all(files.map(file => new Promise((resolve, reject) => {
     const reader = new FileReader();
@@ -524,57 +651,204 @@ function TrendChip({ latest }) {
 /* ---------------- create ---------------- */
 
 function CreateView({ draft, setDraft, busy, onSubmit, onCancel }) {
-  const baselineCount = draft.baselineFiles?.length || 0;
-  const baselineZip = draft.baselineZip;
+  const existing = draft.mode === 'existing';
+  const hasBaseline = Boolean(draft.baselineZip || draft.baselineFiles?.length || draft.baselineMarkdown);
+  const setMode = mode => setDraft(d => ({ ...d, mode }));
+  const setOutputType = outputType => setDraft(d => ({ ...d, outputType }));
+  const outputTypes = [
+    {
+      key: 'text',
+      icon: FileText,
+      title: 'Text',
+      desc: 'Answers are judged as written artifacts: plans, drafts, analyses, rubrics, or recommendations.',
+    },
+    {
+      key: 'code',
+      icon: GitPullRequest,
+      title: 'Code',
+      desc: 'Prompts require production-ready code instead of implementation advice.',
+    },
+    {
+      key: 'code_visual',
+      icon: Layout,
+      title: 'Code + visuals',
+      desc: 'Prompts require implemented UI/code with styling, accessibility, and interaction detail.',
+    },
+    {
+      key: 'visual',
+      icon: Layout,
+      title: 'Visual only',
+      desc: 'Deferred until screenshot and visual judging are wired in.',
+      disabled: true,
+    },
+  ];
   return (
     <div className="create animate-slide-up">
       <div className="crumbs">
         <button className="back" onClick={onCancel}><ChevronLeft size={16} /> Skills</button>
       </div>
       <div className="eyebrow">New skill</div>
-      <h1>Improve a new skill</h1>
-      <p className="lede">Define what the skill should do. Optionally start from an existing Agent Skill as the baseline champion.</p>
+      <h1>Create a skill to improve</h1>
+      <p className="lede">Skill RSI evolves a skill over rounds of automated improvement. First, choose where version 1 comes from.</p>
+
+      <div className="mode-grid">
+        <button type="button" className={`mode-card${!existing ? ' active' : ''}`}
+          aria-pressed={!existing} onClick={() => setMode('scratch')}>
+          <Sparkles size={19} />
+          <div>
+            <b>Start from scratch</b>
+            <p>The system writes version 1 from your description, then improves it.</p>
+          </div>
+        </button>
+        <button type="button" className={`mode-card${existing ? ' active' : ''}`}
+          aria-pressed={existing} onClick={() => setMode('existing')}>
+          <Package size={19} />
+          <div>
+            <b>Start from an existing skill</b>
+            <p>Upload a skill to use as version 1. Improvement begins from there.</p>
+          </div>
+        </button>
+      </div>
+
+      <div className="field">
+        <span>Expected output</span>
+        <div className="output-grid" role="radiogroup" aria-label="Expected output">
+          {outputTypes.map(type => {
+            const Icon = type.icon;
+            const active = draft.outputType === type.key;
+            return (
+              <button key={type.key} type="button"
+                className={`mode-card output-card${active ? ' active' : ''}`}
+                role="radio" aria-checked={active} disabled={type.disabled}
+                onClick={() => !type.disabled && setOutputType(type.key)}>
+                <Icon size={18} />
+                <div>
+                  <b>{type.title}</b>
+                  <p>{type.desc}</p>
+                </div>
+              </button>
+            );
+          })}
+        </div>
+        <p className="field-hint">This controls what candidate skills are trained to produce and what the eval prompts require.</p>
+      </div>
+
       <form onSubmit={onSubmit}>
+        {existing && (
+          <div className="field">
+            <span>Baseline skill</span>
+            <BaselineDropzone draft={draft} setDraft={setDraft} />
+          </div>
+        )}
+
         <label className="field">
-          <span>Skill name</span>
-          <input value={draft.name} autoFocus required placeholder="SQL query writing"
+          <span>Skill name{existing ? ' (optional)' : ''}</span>
+          <input value={draft.name} autoFocus required={!existing}
+            placeholder={existing ? 'Auto-filled from the uploaded skill' : 'SQL query writing'}
             onChange={e => setDraft({ ...draft, name: e.target.value })} />
         </label>
         <label className="field">
-          <span>Goal</span>
-          <textarea value={draft.goal} required placeholder="Help agents write correct, readable SQL across dialects."
+          <span>What should it get better at?{existing ? ' (optional)' : ''}</span>
+          <textarea value={draft.goal} required={!existing}
+            placeholder="Help agents write correct, readable SQL across dialects."
             onChange={e => setDraft({ ...draft, goal: e.target.value })} />
+          <p className="field-hint">
+            {existing
+              ? 'Guides the loop. Leave blank to infer the goal from the uploaded skill.'
+              : 'This becomes the target the improvement loop optimizes toward.'}
+          </p>
         </label>
-        <label className="field">
-          <span>Baseline skill</span>
-          <div className="upload-grid">
-            <div className="upload-box">
-              <Upload size={17} />
-              <div>
-                <b>{baselineZip ? baselineZip.name : 'Upload zip'}</b>
-                <p>Choose a zipped Agent Skill package. This becomes champion v0.</p>
-              </div>
-              <input type="file" accept=".zip,application/zip" aria-label="Upload baseline skill zip"
-                onChange={e => setDraft({ ...draft, baselineZip: e.target.files?.[0] || null, baselineFiles: [] })} />
-            </div>
-            <div className="upload-box">
-              <Upload size={17} />
-              <div>
-                <b>{baselineCount ? `${baselineCount} file${baselineCount === 1 ? '' : 's'} selected` : 'Upload folder'}</b>
-                <p>Choose a package folder containing `SKILL.md`.</p>
-              </div>
-              <input type="file" multiple webkitdirectory="" aria-label="Upload baseline skill folder"
-                onChange={e => setDraft({ ...draft, baselineFiles: Array.from(e.target.files || []), baselineZip: null })} />
-            </div>
-          </div>
-        </label>
+
         <div className="form-actions">
           <button type="button" className="btn ghost" onClick={onCancel} disabled={busy}>Cancel</button>
-          <button className="btn primary" disabled={busy}>
-            {busy ? <Loader2 size={15} className="spin" /> : <Plus size={15} />} Create skill
+          <button className="btn primary" disabled={busy || (existing && !hasBaseline)}>
+            {busy ? <Loader2 size={15} className="spin" /> : <ArrowRight size={15} />}
+            {existing ? 'Create from baseline' : 'Create skill'}
           </button>
         </div>
       </form>
+    </div>
+  );
+}
+
+function BaselineDropzone({ draft, setDraft }) {
+  const [dragOver, setDragOver] = useState(false);
+  const [note, setNote] = useState('');
+  const zip = draft.baselineZip;
+  const folderCount = draft.baselineFiles?.length || 0;
+  const md = draft.baselineMarkdown;
+
+  async function chooseZip(file) {
+    if (!file) return;
+    const fm = await readFrontmatterFromZip(file);
+    setDraft(d => ({ ...d, ...applyBaselineAutofill(d, fm), baselineZip: file, baselineFiles: [], baselineMarkdown: null }));
+    setNote('');
+  }
+  async function chooseMarkdown(file) {
+    if (!file) return;
+    const fm = await readFrontmatterFromMarkdown(file);
+    setDraft(d => ({ ...d, ...applyBaselineAutofill(d, fm), baselineMarkdown: file, baselineZip: null, baselineFiles: [] }));
+    setNote('');
+  }
+  async function chooseFolder(files) {
+    const arr = Array.from(files || []);
+    if (!arr.length) return;
+    const fm = await readFrontmatterFromFiles(arr);
+    setDraft(d => ({ ...d, ...applyBaselineAutofill(d, fm), baselineFiles: arr, baselineZip: null, baselineMarkdown: null }));
+    setNote('');
+  }
+  function clearSel() {
+    setDraft(d => ({ ...d, baselineZip: null, baselineFiles: [], baselineMarkdown: null }));
+    setNote('');
+  }
+  function onDrop(e) {
+    e.preventDefault(); setDragOver(false);
+    const file = Array.from(e.dataTransfer?.files || [])[0];
+    if (file && /\.zip$/i.test(file.name)) chooseZip(file);
+    else if (file && /\.(md|markdown|txt)$/i.test(file.name)) chooseMarkdown(file);
+    else if (file) setNote('Drop a .zip or a single markdown skill file. For a folder, use “browse for a folder”.');
+    else setNote('');
+  }
+
+  const selected = zip ? zip.name : md ? md.name : folderCount ? `${folderCount} file${folderCount === 1 ? '' : 's'} selected` : null;
+
+  return (
+    <div className={`dropzone${dragOver ? ' over' : ''}`}
+      onDragOver={e => { e.preventDefault(); setDragOver(true); }}
+      onDragLeave={() => setDragOver(false)}
+      onDrop={onDrop}>
+      <Upload size={20} />
+      {selected ? (
+        <div className="dz-body">
+          <b>{selected}</b>
+          <p>This becomes version 1. <button type="button" className="dz-link" onClick={clearSel}>Choose a different one</button></p>
+        </div>
+      ) : (
+        <div className="dz-body">
+          <b>Drop a .zip or .md here, or browse</b>
+          <p>Must contain a <code>SKILL.md</code>. This becomes version 1.</p>
+          <div className="dz-actions">
+            <label className="dz-link">
+              browse for a .zip
+              <input type="file" accept=".zip,application/zip" aria-label="Choose baseline skill zip"
+                onChange={e => chooseZip(e.target.files?.[0] || null)} />
+            </label>
+            <span className="dz-sep">·</span>
+            <label className="dz-link">
+              browse for a .md file
+              <input type="file" accept=".md,.markdown,.txt,text/markdown,text/plain" aria-label="Choose baseline skill markdown file"
+                onChange={e => chooseMarkdown(e.target.files?.[0] || null)} />
+            </label>
+            <span className="dz-sep">·</span>
+            <label className="dz-link">
+              browse for a folder
+              <input type="file" multiple webkitdirectory="" aria-label="Choose baseline skill folder"
+                onChange={e => chooseFolder(e.target.files)} />
+            </label>
+          </div>
+        </div>
+      )}
+      {note && <p className="dz-note">{note}</p>}
     </div>
   );
 }

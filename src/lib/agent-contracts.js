@@ -43,6 +43,7 @@ export async function runAgentContract({
   managerPlan = null,
   researchPacket = null,
   qualityFeedback = null,
+  outputType = null,
   maxTokens = null,
 }) {
   if (!AGENT_NAMES.includes(agentName)) {
@@ -61,11 +62,14 @@ export async function runAgentContract({
     runCount: 0,
     currentChampion: null,
   });
+  const projectConfig = await readJson(paths.configJson, null);
   const runPaths = getRunPaths(paths, runId);
   const context = {
     projectId: paths.projectId,
     goal: await readGoal(paths),
     runId,
+    projectConfig,
+    outputType: normalizeOutputType(outputType || projectConfig?.eval?.outputType),
     state,
     ontology: await readJson(paths.ontologyCurrent, null),
     parameterization: await readJson(paths.parameterizationCurrent, null),
@@ -305,6 +309,7 @@ ${candidate.rationale}
 const ONTOLOGY_FIELDS = 'runId, skillGoal, targetUsers, targetTasks, invocationBoundaries {shouldTriggerWhen, shouldNotTriggerWhen}, inputSurface, outputArtifacts, requiredKnowledge, referencePoints, adjacentDomainsToBorrowFrom, optionalResources {references, scripts, assets}, platformAssumptions {portableAgentSkills, clientSpecificFeatures}, failureModes, qualityAxes, evalPromptTaxonomy, candidateStrategySpace, openQuestions.';
 
 function buildOntologyPrompt(context) {
+  const outputContract = getAgentOutputContract(context.outputType);
   if (context.refresh && context.ontology) {
     // Later-run refresh (§6.2/§6.6): update the existing map conservatively rather than rebuild.
     return `You are the Ontology Agent for Skill RSI, REFRESHING an existing domain map after a new champion was promoted.
@@ -314,6 +319,9 @@ Run ID: ${context.runId}
 
 Existing ontology:
 ${formatContextBlock(context.ontology)}
+
+Expected user-output contract:
+${formatContextBlock(outputContract)}
 
 Research packet:
 ${formatContextBlock(context.researchPacket)}
@@ -337,6 +345,9 @@ Run ID: ${context.runId}
 
 Research packet:
 ${formatContextBlock(context.researchPacket)}
+
+Expected user-output contract:
+${formatContextBlock(outputContract)}
 
 Map the domain and Agent Skill design space.
 Build an evidence-backed ontology. Include authorityMap, evidenceClaims, sourceRefs, inferenceLabels, unsupportedClaims, and researchGaps as companion fields. Classify major claims as sourced, inferred, or speculative. Translate authority opinions into concrete implications for this skill and include misuse risks.
@@ -364,6 +375,7 @@ Revise the artifact to address every issue in the quality report. Keep valid exi
 
 function buildDeconstructorPrompt(context) {
   const hasChampion = Boolean(context.state?.currentChampion && context.championSkill);
+  const outputContract = getAgentOutputContract(context.outputType);
 
   if (!hasChampion) {
     // First run: there is no champion yet. Per the implementation plan (§4, §6.2), the
@@ -380,6 +392,9 @@ ${formatContextBlock(context.ontology)}
 
 Research packet:
 ${formatContextBlock(context.researchPacket)}
+
+Expected user-output contract:
+${formatContextBlock(outputContract)}
 
 Agent Skills standard:
 ${formatContextBlock(context.agentSkillsStandard)}
@@ -400,6 +415,9 @@ ${formatContextBlock(context.ontology)}
 
 Research packet:
 ${formatContextBlock(context.researchPacket)}
+
+Expected user-output contract:
+${formatContextBlock(outputContract)}
 
 Experiment history summary:
 ${formatContextBlock(compactHistory(context.history))}
@@ -447,6 +465,7 @@ Use this exact arm shape:
 }
 
 function buildCreatorPrompt(context) {
+  const outputContract = getAgentOutputContract(context.outputType);
   return `You are a Skill Creator subagent for Skill RSI.
 
 Goal: ${context.goal}
@@ -458,6 +477,9 @@ ${formatContextBlock(context.ontology)}
 
 Active experiment plan:
 ${formatContextBlock(context.experimentPlan)}
+
+Expected user-output contract:
+${formatContextBlock(outputContract)}
 
 Current champion SKILL.md:
 ${context.championSkill || 'No current champion skill exists yet.'}
@@ -495,6 +517,44 @@ Authoring rules for this package, on top of that standard:
 
 If assigned candidateA, use candidateId "candidate-a" and experimentArm "candidateA". If assigned candidateB, use candidateId "candidate-b" and experimentArm "candidateB".
 Return JSON with candidateId, experimentArm, strategy, changedParameterIds, files [{path, content}], rationale, expectedAdvantages, expectedRisks, and selfCritique. candidateId/experimentArm/strategy/changedParameterIds are Skill RSI metadata returned in the JSON ONLY — they must NOT appear inside any package file.`;
+}
+
+function normalizeOutputType(outputType) {
+  return ['text', 'code', 'code_visual'].includes(outputType) ? outputType : 'text';
+}
+
+function getAgentOutputContract(outputType) {
+  if (outputType === 'code') {
+    return {
+      outputType: 'code',
+      contract: 'The improved skill is evaluated on whether it helps agents produce concrete, production-ready code artifacts when implementation work is requested. Advice-only responses are incomplete unless the user explicitly asks for advice.',
+      implications: [
+        'Ontology should treat implementation readiness, runnable completeness, API/framework specificity, validation, and edge-case handling as first-class quality axes.',
+        'Deconstruction should include parameters for how the skill moves from requirements to concrete files/code and how it prevents vague recommendation-only output.',
+        'Creator output should be a portable Agent Skill that trains agents to produce code, not merely implementation plans.',
+      ],
+    };
+  }
+  if (outputType === 'code_visual') {
+    return {
+      outputType: 'code_visual',
+      contract: 'The improved skill is evaluated on whether it helps agents produce production-ready code for visual/interface artifacts. Conceptual visual direction alone is incomplete. Screenshot/visual execution is not available yet, so the text evaluator inspects code, styling, accessibility, responsive behavior, and interaction detail.',
+      implications: [
+        'Ontology should include visual hierarchy, layout implementation, responsive behavior, accessibility, interaction states, and production readiness as first-class quality axes.',
+        'Deconstruction should identify where the current skill permits mood-board or recommendation-only answers instead of implemented UI/code.',
+        'Creator output should train agents to generate actual interface code and validation checks while avoiding claims that screenshots or browser pixels will be evaluated in this phase.',
+      ],
+    };
+  }
+  return {
+    outputType: 'text',
+    contract: 'The improved skill is evaluated on useful text artifacts appropriate to the skill domain, not merely meta-advice about how to create them.',
+    implications: [
+      'Ontology should identify the text artifacts the skill must reliably produce.',
+      'Deconstruction should include parameters for artifact structure, specificity, validation, and domain fit.',
+      'Creator output should train agents to produce the requested text artifact directly.',
+    ],
+  };
 }
 
 function buildAnalystPrompt(context) {

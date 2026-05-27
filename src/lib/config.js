@@ -60,6 +60,8 @@ export const DEFAULT_PROJECT_CONFIG = {
   },
 };
 
+export const TEXT_EVAL_OUTPUT_TYPES = ['text', 'code', 'code_visual'];
+
 function mergeSection(defaults, override) {
   if (!override || typeof override !== 'object') return { ...defaults };
   return { ...defaults, ...override };
@@ -130,7 +132,7 @@ function normalizeEval(raw) {
     ...evalConfig,
     stablePromptCount: normalizePositiveInt(evalConfig.stablePromptCount, DEFAULT_PROJECT_CONFIG.eval.stablePromptCount),
     explorationPromptCount: normalizePositiveInt(evalConfig.explorationPromptCount, DEFAULT_PROJECT_CONFIG.eval.explorationPromptCount),
-    outputType: evalConfig.outputType === 'text' ? 'text' : 'text',
+    outputType: TEXT_EVAL_OUTPUT_TYPES.includes(evalConfig.outputType) ? evalConfig.outputType : 'text',
     visualRunner: Boolean(evalConfig.visualRunner),
     retryPolicy: normalizeRetryPolicy(evalConfig.retryPolicy),
   };

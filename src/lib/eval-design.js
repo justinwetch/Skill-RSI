@@ -3,6 +3,7 @@ import { callModel } from './model-client.js';
 import { loadSkillPackage } from './skill-package.js';
 
 const DEFAULT_DIFFICULTIES = ['easy', 'medium', 'medium', 'hard'];
+const OUTPUT_CONTRACT_CRITERION_IDS = new Set(['implementation_readiness', 'implemented_visual_output']);
 
 // Model-written prompt generation, SkillEval-style. designEvalBatch still builds the
 // slots (ids, parameter targeting, difficulty, criteria) so all downstream logic and
@@ -18,7 +19,8 @@ function isTemplatedPrompt(text) {
   return typeof text === 'string' && TEMPLATE_MARKERS.some(marker => text.includes(marker));
 }
 
-function buildPromptGenInstruction(goal, slots) {
+function buildPromptGenInstruction(goal, slots, outputType = 'text') {
+  const outputContract = getOutputContract(outputType);
   const lines = slots.map((slot, n) => (
     `${n + 1}. difficulty=${slot.difficulty || 'medium'}; the request should involve ${slot.task || 'using the skill'}`
     + `${slot.surface ? `, with realistic ambiguity or nuance around ${slot.surface}` : ''}`
@@ -28,7 +30,8 @@ function buildPromptGenInstruction(goal, slots) {
     'You are designing an evaluation set for an AI skill, like a careful test author.',
     `Skill goal: ${goal}`,
     `Write ${slots.length} realistic, self-contained user requests — the kind a real person would actually send to an agent using this skill.`,
-    'Rules: each prompt must read naturally with no meta-commentary; never use phrases like "skill surface under test", "quality axis", or "validate it for". Vary tone, length, domain specifics, and difficulty across the set. Exercise the noted aspect implicitly, never by naming it.',
+    `Expected answer contract: ${outputContract.promptInstruction}`,
+    'Rules: each prompt must read naturally with no meta-commentary; never use phrases like "skill surface under test", "quality axis", or "validate it for". Vary tone, length, domain specifics, and difficulty across the set. Exercise the noted aspect implicitly, never by naming it. The user request must make the expected answer contract unavoidable.',
     'Slots (write one prompt per slot, in order):',
     ...lines,
     `Respond ONLY with JSON of the form {"prompts": ["...", "..."]} containing exactly ${slots.length} strings in slot order.`,
@@ -68,9 +71,11 @@ Generate 4-6 criteria that:
 Respond ONLY with JSON in this exact shape:
 {"criteria":[{"id":"snake_case_id","name":"Human Readable Name","description":"What this criterion measures","rubric":{"5":"...","4":"...","3":"...","2":"...","1":"..."}}]}`;
 
-function buildCriteriaInstruction(goal, skillAText, skillBText) {
+function buildCriteriaInstruction(goal, skillAText, skillBText, outputType = 'text') {
+  const outputContract = getOutputContract(outputType);
   return [
     `Skill goal: ${goal}`,
+    `Expected answer contract: ${outputContract.criteriaInstruction}`,
     'Generate the evaluation criteria for comparing these two candidate skills.',
     `\n## Skill A — SKILL.md\n"""\n${skillAText}\n"""`,
     `\n## Skill B — SKILL.md\n"""\n${skillBText}\n"""`,
@@ -101,7 +106,7 @@ function parseCriteriaJson(raw) {
   return cleaned.length >= 3 ? cleaned.slice(0, 6) : null;
 }
 
-export async function generateEvalCriteria({ goal, candidateA, candidateB, model, apiKeys = {}, modelClient = null }) {
+export async function generateEvalCriteria({ goal, candidateA, candidateB, model, apiKeys = {}, modelClient = null, outputType = 'text' }) {
   if (!model) return null;
   let aText = '';
   let bText = '';
@@ -119,7 +124,7 @@ export async function generateEvalCriteria({ goal, candidateA, candidateB, model
       jsonMode: true,
       maxTokens: 2400,
       systemPrompt: CRITERIA_SYSTEM_PROMPT,
-      messages: [{ role: 'user', content: buildCriteriaInstruction(goal, aText, bText) }],
+      messages: [{ role: 'user', content: buildCriteriaInstruction(goal, aText, bText, outputType) }],
     });
     return parseCriteriaJson(raw);
   } catch {
@@ -127,7 +132,7 @@ export async function generateEvalCriteria({ goal, candidateA, candidateB, model
   }
 }
 
-export async function naturalizeEvalPrompts({ design, goal, model, apiKeys = {}, modelClient = null }) {
+export async function naturalizeEvalPrompts({ design, goal, model, apiKeys = {}, modelClient = null, outputType = 'text' }) {
   if (!design || !model) return design;
   const targets = design.prompts.filter(prompt => isTemplatedPrompt(prompt.text));
   if (targets.length === 0) return design;
@@ -148,7 +153,7 @@ export async function naturalizeEvalPrompts({ design, goal, model, apiKeys = {},
       jsonMode: true,
       maxTokens: 2400,
       systemPrompt: 'You generate realistic, high-quality evaluation prompts for AI skills. Output strict JSON only.',
-      messages: [{ role: 'user', content: buildPromptGenInstruction(goal, slots) }],
+      messages: [{ role: 'user', content: buildPromptGenInstruction(goal, slots, outputType) }],
     });
     texts = parsePromptArray(raw, targets.length);
   } catch {
@@ -182,7 +187,9 @@ export function designEvalBatch({
   stablePromptCount = 6,
   explorationPromptCount = 4,
   coreCriteria = null,
+  outputType = 'text',
 }) {
+  const outputContract = getOutputContract(outputType);
   const focusIds = experimentPlan.focusParameterIds.slice(0, 3);
   const qualityAxes = Array.isArray(ontology?.qualityAxes) && ontology.qualityAxes.length
     ? ontology.qualityAxes
@@ -213,6 +220,7 @@ export function designEvalBatch({
         parameter: parameterLookup.get(parameterId),
         targetTask: targetTasks[index % targetTasks.length],
         qualityAxis: qualityAxes[index % qualityAxes.length],
+        outputType,
         history,
       });
     }),
@@ -245,11 +253,12 @@ export function designEvalBatch({
       parameter: parameterLookup.get(parameterId),
       targetTask: targetTasks[(index + 1) % targetTasks.length],
       qualityAxis: qualityAxes[(index + 1) % qualityAxes.length],
+      outputType,
       history,
       exploratory: true,
     });
   });
-  const criteria = createCriteria({ qualityAxes, focusIds, parameterLookup, previousBank, runId, coreCriteria });
+  const criteria = createCriteria({ qualityAxes, focusIds, parameterLookup, previousBank, runId, coreCriteria, outputType });
   const criteriaVersion = getNextCriteriaVersion({ previousBank, criteria });
   const retired = Array.isArray(previousBank?.retired) ? previousBank.retired : [];
   const priorExploration = Array.isArray(previousBank?.explorationPrompts) ? previousBank.explorationPrompts : [];
@@ -265,6 +274,7 @@ export function designEvalBatch({
       currentRunId: runId,
       stablePromptCount,
       explorationPromptCount,
+      outputType,
       stablePromptIds: stable.map(prompt => prompt.id),
       provisionalPromptIds: activePriorProvisional.map(prompt => prompt.id),
       explorationPromptIds: exploration.map(prompt => prompt.id),
@@ -279,6 +289,7 @@ export function designEvalBatch({
       designNotes: [
         'Stable prompts exercise recurring skill quality axes.',
         'Exploration prompts target the current experiment plan.',
+        outputContract.designNote,
         'Candidate creators should receive taxonomy and quality axes, not this concrete prompt batch.',
       ],
     },
@@ -303,13 +314,14 @@ function createPrompt({
   parameter,
   targetTask,
   qualityAxis,
+  outputType,
   exploratory = false,
 }) {
   const surface = parameter?.surface || parameterId;
   const mutationHint = parameter?.possibleMutations?.[0] || 'a focused improvement';
   const scenario = exploratory
-    ? createExplorationScenario({ goal, surface, mutationHint, qualityAxis })
-    : createStableScenario({ goal, surface, targetTask, qualityAxis });
+    ? createExplorationScenario({ goal, surface, mutationHint, qualityAxis, outputType })
+    : createStableScenario({ goal, surface, targetTask, qualityAxis, outputType });
 
   return {
     id: `${runId}-${bucket}-${String(index + 1).padStart(2, '0')}`,
@@ -317,6 +329,7 @@ function createPrompt({
     parameterIds: [parameterId],
     difficulty,
     bucket,
+    outputType,
     status: bucket,
     origin: bucket === 'stable' ? 'ontology_seed' : 'experiment_probe',
     createdAtRunId: runId,
@@ -328,25 +341,29 @@ function createPrompt({
   };
 }
 
-function createStableScenario({ goal, surface, targetTask, qualityAxis }) {
+function createStableScenario({ goal, surface, targetTask, qualityAxis, outputType }) {
+  const outputContract = getOutputContract(outputType);
   return [
     `I need help with this skill goal: ${goal}`,
     `Task: ${targetTask}.`,
+    `Output requirement: ${outputContract.userPromptRequirement}`,
     `Please produce the appropriate artifact for a realistic production use case, then briefly validate it for ${qualityAxis}.`,
     `Pay attention to the skill surface under test: ${surface}.`,
   ].join('\n');
 }
 
-function createExplorationScenario({ goal, surface, mutationHint, qualityAxis }) {
+function createExplorationScenario({ goal, surface, mutationHint, qualityAxis, outputType }) {
+  const outputContract = getOutputContract(outputType);
   return [
     `A user gives an incomplete but plausible request related to: ${goal}`,
     `They need an immediately useful response, but the request has ambiguity around ${surface}.`,
+    `Output requirement: ${outputContract.userPromptRequirement}`,
     `Handle the ambiguity, avoid over-triggering, and show how ${mutationHint} affects the final answer.`,
     `End with a compact quality check focused on ${qualityAxis}.`,
   ].join('\n');
 }
 
-function createCriteria({ qualityAxes, focusIds, parameterLookup, previousBank = null, runId, coreCriteria = null }) {
+function createCriteria({ qualityAxes, focusIds, parameterLookup, previousBank = null, runId, coreCriteria = null, outputType = 'text' }) {
   const existingCore = Array.isArray(previousBank?.criteria)
     ? previousBank.criteria.filter(criterion => !criterion.parameterIds?.length)
     : null;
@@ -392,7 +409,20 @@ function createCriteria({ qualityAxes, focusIds, parameterLookup, previousBank =
     };
   });
 
-  return [...stableCriteria, ...parameterCriteria].slice(0, 6).map(criterion => ({
+  const outputCriterion = createOutputContractCriterion(outputType);
+  const lockedOutputCriterion = outputCriterion
+    ? stableCriteria.find(criterion => criterion.id === outputCriterion.id)
+    : null;
+  const stableWithoutOutputContract = stableCriteria
+    .filter(criterion => !OUTPUT_CONTRACT_CRITERION_IDS.has(criterion.id));
+  const stableCore = outputCriterion
+    ? stableWithoutOutputContract.slice(0, 3)
+    : stableWithoutOutputContract;
+  const allCriteria = outputCriterion
+    ? [...stableCore, lockedOutputCriterion || outputCriterion, ...parameterCriteria]
+    : [...stableCore, ...parameterCriteria];
+
+  return allCriteria.slice(0, 6).map(criterion => ({
     ...criterion,
     qualityAxes: qualityAxes.slice(0, 4),
     rubric: criterion.rubric || {
@@ -403,6 +433,57 @@ function createCriteria({ qualityAxes, focusIds, parameterLookup, previousBank =
       1: 'Poor: wrong task, harmful scope, or unusable output.',
     },
   }));
+}
+
+export function getOutputContract(outputType = 'text') {
+  if (outputType === 'code') {
+    return {
+      label: 'Code',
+      promptInstruction: 'Each user request must ask for production-ready code, not advice, recommendations, or a conceptual plan.',
+      criteriaInstruction: 'The evaluated outputs are expected to be production-ready code artifacts. Criteria should reward runnable, complete, well-structured code and penalize conceptual recommendations without code.',
+      userPromptRequirement: 'Return production-ready code or code files, not just recommendations.',
+      creatorInstruction: 'The skill must train agents to produce concrete code artifacts when users ask for implementation work; recommendations alone are insufficient unless explicitly requested.',
+      designNote: 'Output contract: eval prompts require production-ready code.',
+    };
+  }
+  if (outputType === 'code_visual') {
+    return {
+      label: 'Code + Visual Intent',
+      promptInstruction: 'Each user request must ask for production-ready code for a visual/interface artifact, including enough structure, styling, accessibility, and interaction detail to inspect the intended result. Do not ask for screenshots; visual execution is deferred.',
+      criteriaInstruction: 'The evaluated outputs are expected to be production-ready code for visual/interface artifacts. Criteria should reward complete code, visual hierarchy, accessibility, responsive behavior, and implementation readiness. Screenshot/visual execution is not yet available.',
+      userPromptRequirement: 'Return production-ready code for the visual/interface result, with styling/accessibility/interaction details; do not stop at visual recommendations.',
+      creatorInstruction: 'The skill must train agents to produce implemented code for visual/interface outputs, including layout, styling, accessibility, and interaction details. Conceptual design direction alone should be treated as incomplete.',
+      designNote: 'Output contract: eval prompts require production-ready code for visual/interface artifacts; visual screenshot evaluation is deferred.',
+    };
+  }
+  return {
+    label: 'Text',
+    promptInstruction: 'Each user request should ask for the most useful text artifact for the skill domain.',
+    criteriaInstruction: 'The evaluated outputs are expected to be text artifacts appropriate to the skill domain.',
+    userPromptRequirement: 'Return the appropriate text artifact, not merely meta-advice.',
+    creatorInstruction: 'The skill may optimize for text artifacts such as plans, analyses, drafts, rubrics, or recommendations when those match user intent.',
+    designNote: 'Output contract: eval prompts require text artifacts appropriate to the domain.',
+  };
+}
+
+function createOutputContractCriterion(outputType) {
+  if (outputType === 'code') {
+    return {
+      id: 'implementation_readiness',
+      name: 'Implementation Readiness',
+      description: 'The output provides complete, usable code instead of stopping at conceptual advice.',
+      stable: true,
+    };
+  }
+  if (outputType === 'code_visual') {
+    return {
+      id: 'implemented_visual_output',
+      name: 'Implemented Visual Output',
+      description: 'The output provides production-ready code for the requested visual/interface result, including styling, accessibility, and interaction details.',
+      stable: true,
+    };
+  }
+  return null;
 }
 
 function getNextCriteriaVersion({ previousBank, criteria }) {

@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { designEvalBatch } from '../src/lib/eval-design.js';
+import { designEvalBatch, naturalizeEvalPrompts } from '../src/lib/eval-design.js';
 
 test('evaluation designer creates stable and exploration prompts with criteria', () => {
   const design = designEvalBatch({
@@ -119,4 +119,80 @@ test('evaluation designer reuses provisional prompts for champion-gate confirmat
   assert.equal(design.prompts.filter(prompt => prompt.bucket === 'provisional').length, 1);
   assert.deepEqual(design.bank.provisionalPromptIds, ['run-001-exploration-07']);
   assert.equal(design.bank.explorationPromptIds.length, 3);
+});
+
+test('evaluation designer enforces code plus visual output contract', () => {
+  const design = designEvalBatch({
+    runId: 'run-code-visual',
+    goal: 'Help agents design better front-end UX.',
+    ontology: {
+      qualityAxes: ['visual hierarchy', 'accessibility', 'production readiness'],
+      targetTasks: ['implement a landing page', 'revise an application screen'],
+    },
+    parameterization: {
+      parameters: [{
+        id: 'p01-output-contract',
+        surface: 'implementation output contract',
+        possibleMutations: ['require code-first answers'],
+        measurementPlan: 'Check whether outputs include usable code instead of visual recommendations.',
+      }],
+    },
+    experimentPlan: { focusParameterIds: ['p01-output-contract'] },
+    outputType: 'code_visual',
+  });
+
+  assert.equal(design.bank.outputType, 'code_visual');
+  assert.ok(design.prompts.every(prompt => prompt.outputType === 'code_visual'));
+  assert.match(design.prompts[0].text, /Return production-ready code for the visual\/interface result/);
+  assert.ok(design.criteria.some(criterion => criterion.id === 'implemented_visual_output'));
+});
+
+test('naturalized prompts receive output contract instructions', async () => {
+  const design = designEvalBatch({
+    runId: 'run-naturalized-code',
+    goal: 'Help agents implement interface components.',
+    ontology: { qualityAxes: ['implementation readiness'], targetTasks: ['build a settings panel'] },
+    parameterization: { parameters: [{ id: 'p01', surface: 'code output' }] },
+    experimentPlan: { focusParameterIds: ['p01'] },
+    outputType: 'code',
+    stablePromptCount: 1,
+    explorationPromptCount: 0,
+  });
+  const calls = [];
+
+  await naturalizeEvalPrompts({
+    design,
+    goal: 'Help agents implement interface components.',
+    model: 'fake-judge-model',
+    outputType: 'code',
+    modelClient: async request => {
+      calls.push(request);
+      return JSON.stringify({ prompts: ['Build a production-ready settings panel component with complete code.'] });
+    },
+  });
+
+  assert.match(calls[0].messages[0].content, /production-ready code, not advice/);
+  assert.match(design.prompts[0].text, /complete code/);
+});
+
+test('evaluation designer drops stale output-contract criteria when output type changes', () => {
+  const design = designEvalBatch({
+    runId: 'run-output-type-change',
+    goal: 'Help agents write useful prose.',
+    ontology: { qualityAxes: ['clarity'], targetTasks: ['draft a memo'] },
+    parameterization: { parameters: [{ id: 'p01', surface: 'artifact shape' }] },
+    experimentPlan: { focusParameterIds: ['p01'] },
+    previousBank: {
+      criteria: [{
+        id: 'implemented_visual_output',
+        name: 'Implemented Visual Output',
+        description: 'Old visual criterion.',
+        rubric: { 5: 'great', 3: 'ok', 1: 'bad' },
+      }],
+      criteriaVersions: [],
+    },
+    outputType: 'text',
+  });
+
+  assert.ok(!design.criteria.some(criterion => criterion.id === 'implemented_visual_output'));
 });

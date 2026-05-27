@@ -74,6 +74,7 @@ async function handleApi(request, response, url) {
       goal: body.goal || '',
       targetIterations: body.targetIterations || 3,
       triggerMode: body.triggerMode || 'manual',
+      outputType: body.outputType || 'text',
       baselineFiles: body.baselineFiles || [],
       baselineArchive: body.baselineArchive || null,
     }));

@@ -6,6 +6,8 @@ import { writeJson } from './store.js';
 import { validateHeadlessEvalRun } from './schema.js';
 import { callModel } from './model-client.js';
 
+const TEXT_EVALUATED_OUTPUT_TYPES = ['text', 'code', 'code_visual'];
+
 export async function runHeadlessEval({
   skillAPath,
   skillBPath,
@@ -29,8 +31,8 @@ export async function runHeadlessEval({
   if (!['mock', 'real'].includes(mode)) {
     throw new Error('Evaluator mode must be mock or real');
   }
-  if (outputType !== 'text') {
-    throw new Error('Only text output evaluation is implemented');
+  if (!TEXT_EVALUATED_OUTPUT_TYPES.includes(outputType)) {
+    throw new Error(`Unsupported output evaluation type: ${outputType}`);
   }
   if (mode === 'real' && (!generationModel || !judgeModel)) {
     throw new Error('Real evaluation requires generationModel and judgeModel');
@@ -78,7 +80,7 @@ export async function runHeadlessEval({
     mode,
     createdAt: startedAt,
     completedAt,
-    outputType: 'text',
+    outputType,
     modelMetadata: {
       generationModel: generationModel || null,
       judgeModel: judgeModel || null,

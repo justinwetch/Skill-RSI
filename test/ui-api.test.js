@@ -128,6 +128,22 @@ test('ui api creates new projects and rejects duplicates', async () => {
   );
 });
 
+test('ui api stores requested output type for new projects', async () => {
+  const cwd = await fs.mkdtemp(path.join(os.tmpdir(), 'skill-rsi-ui-api-output-type-'));
+
+  const created = await createProjectForUi({
+    cwd,
+    projectName: 'Frontend Code Visual',
+    goal: 'Improve a front-end design skill.',
+    outputType: 'code_visual',
+  });
+
+  assert.equal(created.config.eval.outputType, 'code_visual');
+
+  const summary = await readProjectSummary({ cwd, projectName: 'Frontend Code Visual' });
+  assert.equal(summary.config.eval.outputType, 'code_visual');
+});
+
 test('ui api imports an uploaded baseline as champion v0', async () => {
   const cwd = await fs.mkdtemp(path.join(os.tmpdir(), 'skill-rsi-ui-api-baseline-'));
 

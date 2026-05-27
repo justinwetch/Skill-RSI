@@ -406,14 +406,37 @@ input:focus, textarea:focus, select:focus, .num:focus { outline: none; border-co
 .field > span { display: block; font-size: 14px; color: var(--color-text-secondary); margin-bottom: 7px; }
 .field input, .field textarea { width: 100%; border: 1px solid var(--color-border); background: var(--color-bg-tertiary); color: var(--color-text-primary); border-radius: var(--radius-md); padding: 10px 13px; font-size: 15px; }
 .field textarea { min-height: 88px; resize: vertical; line-height: 1.6; }
-.upload-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
-@media (max-width: 640px) { .upload-grid { grid-template-columns: 1fr; } }
-.upload-box { position: relative; display: flex; align-items: flex-start; gap: 12px; border: 1px dashed var(--color-border-hover); background: var(--color-bg-tertiary); border-radius: var(--radius-md); padding: 14px 15px; color: var(--color-text-secondary); transition: border-color 0.14s, background 0.14s; }
-.upload-box:hover { border-color: var(--color-accent); background: var(--color-accent-subtle); }
-.upload-box > svg { margin-top: 2px; color: var(--color-text-muted); flex-shrink: 0; }
-.upload-box b { display: block; color: var(--color-text-primary); font-size: 14px; margin-bottom: 2px; }
-.upload-box p { margin: 0; font-size: 12.5px; line-height: 1.55; }
-.upload-box input { position: absolute; inset: 0; opacity: 0; cursor: pointer; }
+.field-hint { margin: 7px 0 0; font-size: 12.5px; line-height: 1.5; color: var(--color-text-muted); }
+
+/* mode fork: where version 1 comes from */
+.mode-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-bottom: 24px; }
+@media (max-width: 640px) { .mode-grid { grid-template-columns: 1fr; } }
+.mode-card { display: flex; align-items: flex-start; gap: 12px; text-align: left; border: 1px solid var(--color-border); background: var(--color-bg-secondary); border-radius: var(--radius-lg); padding: 15px 16px; color: var(--color-text-secondary); cursor: pointer; transition: border-color 0.14s, background 0.14s; }
+.mode-card:hover { border-color: var(--color-border-hover); }
+.mode-card.active { border-color: var(--color-accent); box-shadow: inset 0 0 0 1px var(--color-accent); background: var(--color-accent-subtle); }
+.mode-card:disabled { cursor: not-allowed; opacity: 0.55; }
+.mode-card:disabled:hover { border-color: var(--color-border); }
+.mode-card > svg { margin-top: 1px; color: var(--color-text-muted); flex-shrink: 0; }
+.mode-card.active > svg { color: var(--color-text-primary); }
+.mode-card b { display: block; color: var(--color-text-primary); font-size: 14.5px; margin-bottom: 3px; }
+.mode-card p { margin: 0; font-size: 12.5px; line-height: 1.5; }
+.output-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+.output-card { padding: 13px 14px; }
+@media (max-width: 640px) { .output-grid { grid-template-columns: 1fr; } }
+
+/* single unified baseline dropzone */
+.dropzone { display: flex; flex-wrap: wrap; align-items: flex-start; gap: 12px; border: 1px dashed var(--color-border-hover); background: var(--color-bg-tertiary); border-radius: var(--radius-md); padding: 16px 16px; color: var(--color-text-secondary); transition: border-color 0.14s, background 0.14s; }
+.dropzone.over { border-color: var(--color-accent); background: var(--color-accent-subtle); }
+.dropzone > svg { margin-top: 2px; color: var(--color-text-muted); flex-shrink: 0; }
+.dz-body b { display: block; color: var(--color-text-primary); font-size: 14px; margin-bottom: 3px; }
+.dz-body p { margin: 0; font-size: 12.5px; line-height: 1.55; }
+.dz-body code { font-size: 12px; background: var(--color-accent-subtle); padding: 1px 5px; border-radius: 5px; }
+.dz-actions { display: flex; align-items: center; gap: 8px; margin-top: 8px; }
+.dz-sep { color: var(--color-text-muted); }
+.dz-link { position: relative; color: var(--color-text-primary); font-size: 12.5px; font-weight: 500; cursor: pointer; border: none; background: none; padding: 0; text-decoration: underline; text-underline-offset: 2px; }
+.dz-link:hover { color: var(--color-accent-hover); }
+.dz-link input { position: absolute; inset: 0; width: 100%; opacity: 0; cursor: pointer; }
+.dz-note { flex-basis: 100%; margin: 8px 0 0; font-size: 12px; color: var(--color-text-muted); }
 .form-actions { display: flex; gap: 10px; margin-top: 8px; }
 
 /* ===== misc ===== */

@@ -88,3 +88,32 @@ Mention prompt-123 directly.
   assert.equal(review.approveForEval, false);
   assert.ok(review.blockingIssues.some(issue => issue.surface === 'eval-leakage'));
 });
+
+test('candidate reviewer blocks exact eval prompt text leakage', async () => {
+  const cwd = await fs.mkdtemp(path.join(os.tmpdir(), 'skill-rsi-review-text-leak-'));
+  const skillDir = path.join(cwd, 'skill');
+  const promptText = 'Design a subscription settings screen for a finance app with confusing cancellation rules.';
+  await fs.mkdir(skillDir, { recursive: true });
+  await fs.writeFile(path.join(skillDir, 'SKILL.md'), `---
+name: ux-design
+description: Use when helping agents design better UX for production applications with scoped recommendations.
+---
+
+# UX Design
+
+Practice against this exact case: ${promptText}
+`, 'utf8');
+
+  const review = await reviewCandidatePackage({
+    candidate: {
+      candidateId: 'candidate-a',
+      skillPath: skillDir,
+      changedParameterIds: ['p01'],
+    },
+    experimentPlan: { focusParameterIds: ['p01'] },
+    evalDesign: { prompts: [{ id: 'prompt-456', text: promptText }] },
+  });
+
+  assert.equal(review.approveForEval, false);
+  assert.match(review.blockingIssues.find(issue => issue.surface === 'eval-leakage').message, /exact eval prompt text/);
+});

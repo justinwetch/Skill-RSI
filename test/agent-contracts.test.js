@@ -354,7 +354,8 @@ test('real creator contract normalizes omitted optional list fields', async () =
   assert.match(result.artifact.rationale, /Generated candidate-b/);
   assert.deepEqual(result.artifact.changedParameterIds, ['p01']);
   assert.deepEqual(result.artifact.expectedAdvantages, ['clearer triggering']);
-  assert.match(result.artifact.files[0].content, /description: Use when applying the Embedded boundary policy Skill RSI candidate\./);
+  assert.match(result.artifact.files[0].content, /description: Use when the user needs help with embedded boundary policy\./);
+  assert.doesNotMatch(result.artifact.files[0].content, /Skill RSI candidate/);
   assert.equal(result.artifact.selfCritique.length, 1);
 });
 

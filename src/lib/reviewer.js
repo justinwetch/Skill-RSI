@@ -220,12 +220,19 @@ function reviewEvalLeakage({ skillPackage, evalDesign, blockingIssues, recommend
   const leakedPromptIds = evalDesign.prompts
     .map(prompt => prompt.id)
     .filter(id => content.includes(id));
+  const leakedPromptTexts = evalDesign.prompts
+    .map(prompt => prompt.text)
+    .filter(text => typeof text === 'string' && text.trim().length >= 40)
+    .filter(text => content.includes(text.trim()));
 
-  if (leakedPromptIds.length) {
+  if (leakedPromptIds.length || leakedPromptTexts.length) {
     blockingIssues.push(issue({
       severity: 'blocking',
       surface: 'eval-leakage',
-      message: `Candidate package mentions eval prompt IDs: ${leakedPromptIds.join(', ')}.`,
+      message: [
+        leakedPromptIds.length ? `Candidate package mentions eval prompt IDs: ${leakedPromptIds.join(', ')}.` : null,
+        leakedPromptTexts.length ? `Candidate package includes ${leakedPromptTexts.length} exact eval prompt text snippet(s).` : null,
+      ].filter(Boolean).join(' '),
       recommendation: 'Regenerate the candidate without concrete eval prompt identifiers.',
     }));
   } else {

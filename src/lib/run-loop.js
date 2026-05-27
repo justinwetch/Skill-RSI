@@ -1123,7 +1123,7 @@ async function runAgenticLoop({
   // Autonomous repair: keep fixing a candidate that fails the deterministic safety/spec gate,
   // up to MAX_CANDIDATE_REVISIONS attempts, rather than giving up after one.
   for (let attempt = 1; attempt <= MAX_CANDIDATE_REVISIONS && !reviewA.approveForEval; attempt += 1) {
-    ({ candidate: candidateA, review: reviewA } = await reviseBlockedCandidate({
+    ({ artifact: creatorAArtifact, candidate: candidateA, review: reviewA } = await reviseBlockedCandidate({
       paths,
       runPaths,
       projectId,
@@ -1145,7 +1145,7 @@ async function runAgenticLoop({
     }));
   }
   for (let attempt = 1; attempt <= MAX_CANDIDATE_REVISIONS && !reviewB.approveForEval; attempt += 1) {
-    ({ candidate: candidateB, review: reviewB } = await reviseBlockedCandidate({
+    ({ artifact: creatorBArtifact, candidate: candidateB, review: reviewB } = await reviseBlockedCandidate({
       paths,
       runPaths,
       projectId,
@@ -1896,12 +1896,12 @@ async function reviseBlockedCandidate({
     maxTokens: modelParameters.creatorMaxTokens,
   });
   await writeJson(path.join(revisionDir, 'creator-artifact.json'), revisionResult.artifact);
-  const revisedCandidate = validateCandidate(await materializeCreatorArtifact({
+  const archivedCandidate = validateCandidate(await materializeCreatorArtifact({
     artifact: revisionResult.artifact,
     candidateDir: revisionDir,
   }));
   const revisedReview = await reviewCandidatePackage({
-    candidate: revisedCandidate,
+    candidate: archivedCandidate,
     experimentPlan,
     evalDesign,
     goal,
@@ -1911,6 +1911,19 @@ async function reviseBlockedCandidate({
     agentSkillsStandard,
   });
   await writeJson(path.join(revisionDir, 'review.json'), revisedReview);
+  const activeCandidate = validateCandidate(await materializeCreatorArtifact({
+    artifact: revisionResult.artifact,
+    candidateDir,
+  }));
+  await writeJson(path.join(candidateDir, 'creator-artifact.json'), revisionResult.artifact);
+  await writeJson(path.join(candidateDir, 'review.json'), {
+    ...revisedReview,
+    activeRevision: {
+      attempt,
+      revisionDir,
+      archivedSkillPath: archivedCandidate.skillPath,
+    },
+  });
   await appendTimeline(runPaths.timelineJsonl, 'candidate_revision.completed', {
     candidateId: candidate.candidateId,
     attempt,
@@ -1918,7 +1931,8 @@ async function reviseBlockedCandidate({
   });
 
   return {
-    candidate: revisedCandidate,
+    artifact: revisionResult.artifact,
+    candidate: activeCandidate,
     review: revisedReview,
   };
 }

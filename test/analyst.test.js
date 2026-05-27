@@ -51,6 +51,23 @@ test('real analyst recommendation cannot bypass deterministic policy block', asy
   assert.match(recommendation.reasoning, /champion stays|clear enough margin/i);
 });
 
+test('policy analyst does not promote when current champion wins champion gate', () => {
+  const recommendation = createPolicyRecommendation({
+    runId: 'run-003',
+    state: { currentChampion: { skillHash: 'abc' } },
+    candidateA: { candidateId: 'candidate-a', strategy: 'A' },
+    candidateB: { candidateId: 'candidate-b', strategy: 'B' },
+    experimentPlan: { focusParameterIds: ['p01'] },
+    candidateDuel: fakeEval({ winner: 'skillA', scoreDelta: 10, skillAWins: 8, skillBWins: 2 }),
+    championGate: fakeEval({ winner: 'skillB', scoreDelta: -10, skillAWins: 2, skillBWins: 8 }),
+    promotion: { minScoreDelta: 4, minWinDelta: 2, maxStablePromptRegression: 2 },
+  });
+
+  assert.equal(recommendation.decision, 'keep_current');
+  assert.equal(recommendation.recommendedChampionCandidateId, null);
+  assert.match(recommendation.reasoning, /current champion stays/i);
+});
+
 test('policy analyst blocks promotion when stable prompts show critical regression', () => {
   const championGate = fakeEval({ winner: 'skillA', scoreDelta: 10, skillAWins: 8, skillBWins: 2 });
   championGate.evaluations[0] = {
@@ -69,7 +86,7 @@ test('policy analyst blocks promotion when stable prompts show critical regressi
   };
 
   const recommendation = createPolicyRecommendation({
-    runId: 'run-003',
+    runId: 'run-004',
     state: { currentChampion: { skillHash: 'abc' } },
     candidateA: { candidateId: 'candidate-a', strategy: 'A' },
     candidateB: { candidateId: 'candidate-b', strategy: 'B' },

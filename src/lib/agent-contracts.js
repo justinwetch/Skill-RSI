@@ -712,8 +712,9 @@ function normalizeCreatorFilePath(rawPath) {
 }
 
 function ensureSkillFrontmatter(content, { candidateId, strategy }) {
-  const description = `Use when applying the ${strategy} Skill RSI candidate.`;
-  const name = candidateId.replace(/[^a-zA-Z0-9_-]+/g, '-');
+  const strategyLabel = String(strategy || candidateId || 'generated skill').trim();
+  const name = slugifySkillName(strategyLabel) || slugifySkillName(candidateId) || 'generated-skill';
+  const description = `Use when the user needs help with ${strategyLabel.toLowerCase()}.`;
   const match = content.match(/^---\n([\s\S]*?)\n---\n?/);
   if (!match) {
     return `---\nname: ${name}\ndescription: ${description}\n---\n\n${content}`;
@@ -728,6 +729,16 @@ function ensureSkillFrontmatter(content, { candidateId, strategy }) {
     frontmatter = `${frontmatter}\ndescription: ${description}`;
   }
   return `---\n${frontmatter}\n---\n${body}`;
+}
+
+function slugifySkillName(value) {
+  return String(value || '')
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '')
+    .replace(/-+/g, '-')
+    .slice(0, 64);
 }
 
 function normalizeArray(value, fallback = []) {

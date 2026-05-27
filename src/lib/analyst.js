@@ -96,8 +96,13 @@ export function createPolicyRecommendation({
   promotion = null,
 }) {
   const decisiveEval = championGate || candidateDuel;
-  const candidateWinnerId = getCandidateWinnerId(decisiveEval, championGate ? 'skillA' : decisiveEval.stats.winner);
-  const scoreDelta = Math.abs(decisiveEval.stats.scoreDelta || 0);
+  const duelWinnerCandidateId = getCandidateWinnerId(candidateDuel, candidateDuel.stats.winner);
+  const candidateWinnerId = championGate
+    ? (championGate.stats.winner === 'skillA' ? duelWinnerCandidateId : null)
+    : duelWinnerCandidateId;
+  const scoreDelta = championGate
+    ? Math.max(0, decisiveEval.stats.scoreDelta || 0)
+    : Math.abs(decisiveEval.stats.scoreDelta || 0);
   const winDelta = Math.abs((decisiveEval.stats.skillAWins || 0) - (decisiveEval.stats.skillBWins || 0));
   const hasChampion = Boolean(state.currentChampion);
   const thresholds = {

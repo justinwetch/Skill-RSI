@@ -842,6 +842,25 @@ test('agentic mode proceeds to eval after successful candidate revision', async 
     'review.json',
   ), 'utf8'));
   assert.equal(revisionReview.approveForEval, true);
+  const activeReview = JSON.parse(await fs.readFile(path.join(
+    result.paths.runsDir,
+    runId,
+    'candidates',
+    'candidate-a',
+    'review.json',
+  ), 'utf8'));
+  assert.equal(activeReview.approveForEval, true);
+  assert.equal(activeReview.activeRevision.attempt, 1);
+  const activeSkill = await fs.readFile(path.join(
+    result.paths.runsDir,
+    runId,
+    'candidates',
+    'candidate-a',
+    'skill',
+    'SKILL.md',
+  ), 'utf8');
+  assert.match(activeSkill, /Description-only tightening revised/);
+  assert.doesNotMatch(activeSkill, /rm -rf/);
 
   const duel = JSON.parse(await fs.readFile(path.join(
     result.paths.runsDir,

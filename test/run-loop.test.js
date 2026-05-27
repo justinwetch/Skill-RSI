@@ -598,6 +598,68 @@ test('agentic mode runs real agent contracts with an injected model client', asy
   assert.equal(plan.arms.candidateB.strategyName, 'Embedded boundary policy');
 });
 
+test('agentic first run persists research packet and quality-gated ontology artifacts', async () => {
+  const cwd = await fs.mkdtemp(path.join(os.tmpdir(), 'skill-rsi-agentic-research-'));
+  const calls = [];
+  let ontologyCalls = 0;
+
+  const result = await runProject({
+    cwd,
+    projectName: 'UX Design Research',
+    goal: 'Help agents design better UX.',
+    loops: 1,
+    mode: 'agentic',
+    evalMode: 'mock',
+    generationModel: 'fake-gen-model',
+    judgeModel: 'fake-judge-model',
+    agentModel: 'gpt-5.4-mini',
+    modelClient: async request => {
+      calls.push(request);
+      const prompt = request.messages[0].content;
+      if (request.tools?.some(tool => tool.type === 'web_search')) return JSON.stringify(fakeResearchPacket());
+      if (prompt.includes('Ontology Agent')) {
+        ontologyCalls += 1;
+        return JSON.stringify(ontologyCalls === 1 ? fakeSloppyOntology() : fakeRichOntology());
+      }
+      if (prompt.includes('Parameterization Agent')) return JSON.stringify(fakeRichParameterization());
+      if (prompt.includes('Experiment Planner')) return JSON.stringify(fakeExperimentPlan());
+      if (prompt.includes('Assigned experiment arm: candidateB')) return JSON.stringify(fakeCreator('candidate-b', 'candidateB', 'Embedded boundary policy'));
+      if (prompt.includes('Assigned experiment arm: candidateA')) return JSON.stringify(fakeCreator('candidate-a', 'candidateA', 'Description-only tightening'));
+      if (prompt.includes('Interpret this Skill RSI run')) return JSON.stringify({
+        runId: 'analyst',
+        decision: 'promote',
+        recommendedChampionCandidateId: 'candidate-a',
+        confidence: 'medium',
+        reasoning: 'Candidate A performed better.',
+        observations: ['Candidate A won.'],
+        nextRoundGuidance: { vary: 'next parameter', preserve: 'candidate-a', investigate: 'durability' },
+      });
+      if (prompt.includes('adversarial reviewer')) return JSON.stringify({ blockingIssues: [], recommendedEdits: [], nonIssues: ['stub review'], overfittingRisk: 'low' });
+      if (prompt.includes('Generate the evaluation criteria')) return JSON.stringify({
+        criteria: [
+          { id: 'clarity', name: 'Clarity', description: 'Clear output', rubric: { 5: 'great', 3: 'ok', 1: 'bad' } },
+          { id: 'usefulness', name: 'Usefulness', description: 'Useful output', rubric: { 5: 'great', 3: 'ok', 1: 'bad' } },
+          { id: 'specificity', name: 'Specificity', description: 'Specific output', rubric: { 5: 'great', 3: 'ok', 1: 'bad' } },
+        ],
+      });
+      if (prompt.includes('Write 10 realistic')) return JSON.stringify({ prompts: Array.from({ length: 10 }, (_, i) => `Research prompt ${i + 1}`) });
+      throw new Error(`Unexpected prompt: ${prompt.slice(0, 120)}`);
+    },
+  });
+
+  const runId = result.completedRuns[0].runId;
+  const research = JSON.parse(await fs.readFile(path.join(result.paths.runsDir, runId, 'research', 'research-packet.json'), 'utf8'));
+  const ontologyQuality = JSON.parse(await fs.readFile(path.join(result.paths.runsDir, runId, 'deconstruction', 'ontology-quality-report.json'), 'utf8'));
+  const deconstructionQuality = JSON.parse(await fs.readFile(path.join(result.paths.runsDir, runId, 'deconstruction', 'deconstruction-quality-report.json'), 'utf8'));
+
+  assert.ok(calls.some(call => call.tools?.some(tool => tool.type === 'web_search')));
+  assert.equal(research.researchMode, 'sourced');
+  assert.ok(research.authorityMap.some(authority => authority.name === 'Steve Jobs'));
+  assert.equal(ontologyCalls, 2);
+  assert.ok(ontologyQuality.revisedFrom);
+  assert.equal(deconstructionQuality.status, 'pass');
+});
+
 test('agentic mode completes cleanly when candidate review blocks evaluation', async () => {
   const cwd = await fs.mkdtemp(path.join(os.tmpdir(), 'skill-rsi-agentic-review-block-'));
 
@@ -755,6 +817,59 @@ function fakeOntology() {
   };
 }
 
+function fakeResearchPacket() {
+  return {
+    runId: 'research',
+    skillGoal: 'Help agents design better UX.',
+    researchMode: 'sourced',
+    provider: 'openai',
+    sources: [{ id: 's1', title: 'Steve Jobs product philosophy', url: 'https://example.com/jobs' }],
+    searchTrace: [{ query: 'Steve Jobs product development philosophy', rationale: 'find authority opinions', resultCount: 1 }],
+    evidenceClaims: [{
+      claim: 'Strong product work starts from customer experience.',
+      evidenceBasis: 'sourced',
+      sourceRefs: ['s1'],
+      confidence: 'medium',
+      implicationsForSkill: ['Require UX recommendations to start from user outcomes.'],
+    }],
+    authorityMap: [{
+      name: 'Steve Jobs',
+      authorityType: 'practitioner',
+      whyTheyMatter: 'Canonical product leader associated with integrated user experience.',
+      strongOpinions: ['Start with the customer experience and work backward.'],
+      implicationsForSkill: ['Skill should force user-outcome-first reasoning.'],
+      misuseRisks: ['Do not use taste as a substitute for validation.'],
+      evidenceBasis: 'sourced',
+      sourceRefs: ['s1'],
+    }],
+    openQuestions: [],
+    gaps: [],
+  };
+}
+
+function fakeSloppyOntology() {
+  return {
+    ...fakeOntology(),
+    authorityMap: [],
+    failureModes: ['over-triggering'],
+    qualityAxes: ['task success', 'workflow clarity'],
+  };
+}
+
+function fakeRichOntology() {
+  return {
+    ...fakeOntology(),
+    failureModes: ['over-triggering', 'visual-only critique', 'missing product constraints'],
+    qualityAxes: ['user-outcome fit', 'interaction clarity', 'constraint-aware prioritization'],
+    authorityMap: fakeResearchPacket().authorityMap,
+    evidenceClaims: fakeResearchPacket().evidenceClaims,
+    sourceRefs: ['s1'],
+    inferenceLabels: ['Some UX domain implications are inferred from sourced product philosophy.'],
+    unsupportedClaims: [],
+    researchGaps: [],
+  };
+}
+
 function fakeParameterization() {
   return {
     runId: 'deconstructor',
@@ -778,6 +893,19 @@ function fakeParameterization() {
     highestLeverageHypotheses: ['test activation boundary'],
     doNotTouchYet: [],
     suggestedExperimentFamilies: ['one parameter'],
+  };
+}
+
+function fakeRichParameterization() {
+  const parameterization = fakeParameterization();
+  return {
+    ...parameterization,
+    parameters: parameterization.parameters.map(parameter => ({
+      ...parameter,
+      improvementHypothesis: `Change ${parameter.surface} to improve user-outcome fit.`,
+      artifactEvidence: ['First run has no champion artifact; baseline is ontology-derived.'],
+      couplingNotes: ['May couple with activation and workflow sequence.'],
+    })),
   };
 }
 

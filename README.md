@@ -82,6 +82,9 @@ For the architecture and product roadmap, see [`IMPLEMENTATION_PLAN.md`](IMPLEME
 - real text-only headless evaluator using provider model APIs
 - mock agent contracts for ontology, deconstructor, experiment planner, creator, and analyst
 - real model-backed agent contract runner for ontology, deconstructor, experiment planner, creator, and analyst
+- research-grounded Step 1 for real agentic runs, with best-effort model-native OpenAI web search, inference fallback, authority maps, evidence claims, and persisted research packets
+- ontology and deconstruction quality gates with one warn-and-revise pass plus persisted quality reports
+- deconstruction prompt context includes the full champion package summary and Agent Skills standard, not just champion `SKILL.md`
 - real creator artifact materialization into a candidate skill package directory
 - `run --agentic` orchestration for model-backed deconstruction, planning, and candidate creation with mock or real eval
 - parameter-targeted evaluation designer with 6 stable prompts, 4 exploration prompts, and 4-6 criteria

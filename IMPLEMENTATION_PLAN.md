@@ -236,6 +236,8 @@ Design notes:
 - Label anything platform-specific, such as Claude Code-only frontmatter or dynamic context injection, as non-portable unless the project config explicitly allows it.
 - Include both "what this skill should do" and "what this skill must not try to own."
 - When network access is configured, allow research-backed reference points and adjacent domains; when offline, require the ontology to label those as model inferences.
+- Before real ontology generation, build a research packet that captures sources, evidence claims, an authority map, open questions, and research gaps. Model-native OpenAI web search is the first supported path; unsupported providers fall back to inference-labeled packets.
+- Run an ontology quality gate after generation. In the default `warn_and_revise` mode, revise once using the quality report, then continue with explicit confidence warnings if issues remain.
 - On the first run, create the initial parameter taxonomy. On later runs, prefer deconstruction of the actual champion skill and use ontology only to fill missing categories or update assumptions.
 
 ### 6.3 Deconstruction And Parameterization Agent
@@ -249,11 +251,12 @@ Responsibility:
 Inputs:
 
 - Initial skill goal and context.
-- Current champion skill package.
+- Current champion skill package, including package files beyond `SKILL.md`.
 - Compact experiment history.
 - Selected detailed prior artifacts.
 - Current ontology or parameter taxonomy.
 - Known prompt bank and result summaries.
+- Agent Skills standard and the current research packet when available.
 
 The deconstruction prompt should require at least a dozen parameter surfaces and encourage finer granularity. Required surfaces to consider:
 
@@ -319,6 +322,7 @@ Design notes:
 - It should not rewrite the skill.
 - It should not anchor only on the last run; it should distinguish current evidence from stale or inconclusive evidence.
 - It should identify parameters that are coupled, because A/B experiments are cleaner when they mutate a small number of related surfaces.
+- It should pass the same anti-slop quality gate as ontology: every parameter needs artifact evidence, history evidence, mutation hypothesis, regression risk, measurement plan, confidence, and coupling notes.
 
 ### 6.4 Experiment Planner
 

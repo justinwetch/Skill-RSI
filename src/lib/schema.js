@@ -63,6 +63,38 @@ export function validateCandidate(candidate) {
   return candidate;
 }
 
+export function validateResearchPacket(packet) {
+  const label = 'Research packet';
+  if (!isObject(packet)) fail(label, 'must be an object');
+  requireString(label, packet, 'runId');
+  requireString(label, packet, 'skillGoal');
+  requireString(label, packet, 'researchMode');
+  requireArray(label, packet, 'sources');
+  requireArray(label, packet, 'evidenceClaims');
+  requireArray(label, packet, 'authorityMap');
+  requireArray(label, packet, 'searchTrace');
+  requireArray(label, packet, 'openQuestions');
+  requireArray(label, packet, 'gaps');
+
+  for (const claim of packet.evidenceClaims) {
+    if (!isObject(claim)) fail(label, 'each evidence claim must be an object');
+    requireString(label, claim, 'claim');
+    if (!['sourced', 'inferred', 'speculative'].includes(claim.evidenceBasis)) {
+      fail(label, 'evidenceClaims[].evidenceBasis must be sourced, inferred, or speculative');
+    }
+  }
+
+  for (const authority of packet.authorityMap) {
+    if (!isObject(authority)) fail(label, 'each authority must be an object');
+    requireString(label, authority, 'name');
+    requireArray(label, authority, 'strongOpinions');
+    requireArray(label, authority, 'implicationsForSkill');
+    requireArray(label, authority, 'misuseRisks');
+  }
+
+  return packet;
+}
+
 export function validateOntology(ontology) {
   const label = 'Ontology';
   if (!isObject(ontology)) fail(label, 'must be an object');
@@ -77,12 +109,31 @@ export function validateOntology(ontology) {
   requireArray(label, ontology, 'qualityAxes');
   requireArray(label, ontology, 'evalPromptTaxonomy');
   requireArray(label, ontology, 'candidateStrategySpace');
+  if (ontology.authorityMap !== undefined) requireArray(label, ontology, 'authorityMap');
+  if (ontology.evidenceClaims !== undefined) requireArray(label, ontology, 'evidenceClaims');
+  if (ontology.sourceRefs !== undefined) requireArray(label, ontology, 'sourceRefs');
+  if (ontology.inferenceLabels !== undefined) requireArray(label, ontology, 'inferenceLabels');
+  if (ontology.unsupportedClaims !== undefined) requireArray(label, ontology, 'unsupportedClaims');
+  if (ontology.researchGaps !== undefined) requireArray(label, ontology, 'researchGaps');
   if (!isObject(ontology.invocationBoundaries)) {
     fail(label, 'invocationBoundaries must be an object');
   }
   requireArray(label, ontology.invocationBoundaries, 'shouldTriggerWhen');
   requireArray(label, ontology.invocationBoundaries, 'shouldNotTriggerWhen');
   return ontology;
+}
+
+export function validateQualityReport(report) {
+  const label = 'Quality report';
+  if (!isObject(report)) fail(label, 'must be an object');
+  requireString(label, report, 'artifactType');
+  requireString(label, report, 'status');
+  requireArray(label, report, 'issues');
+  requireArray(label, report, 'warnings');
+  if (typeof report.revisionRecommended !== 'boolean') {
+    fail(label, 'revisionRecommended must be a boolean');
+  }
+  return report;
 }
 
 export function validateParameterization(parameterization) {

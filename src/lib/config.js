@@ -36,6 +36,14 @@ export const DEFAULT_PROJECT_CONFIG = {
       backoffMs: 0,
     },
   },
+  research: {
+    mode: 'best_effort',
+    provider: 'model_native',
+    requireSourcesForAuthorityClaims: true,
+  },
+  qualityGate: {
+    mode: 'warn_and_revise',
+  },
   models: {
     agent: 'gpt-5.4-mini',       // ontology, deconstructor, planner, creator, reviewer, analyst
     generation: 'gpt-5.4-mini',  // runs candidate skills to produce eval outputs
@@ -64,6 +72,8 @@ export function normalizeProjectConfig(raw) {
     budget: normalizeBudget(r.budget),
     promotion: normalizePromotion(r.promotion),
     eval: normalizeEval(r.eval),
+    research: normalizeResearch(r.research),
+    qualityGate: normalizeQualityGate(r.qualityGate),
     models: normalizeModels(r.models),
     portability: mergeSection(DEFAULT_PROJECT_CONFIG.portability, r.portability),
   };
@@ -123,6 +133,24 @@ function normalizeEval(raw) {
     outputType: evalConfig.outputType === 'text' ? 'text' : 'text',
     visualRunner: Boolean(evalConfig.visualRunner),
     retryPolicy: normalizeRetryPolicy(evalConfig.retryPolicy),
+  };
+}
+
+function normalizeResearch(raw) {
+  const research = mergeSection(DEFAULT_PROJECT_CONFIG.research, raw);
+  return {
+    mode: ['off', 'best_effort', 'required'].includes(research.mode) ? research.mode : DEFAULT_PROJECT_CONFIG.research.mode,
+    provider: ['model_native'].includes(research.provider) ? research.provider : DEFAULT_PROJECT_CONFIG.research.provider,
+    requireSourcesForAuthorityClaims: research.requireSourcesForAuthorityClaims !== false,
+  };
+}
+
+function normalizeQualityGate(raw) {
+  const qualityGate = mergeSection(DEFAULT_PROJECT_CONFIG.qualityGate, raw);
+  return {
+    mode: ['off', 'advisory', 'warn_and_revise', 'strict'].includes(qualityGate.mode)
+      ? qualityGate.mode
+      : DEFAULT_PROJECT_CONFIG.qualityGate.mode,
   };
 }
 

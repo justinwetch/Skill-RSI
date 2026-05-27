@@ -38,6 +38,8 @@ export async function callModel({
   messages,
   maxTokens = 8192,
   jsonMode = false,
+  tools = null,
+  toolChoice = null,
 }) {
   if (!provider || !PROVIDERS[provider]) {
     throw new Error(`Unable to infer provider for model "${model}"`);
@@ -48,7 +50,7 @@ export async function callModel({
     return callAnthropic({ apiKey: resolvedApiKey, model, systemPrompt, messages, maxTokens });
   }
   if (provider === 'openai') {
-    return callOpenAI({ apiKey: resolvedApiKey, model, systemPrompt, messages, maxTokens, jsonMode });
+    return callOpenAI({ apiKey: resolvedApiKey, model, systemPrompt, messages, maxTokens, jsonMode, tools, toolChoice });
   }
   return callGemini({ apiKey: resolvedApiKey, model, systemPrompt, messages, maxTokens, jsonMode });
 }
@@ -74,7 +76,7 @@ async function callAnthropic({ apiKey, model, systemPrompt, messages, maxTokens 
   return extractAnthropicText(await parseResponse(response));
 }
 
-async function callOpenAI({ apiKey, model, systemPrompt, messages, maxTokens, jsonMode }) {
+async function callOpenAI({ apiKey, model, systemPrompt, messages, maxTokens, jsonMode, tools, toolChoice }) {
   const input = [];
   if (systemPrompt) input.push({ role: 'developer', content: systemPrompt });
   for (const message of messages) {
@@ -95,6 +97,8 @@ async function callOpenAI({ apiKey, model, systemPrompt, messages, maxTokens, js
       input,
       max_output_tokens: maxTokens,
       text: jsonMode ? { format: { type: 'json_object' } } : undefined,
+      tools: Array.isArray(tools) && tools.length ? tools : undefined,
+      tool_choice: toolChoice || undefined,
     }),
   });
   return extractOpenAIText(await parseResponse(response));

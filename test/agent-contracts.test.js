@@ -84,6 +84,64 @@ test('real ontology contract normalizes scalar fields', async () => {
   assert.deepEqual(result.artifact.targetUsers, ['agents']);
 });
 
+test('ontology prompt includes research packet and source-labeling instructions', async () => {
+  const cwd = await fs.mkdtemp(path.join(os.tmpdir(), 'skill-rsi-ontology-research-prompt-'));
+  await initProject({ cwd, projectName: 'UX Design', goal: 'Help agents design better UX.' });
+
+  const result = await runAgentContract({
+    cwd,
+    projectName: 'ux-design',
+    agentName: 'ontology',
+    runId: 'ontology-research-prompt',
+    mode: 'mock',
+    researchPacket: {
+      researchMode: 'sourced',
+      authorityMap: [{ name: 'Steve Jobs', strongOpinions: ['Start with the customer experience.'] }],
+    },
+    qualityFeedback: { issues: [{ code: 'missing_authority_map' }] },
+  });
+
+  assert.match(result.prompt, /Research packet:/);
+  assert.match(result.prompt, /sourced, inferred, or speculative/);
+  assert.match(result.prompt, /Previous quality report:/);
+});
+
+test('deconstructor prompt includes full champion package and Agent Skills standard', async () => {
+  const cwd = await fs.mkdtemp(path.join(os.tmpdir(), 'skill-rsi-deconstructor-package-prompt-'));
+  const init = await initProject({ cwd, projectName: 'UX Design', goal: 'Help agents design better UX.' });
+  await fs.mkdir(init.paths.championSkillDir, { recursive: true });
+  await fs.writeFile(path.join(init.paths.championSkillDir, 'SKILL.md'), `---
+name: ux-design
+description: Use for UX design.
+---
+
+# UX Design
+
+Load [heuristics](references/heuristics.md).
+`);
+  await fs.mkdir(path.join(init.paths.championSkillDir, 'references'), { recursive: true });
+  await fs.writeFile(path.join(init.paths.championSkillDir, 'references', 'heuristics.md'), '# Heuristics\n\nPrefer clarity.');
+  const state = JSON.parse(await fs.readFile(init.paths.stateJson, 'utf8'));
+  await fs.writeFile(init.paths.stateJson, JSON.stringify({
+    ...state,
+    currentChampion: { runId: 'run-001', candidateId: 'candidate-a', skillHash: 'hash' },
+  }, null, 2));
+
+  const result = await runAgentContract({
+    cwd,
+    projectName: 'ux-design',
+    agentName: 'deconstructor',
+    runId: 'deconstructor-package-prompt',
+    mode: 'mock',
+  });
+
+  assert.match(result.prompt, /Full champion package summary:/);
+  assert.match(result.prompt, /references\/heuristics\.md/);
+  assert.match(result.prompt, /Agent Skills standard:/);
+  assert.match(result.prompt, /artifactEvidence/);
+  assert.match(result.prompt, /couplingNotes/);
+});
+
 test('real deconstructor contract validates injected model JSON', async () => {
   const cwd = await fs.mkdtemp(path.join(os.tmpdir(), 'skill-rsi-agent-real-'));
   await initProject({ cwd, projectName: 'UX Design', goal: 'Help agents design better UX.' });

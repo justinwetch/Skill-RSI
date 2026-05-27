@@ -4,13 +4,23 @@ import { initProject } from './init.js';
 import { createRunId, getProjectPaths, getRunPaths } from './paths.js';
 import { appendHistory } from './history.js';
 import { runHeadlessEval } from './evaluator.js';
-import { materializeCreatorArtifact, runAgentContract, readAgentSkillsStandard } from './agent-contracts.js';
+import {
+  materializeCreatorArtifact,
+  readAgentSkillsStandard,
+  readChampionPackage,
+  runAgentContract,
+} from './agent-contracts.js';
 import { analyzeRun } from './analyst.js';
 import { designEvalBatch, naturalizeEvalPrompts, generateEvalCriteria } from './eval-design.js';
 import { applyPromptBankUpdates } from './prompt-bank.js';
 import { reviewCandidatePackage } from './reviewer.js';
 import { acquireProjectLock } from './lock.js';
 import { loadProjectConfig } from './config.js';
+import {
+  buildResearchPacket,
+  createDeconstructionQualityReport,
+  createOntologyQualityReport,
+} from './research.js';
 import {
   applyManagerGuidanceToPlan,
   createManagerArtifact,
@@ -25,7 +35,9 @@ import {
   validateHistoryIndex,
   validateOntology,
   validateParameterization,
+  validateQualityReport,
   validateRecommendation,
+  validateResearchPacket,
   validateRunState,
 } from './schema.js';
 import {
@@ -160,6 +172,225 @@ async function finishManager({ runPaths, managerArtifact, recommendation, nextSt
   return completed;
 }
 
+async function prepareResearchPacket({
+  paths,
+  runPaths,
+  runId,
+  goal,
+  agentModel,
+  apiKeys,
+  agentClient,
+  maxTokens,
+  researchConfig,
+}) {
+  const existing = await readJson(runPaths.researchPacketJson, null);
+  if (existing) return validateResearchPacket(existing);
+  const packet = await buildResearchPacket({
+    runId: `${runId}-research`,
+    goal,
+    model: agentModel,
+    apiKeys,
+    modelClient: agentClient,
+    config: researchConfig,
+    maxTokens,
+  });
+  await persistResearchPacket({
+    paths,
+    runPaths,
+    runId,
+    packet,
+    updateCurrent: true,
+    eventName: 'research_packet.written',
+  });
+  return packet;
+}
+
+async function persistResearchPacket({
+  paths,
+  runPaths,
+  runId,
+  packet,
+  updateCurrent = false,
+  eventName = 'research_packet.written',
+}) {
+  const validated = validateResearchPacket(packet);
+  await writeJson(runPaths.researchPacketJson, validated);
+  if (updateCurrent) await writeJson(paths.researchCurrent, validated);
+  await writeJson(runPaths.researchRawJson, {
+    runId,
+    provider: validated.provider,
+    researchMode: validated.researchMode,
+    rawModelText: validated.rawModelText || null,
+  });
+  await appendTimeline(runPaths.timelineJsonl, eventName, {
+    path: runPaths.researchPacketJson,
+    mode: validated.researchMode,
+    sources: validated.sources.length,
+  });
+  return validated;
+}
+
+async function applyOntologyQualityGate({
+  paths,
+  runPaths,
+  projectId,
+  runId,
+  goal,
+  ontology,
+  researchPacket,
+  qualityGateConfig,
+  researchConfig,
+  agentModel,
+  apiKeys,
+  agentClient,
+  maxTokens,
+  refresh = false,
+}) {
+  const firstReport = createOntologyQualityReport({ ontology, researchPacket, config: researchConfig });
+  let finalOntology = markQualityConfidence(ontology, firstReport);
+  let finalReport = firstReport;
+  if (shouldReviseQuality(firstReport, qualityGateConfig)) {
+    await appendTimeline(runPaths.timelineJsonl, 'ontology_quality.revision_requested', {
+      issues: firstReport.issues.length,
+      warnings: firstReport.warnings.length,
+    });
+    const revised = await runAgentContract({
+      cwd: path.dirname(paths.rootDir),
+      projectName: projectId,
+      agentName: 'ontology',
+      runId: `${runId}-ontology-revision`,
+      mode: 'real',
+      model: agentModel,
+      apiKeys,
+      modelClient: agentClient,
+      researchPacket,
+      qualityFeedback: firstReport,
+      refresh,
+      maxTokens,
+    });
+    finalOntology = validateOntology(revised.artifact);
+    finalReport = {
+      ...createOntologyQualityReport({ ontology: finalOntology, researchPacket, config: researchConfig }),
+      revisedFrom: firstReport,
+    };
+    finalOntology = markQualityConfidence(finalOntology, finalReport);
+  }
+  finalReport = validateQualityReport(finalReport);
+  await writeJson(runPaths.ontologyQualityReportJson, finalReport);
+  await appendTimeline(runPaths.timelineJsonl, 'ontology_quality.completed', {
+    status: finalReport.status,
+    issues: finalReport.issues.length,
+    warnings: finalReport.warnings.length,
+    revised: Boolean(finalReport.revisedFrom),
+  });
+  if (qualityGateConfig?.mode === 'strict' && finalReport.issues.length) {
+    throw new Error(`Ontology quality gate failed: ${finalReport.issues.map(item => item.code).join(', ')}`);
+  }
+  return finalOntology;
+}
+
+async function applyDeconstructionQualityGate({
+  paths,
+  runPaths,
+  projectId,
+  runId,
+  parameterization,
+  researchPacket,
+  qualityGateConfig,
+  agentModel,
+  apiKeys,
+  agentClient,
+  maxTokens,
+}) {
+  const championPackage = await readChampionPackage(paths);
+  const firstReport = createDeconstructionQualityReport({ parameterization, championPackage });
+  let finalParameterization = markQualityConfidence(parameterization, firstReport);
+  let finalReport = firstReport;
+  if (shouldReviseQuality(firstReport, qualityGateConfig)) {
+    await appendTimeline(runPaths.timelineJsonl, 'deconstruction_quality.revision_requested', {
+      issues: firstReport.issues.length,
+      warnings: firstReport.warnings.length,
+    });
+    const revised = await runAgentContract({
+      cwd: path.dirname(paths.rootDir),
+      projectName: projectId,
+      agentName: 'deconstructor',
+      runId: `${runId}-deconstructor-revision`,
+      mode: 'real',
+      model: agentModel,
+      apiKeys,
+      modelClient: agentClient,
+      researchPacket,
+      qualityFeedback: firstReport,
+      maxTokens,
+    });
+    finalParameterization = validateParameterization(revised.artifact);
+    finalReport = {
+      ...createDeconstructionQualityReport({ parameterization: finalParameterization, championPackage }),
+      revisedFrom: firstReport,
+    };
+    finalParameterization = markQualityConfidence(finalParameterization, finalReport);
+  }
+  finalReport = validateQualityReport(finalReport);
+  await writeJson(runPaths.deconstructionQualityReportJson, finalReport);
+  await appendTimeline(runPaths.timelineJsonl, 'deconstruction_quality.completed', {
+    status: finalReport.status,
+    issues: finalReport.issues.length,
+    warnings: finalReport.warnings.length,
+    revised: Boolean(finalReport.revisedFrom),
+  });
+  if (qualityGateConfig?.mode === 'strict' && finalReport.issues.length) {
+    throw new Error(`Deconstruction quality gate failed: ${finalReport.issues.map(item => item.code).join(', ')}`);
+  }
+  return finalParameterization;
+}
+
+function shouldReviseQuality(report, config = {}) {
+  return config.mode === 'warn_and_revise' && report.revisionRecommended;
+}
+
+function markQualityConfidence(artifact, report) {
+  return {
+    ...artifact,
+    qualityGate: {
+      status: report.status,
+      confidence: report.confidence,
+      issueCount: report.issues.length,
+      warningCount: report.warnings.length,
+    },
+  };
+}
+
+async function createFallbackResearchFromOntology({ runId, goal, ontology }) {
+  return validateResearchPacket({
+    runId: `${runId}-research-reused`,
+    skillGoal: goal,
+    researchMode: ontology?.researchMode || 'inference',
+    provider: 'reused-ontology',
+    sources: [],
+    searchTrace: [],
+    evidenceClaims: (ontology?.evidenceClaims || [{
+      claim: 'Reused ontology without a fresh research packet.',
+      evidenceBasis: 'inferred',
+      sourceRefs: [],
+      confidence: 'low',
+      implicationsForSkill: ['Treat ontology claims as inherited context.'],
+    }]),
+    authorityMap: ontology?.authorityMap?.length ? ontology.authorityMap : [{
+      name: 'Reused ontology authorities',
+      authorityType: 'unknown',
+      whyTheyMatter: 'No fresh authority research was run for this iteration.',
+      strongOpinions: ['No fresh authority opinions gathered.'],
+      implicationsForSkill: ['Avoid promoting authority claims beyond prior ontology evidence.'],
+      misuseRisks: ['Current run may inherit stale authority assumptions.'],
+      evidenceBasis: 'inferred',
+      sourceRefs: [],
+    }],
+    openQuestions: ontology?.openQuestions || [],
+    gaps: ontology?.researchGaps || ['No current-run research packet was created.'],
+  });
+}
+
 // Find the most recent run that started but never completed, so we can resume it.
 async function findIncompleteRun(paths) {
   if (!(await pathExists(paths.runsDir))) return null;
@@ -262,6 +493,8 @@ export async function runProject({
           evalBatch: config.eval,
           evalOutputType,
           evalRetryPolicy,
+          researchConfig: config.research,
+          qualityGateConfig: config.qualityGate,
           budgetEstimate: estimateBudgetForOneLoop(config),
           triggerContext: {
             mode: runTrigger,
@@ -507,11 +740,14 @@ async function runAgenticLoop({
   evalBatch = null,
   evalOutputType = 'text',
   evalRetryPolicy = {},
+  researchConfig = {},
+  qualityGateConfig = {},
   budgetEstimate = null,
   triggerContext = { mode: 'manual', hook: null },
   resuming = false,
 }) {
   await ensureDir(runPaths.runDir);
+  await ensureDir(runPaths.researchDir);
   await ensureDir(runPaths.evalRawDir);
   await ensureDir(runPaths.analysisDir);
   await appendTimeline(runPaths.timelineJsonl, resuming ? 'run.resumed' : 'run.started', {
@@ -541,6 +777,8 @@ async function runAgenticLoop({
     },
     promotionPolicy: promotion,
     models: createRunModelMetadata({ agentModel, generationModel, judgeModel, modelParameters }),
+    researchPolicy: researchConfig,
+    qualityGatePolicy: qualityGateConfig,
     budgetEstimate,
   };
   await writeJson(runPaths.runJson, runRecord);
@@ -551,9 +789,21 @@ async function runAgenticLoop({
   let ontology = await readJson(paths.ontologyCurrent, null);
   const championHash = state.currentChampion?.skillHash || null;
   const ontologyRefreshState = await readJson(ontologyRefreshStatePath, null);
+  let researchPacket = await reuseJson(paths.researchCurrent, validateResearchPacket);
 
   if (!ontology) {
     // First run: build the initial domain map from scratch.
+    researchPacket = await prepareResearchPacket({
+      paths,
+      runPaths,
+      runId,
+      goal,
+      agentModel,
+      apiKeys,
+      agentClient,
+      maxTokens: modelParameters.agentMaxTokens,
+      researchConfig,
+    });
     const ontologyResult = await runAgentContract({
       cwd: path.dirname(paths.rootDir),
       projectName: projectId,
@@ -563,9 +813,25 @@ async function runAgenticLoop({
       model: agentModel,
       apiKeys,
       modelClient: agentClient,
+      researchPacket,
       maxTokens: modelParameters.agentMaxTokens,
     });
     ontology = validateOntology(ontologyResult.artifact);
+    ontology = await applyOntologyQualityGate({
+      paths,
+      runPaths,
+      projectId,
+      runId,
+      goal,
+      ontology,
+      researchPacket,
+      qualityGateConfig,
+      researchConfig,
+      agentModel,
+      apiKeys,
+      agentClient,
+      maxTokens: modelParameters.agentMaxTokens,
+    });
     await writeJson(paths.ontologyCurrent, ontology);
     await writeJson(path.join(runPaths.deconstructionDir, 'ontology.json'), ontology);
     await writeJson(ontologyRefreshStatePath, { championHash });
@@ -577,6 +843,17 @@ async function runAgenticLoop({
     });
   } else if (championHash && championHash !== ontologyRefreshState?.championHash) {
     // The champion changed since the map was last built (§6.2/§6.6): refresh it conservatively.
+    researchPacket = await prepareResearchPacket({
+      paths,
+      runPaths,
+      runId,
+      goal,
+      agentModel,
+      apiKeys,
+      agentClient,
+      maxTokens: modelParameters.agentMaxTokens,
+      researchConfig,
+    });
     const refreshed = await runAgentContract({
       cwd: path.dirname(paths.rootDir),
       projectName: projectId,
@@ -587,9 +864,26 @@ async function runAgenticLoop({
       apiKeys,
       modelClient: agentClient,
       refresh: true,
+      researchPacket,
       maxTokens: modelParameters.agentMaxTokens,
     });
     ontology = validateOntology(refreshed.artifact);
+    ontology = await applyOntologyQualityGate({
+      paths,
+      runPaths,
+      projectId,
+      runId,
+      goal,
+      ontology,
+      researchPacket,
+      qualityGateConfig,
+      researchConfig,
+      agentModel,
+      apiKeys,
+      agentClient,
+      maxTokens: modelParameters.agentMaxTokens,
+      refresh: true,
+    });
     await writeJson(paths.ontologyCurrent, ontology);
     await writeJson(path.join(runPaths.deconstructionDir, 'ontology.json'), ontology);
     await writeJson(ontologyRefreshStatePath, { championHash });
@@ -604,6 +898,26 @@ async function runAgenticLoop({
   } else {
     await appendTimeline(runPaths.timelineJsonl, 'ontology.reused', { path: paths.ontologyCurrent });
   }
+  if (!researchPacket) {
+    researchPacket = await createFallbackResearchFromOntology({ runId, goal, ontology });
+    await persistResearchPacket({
+      paths,
+      runPaths,
+      runId,
+      packet: researchPacket,
+      updateCurrent: false,
+      eventName: 'research_packet.fallback_written',
+    });
+  } else if (!(await pathExists(runPaths.researchPacketJson))) {
+    await persistResearchPacket({
+      paths,
+      runPaths,
+      runId,
+      packet: researchPacket,
+      updateCurrent: false,
+      eventName: 'research_packet.reused',
+    });
+  }
 
   let parameterization = await reuseJson(runPaths.parameterizationJson, validateParameterization);
   if (!parameterization) {
@@ -616,9 +930,24 @@ async function runAgenticLoop({
       model: agentModel,
       apiKeys,
       modelClient: agentClient,
+      researchPacket,
       maxTokens: modelParameters.agentMaxTokens,
     });
     parameterization = validateParameterization(deconstructorResult.artifact);
+    parameterization = await applyDeconstructionQualityGate({
+      paths,
+      runPaths,
+      projectId,
+      runId,
+      goal,
+      parameterization,
+      researchPacket,
+      qualityGateConfig,
+      agentModel,
+      apiKeys,
+      agentClient,
+      maxTokens: modelParameters.agentMaxTokens,
+    });
     await writeJson(paths.parameterizationCurrent, parameterization);
     await writeJson(runPaths.parameterizationJson, parameterization);
     const seededFromOntology = !state.currentChampion;

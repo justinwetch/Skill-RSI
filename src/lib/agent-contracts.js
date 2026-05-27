@@ -15,6 +15,7 @@ import {
   createStubOntology,
   createStubParameterization,
 } from './stub-agents.js';
+import { loadSkillPackage } from './skill-package.js';
 
 export const AGENT_NAMES = ['ontology', 'deconstructor', 'experiment-planner', 'creator', 'analyst'];
 
@@ -40,6 +41,8 @@ export async function runAgentContract({
   revision = null,
   refresh = false,
   managerPlan = null,
+  researchPacket = null,
+  qualityFeedback = null,
   maxTokens = null,
 }) {
   if (!AGENT_NAMES.includes(agentName)) {
@@ -71,13 +74,16 @@ export async function runAgentContract({
     experimentArm,
     revision,
     refresh,
+    qualityFeedback,
+    researchPacket,
     championSkill: await readChampionSkill(paths),
+    championPackage: await readChampionPackage(paths),
     history: await readJson(paths.historyIndex, null),
-    agentSkillsStandard: (agentName === 'creator' || agentName === 'ontology') ? await readAgentSkillsStandard(cwd) : null,
+    agentSkillsStandard: ['creator', 'ontology', 'deconstructor'].includes(agentName) ? await readAgentSkillsStandard(cwd) : null,
   };
   const prompt = buildAgentPrompt({ agentName, context });
-  const artifact = mode === 'mock'
-    ? await createMockArtifact({ agentName, context, runPaths })
+  const realResult = mode === 'mock'
+    ? { artifact: await createMockArtifact({ agentName, context, runPaths }), rawModelText: null }
     : await createRealArtifact({ agentName, context, prompt, model, apiKeys, modelClient, maxTokens });
 
   return {
@@ -90,7 +96,8 @@ export async function runAgentContract({
     } : null,
     createdAt: new Date().toISOString(),
     prompt,
-    artifact,
+    rawModelText: realResult.rawModelText,
+    artifact: realResult.artifact,
   };
 }
 
@@ -111,7 +118,7 @@ async function createRealArtifact({ agentName, context, prompt, model, apiKeys, 
     throw error;
   }
   try {
-    return validateAgentArtifact(agentName, artifact, context);
+    return { artifact: validateAgentArtifact(agentName, artifact, context), rawModelText: text };
   } catch (error) {
     annotateContractError(error, { agentName, context, rawModelText: text, rawArtifact: artifact });
     throw error;
@@ -307,13 +314,17 @@ Run ID: ${context.runId}
 Existing ontology:
 ${formatContextBlock(context.ontology)}
 
+Research packet:
+${formatContextBlock(context.researchPacket)}
+
 Current champion SKILL.md:
 ${context.championSkill || 'No current champion skill exists yet.'}
 
 Experiment history summary:
 ${formatContextBlock(compactHistory(context.history))}
 
-Update the ontology conservatively. Keep the existing structure and stable categories; only fill in genuinely missing categories or correct assumptions that the current champion or history now contradicts (e.g. new task classes, failure modes, or quality axes the champion revealed). Do NOT rewrite it wholesale or rename stable entries.
+Update the ontology conservatively. Keep the existing structure and stable categories; only fill in genuinely missing categories or correct assumptions that the current champion, research packet, or history now contradicts (e.g. new task classes, failure modes, or quality axes the champion revealed). Do NOT rewrite it wholesale or rename stable entries.
+${qualityFeedbackBlock(context)}
 ${ontologyStandardBlock(context)}
 Return the COMPLETE SkillOntology JSON with these fields:
 ${ONTOLOGY_FIELDS}`;
@@ -323,7 +334,12 @@ ${ONTOLOGY_FIELDS}`;
 Goal: ${context.goal}
 Run ID: ${context.runId}
 
+Research packet:
+${formatContextBlock(context.researchPacket)}
+
 Map the domain and Agent Skill design space.
+Build an evidence-backed ontology. Include authorityMap, evidenceClaims, sourceRefs, inferenceLabels, unsupportedClaims, and researchGaps as companion fields. Classify major claims as sourced, inferred, or speculative. Translate authority opinions into concrete implications for this skill and include misuse risks.
+${qualityFeedbackBlock(context)}
 ${ontologyStandardBlock(context)}
 Return JSON matching SkillOntology with these fields:
 ${ONTOLOGY_FIELDS}`;
@@ -335,6 +351,14 @@ function ontologyStandardBlock(context) {
 === AGENT SKILLS STANDARD ===
 ${context.agentSkillsStandard}
 === END STANDARD ===\n`;
+}
+
+function qualityFeedbackBlock(context) {
+  if (!context.qualityFeedback) return '';
+  return `\nPrevious quality report:
+${formatContextBlock(context.qualityFeedback)}
+
+Revise the artifact to address every issue in the quality report. Keep valid existing structure, but replace generic claims with concrete, evidence-labeled content.\n`;
 }
 
 function buildDeconstructorPrompt(context) {
@@ -353,9 +377,16 @@ There is no champion skill yet — this is the first pass, so do NOT assume any 
 Ontology (domain and design-space map):
 ${formatContextBlock(context.ontology)}
 
+Research packet:
+${formatContextBlock(context.researchPacket)}
+
+Agent Skills standard:
+${formatContextBlock(context.agentSkillsStandard)}
+
 Using the ontology's domain map, define the INITIAL parameter taxonomy for this skill: the surfaces a strong first version must get right — activation/triggering, workflow sequence, decision heuristics, context vs. reference split, output contract, validation, failure handling, examples, and packaging. Return JSON matching SkillParameterization:
 runId, championSkillHash (use "none"), summary, parameters, crossParameterInteractions, highestLeverageHypotheses, doNotTouchYet, suggestedExperimentFamilies.
-Provide at least 12 parameters. For each, currentImplementation should describe the intended baseline (since none exists yet). Each parameter must include id, surface, currentImplementation, improvementHypothesis, expectedBenefit, regressionRisk, evidenceFromHistory, possibleMutations, measurementPlan, priority, confidence, and granularity.`;
+Provide at least 12 parameters. For each, currentImplementation should describe the intended baseline (since none exists yet). Each parameter must include id, surface, currentImplementation, improvementHypothesis, expectedBenefit, regressionRisk, artifactEvidence, evidenceFromHistory, possibleMutations, measurementPlan, couplingNotes, priority, confidence, and granularity.
+${qualityFeedbackBlock(context)}`;
   }
 
   return `You are the Deconstruction and Parameterization Agent for Skill RSI.
@@ -366,15 +397,25 @@ Current champion: ${context.state.currentChampion?.skillHash || 'none'}
 Ontology context:
 ${formatContextBlock(context.ontology)}
 
+Research packet:
+${formatContextBlock(context.researchPacket)}
+
 Experiment history summary:
 ${formatContextBlock(compactHistory(context.history))}
 
 Current champion SKILL.md:
 ${context.championSkill}
 
+Full champion package summary:
+${formatContextBlock(context.championPackage)}
+
+Agent Skills standard:
+${formatContextBlock(context.agentSkillsStandard)}
+
 Deconstruct the current champion into at least 12 granular improvement parameters. Return JSON matching SkillParameterization:
 runId, championSkillHash, summary, parameters, crossParameterInteractions, highestLeverageHypotheses, doNotTouchYet, suggestedExperimentFamilies.
-Each parameter must include id, surface, currentImplementation, improvementHypothesis, expectedBenefit, regressionRisk, evidenceFromHistory, possibleMutations, measurementPlan, priority, confidence, and granularity.`;
+Each parameter must include id, surface, currentImplementation, improvementHypothesis, expectedBenefit, regressionRisk, artifactEvidence, evidenceFromHistory, possibleMutations, measurementPlan, couplingNotes, priority, confidence, and granularity.
+${qualityFeedbackBlock(context)}`;
 }
 
 function buildExperimentPlannerPrompt(context) {
@@ -584,6 +625,14 @@ function normalizeOntology(artifact, context = {}) {
     evalPromptTaxonomy: normalizeArray(artifact.evalPromptTaxonomy, ['direct request', 'ambiguous request', 'edge case request']),
     candidateStrategySpace: normalizeArray(artifact.candidateStrategySpace, ['lean procedural', 'reference-rich']),
     openQuestions: normalizeArray(artifact.openQuestions),
+    researchMode: artifact.researchMode || context.researchPacket?.researchMode || 'inference',
+    evidenceBasis: normalizeArray(artifact.evidenceBasis || artifact.evidenceClaims),
+    sourceRefs: normalizeArray(artifact.sourceRefs),
+    authorityMap: normalizeArray(artifact.authorityMap || context.researchPacket?.authorityMap),
+    evidenceClaims: normalizeArray(artifact.evidenceClaims || context.researchPacket?.evidenceClaims),
+    inferenceLabels: normalizeArray(artifact.inferenceLabels),
+    unsupportedClaims: normalizeArray(artifact.unsupportedClaims),
+    researchGaps: normalizeArray(artifact.researchGaps || context.researchPacket?.gaps),
   };
 }
 
@@ -717,9 +766,11 @@ function normalizeParameterization(artifact, context = {}) {
       improvementHypothesis: normalizeString(parameter.improvementHypothesis || parameter.hypothesis, 'Changing this surface may improve skill quality.'),
       expectedBenefit: normalizeString(parameter.expectedBenefit, 'Potentially improves the target quality axes.'),
       regressionRisk: normalizeString(parameter.regressionRisk, 'Could reduce performance on currently handled cases.'),
+      artifactEvidence: normalizeArray(parameter.artifactEvidence, ['No artifact evidence returned; treat this parameter as low-confidence.']),
       evidenceFromHistory: normalizeArray(parameter.evidenceFromHistory),
       possibleMutations: normalizeArray(parameter.possibleMutations, ['test a focused mutation']),
       measurementPlan: normalizeString(parameter.measurementPlan, 'Compare candidate outputs on prompts targeting this parameter and inspect score deltas plus judge reasoning.'),
+      couplingNotes: normalizeArray(parameter.couplingNotes, ['No coupling notes returned.']),
       priority: normalizeEnum(parameter.priority, ['low', 'medium', 'high'], 'medium'),
       confidence: normalizeEnum(parameter.confidence, ['low', 'medium', 'high'], 'low'),
       granularity: normalizeEnum(parameter.granularity, ['micro', 'section', 'package', 'strategy'], 'section'),
@@ -773,6 +824,29 @@ async function readChampionSkill(paths) {
   } catch (error) {
     if (error.code === 'ENOENT') return null;
     throw error;
+  }
+}
+
+export async function readChampionPackage(paths) {
+  try {
+    const skillPackage = await loadSkillPackage(paths.championSkillDir);
+    return {
+      packageType: skillPackage.packageType,
+      hash: skillPackage.hash,
+      fileCount: skillPackage.files.length,
+      files: skillPackage.files
+        .filter(file => file.kind === 'text')
+        .slice(0, 12)
+        .map(file => ({
+          path: file.path,
+          role: file.role,
+          contentPreview: file.content.length > 2500 ? `${file.content.slice(0, 2500)}\n...[truncated]` : file.content,
+        })),
+      omittedFiles: skillPackage.omittedFiles,
+    };
+  } catch (error) {
+    if (error.code === 'ENOENT') return null;
+    return null;
   }
 }
 

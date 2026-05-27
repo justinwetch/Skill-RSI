@@ -2,9 +2,7 @@
 
 Recursive Self-Improvement for Agent Skills
 
-For current implementation status and next work, see
-[`IMPLEMENTATION_TRACKER.md`](IMPLEMENTATION_TRACKER.md). This document remains
-the conceptual source of truth for architecture and product intent.
+This document is the conceptual source of truth for architecture and product intent.
 
 ## 1. Goal
 
@@ -1074,14 +1072,16 @@ Acceptance criteria:
 
 ### Milestone 8: Visual And UI Expansion
 
-Tasks:
+Status: deferred / v2. This should not be treated as part of the default text-first RSI loop until the visual evaluation contract has been discussed and specified. See section 21.
+
+Possible tasks:
 
 - Reuse SkillEval screenshot server for visual outputs.
 - Add visual output artifact storage.
 - Build optional web UI for run history, candidates, and comparisons.
 - Add human review interface.
 
-Acceptance criteria:
+Possible acceptance criteria:
 
 - Visual skills can be evaluated without using the SkillEval GUI.
 - Screenshots are stored alongside judge results.
@@ -1145,3 +1145,22 @@ Report: .skill-rsi/projects/ux-design/runs/2026-05-25T210000Z/analysis/report.md
 - Agent Skills specification: https://agentskills.io/specification
 - Agent Skills evaluation guidance: https://agentskills.io/skill-creation/evaluating-skills
 - Claude Code skills documentation: https://code.claude.com/docs/en/skills
+
+## 21. Deferred / V2: Visual And UI Expansion
+
+Phase 5 is intentionally deferred and requires discussion before implementation. The core text-only RSI loop should remain the default path until there is a concrete visual skill target and clear agreement on how visual evidence should affect promotion.
+
+The likely implementation chunks are:
+
+1. Visual contract only: define the artifact schema without running visual eval yet. This should include screenshot paths, viewport metadata, render errors, image hashes, judge modality, and how visual failures affect promotion.
+2. Minimal screenshot runner: adapt the SkillEval screenshot-server approach into a small headless runner behind `eval.visualRunner: true`. Text eval stays the default.
+3. UI artifact viewing: add read-only surfaces for screenshots, visual judge output, and render failures. Avoid approval controls unless they are backed by implemented backend behavior.
+4. Audit annotations: keep human review as annotation/audit by default, not a required promotion step, so the RSI premise remains intact.
+
+Open questions before work starts:
+
+1. Which visual skill is the first real target?
+2. What viewports and rendering environments count as canonical?
+3. Should visual failures block promotion, lower confidence, or only create analyst warnings?
+4. How much of SkillEval's screenshot server should be reused directly versus wrapped behind a smaller Skill RSI contract?
+5. Should mixed text-plus-visual eval be one combined judge pass or separate modality-specific passes merged by policy?

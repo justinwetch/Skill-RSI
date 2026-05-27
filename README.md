@@ -67,8 +67,7 @@ OPENAI_API_KEY=sk-...
 Generated experiment data is written under `.skill-rsi/projects/<project>/`.
 
 For unattended runs, see [`docs/SCHEDULING.md`](docs/SCHEDULING.md).
-For current implementation status and the checkoff roadmap, see
-[`IMPLEMENTATION_TRACKER.md`](IMPLEMENTATION_TRACKER.md).
+For the architecture and product roadmap, see [`IMPLEMENTATION_PLAN.md`](IMPLEMENTATION_PLAN.md).
 
 ## Implemented
 

@@ -348,6 +348,47 @@ test('creator prompt includes Agent Skills standard and Skill Creator guidance',
   assert.match(result.prompt, /control\/status-quo arm/);
 });
 
+test('creator prompt includes current champion auxiliary package files', async () => {
+  const cwd = await fs.mkdtemp(path.join(os.tmpdir(), 'skill-rsi-creator-package-context-'));
+  const init = await initProject({
+    cwd,
+    projectName: 'Frontend Design',
+    goal: 'Help agents produce implementation-ready frontend design work.',
+    evalOutputType: 'code',
+  });
+  await fs.mkdir(init.paths.championSkillDir, { recursive: true });
+  await fs.writeFile(path.join(init.paths.championSkillDir, 'SKILL.md'), `---
+name: frontend-design
+description: Use when producing frontend implementation code.
+license: Complete terms in LICENSE.txt
+---
+
+# Frontend Design
+
+Produce production-ready UI code.
+`, 'utf8');
+  await fs.writeFile(path.join(init.paths.championSkillDir, 'LICENSE.txt'), 'Copyright terms stay with the package.\n', 'utf8');
+  const state = JSON.parse(await fs.readFile(init.paths.stateJson, 'utf8'));
+  await fs.writeFile(init.paths.stateJson, JSON.stringify({
+    ...state,
+    currentChampion: { runId: 'run-001', candidateId: 'baseline', skillHash: 'hash' },
+  }, null, 2), 'utf8');
+
+  const result = await runAgentContract({
+    cwd,
+    projectName: 'frontend-design',
+    agentName: 'creator',
+    runId: 'creator-package-context',
+    mode: 'mock',
+    experimentArm: 'candidateA',
+  });
+
+  assert.match(result.prompt, /Current champion package:/);
+  assert.match(result.prompt, /LICENSE\.txt/);
+  assert.match(result.prompt, /Copyright terms stay with the package/);
+  assert.match(result.prompt, /Preserve required auxiliary package files/);
+});
+
 test('creator prompt includes the project output contract', async () => {
   const cwd = await fs.mkdtemp(path.join(os.tmpdir(), 'skill-rsi-creator-output-contract-'));
   await initProject({

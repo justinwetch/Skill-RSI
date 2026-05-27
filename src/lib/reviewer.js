@@ -42,6 +42,7 @@ export async function reviewCandidatePackage({
   if (entrypoint) {
     reviewEntrypoint({ entrypoint, candidate, blockingIssues, recommendedEdits, maxSkillLines });
     reviewInstructionalDepth({ entrypoint, championPackage, experimentPlan, blockingIssues, nonIssues });
+    reviewPackageFileFidelity({ entrypoint, skillPackage, championPackage, experimentPlan, blockingIssues, recommendedEdits, nonIssues });
   }
 
   reviewInternalLeakage({ skillPackage, blockingIssues, nonIssues });
@@ -97,6 +98,56 @@ export async function reviewCandidatePackage({
   });
 
   return review;
+}
+
+function reviewPackageFileFidelity({ entrypoint, skillPackage, championPackage, experimentPlan, blockingIssues, recommendedEdits, nonIssues }) {
+  const frontmatter = parseFrontmatter(entrypoint.content);
+  const candidatePaths = new Set(skillPackage.files.map(file => file.path));
+  const missingLicense = referencedLicensePath(frontmatter?.license);
+  if (missingLicense && !candidatePaths.has(missingLicense)) {
+    recommendedEdits.push(issue({
+      severity: 'recommended',
+      surface: 'package-fidelity',
+      message: `Frontmatter license references ${missingLicense}, but that file is not included in the candidate package.`,
+      recommendation: `Include ${missingLicense} in the package or replace the license frontmatter with a self-contained license identifier.`,
+    }));
+  }
+
+  if (!championPackage?.files?.length || isHighDivergenceExperiment(experimentPlan)) {
+    if (!missingLicense) nonIssues.push('Champion package file fidelity comparison was not applicable.');
+    return;
+  }
+
+  const missingChampionFiles = championPackage.files
+    .map(file => file.path)
+    .filter(filePath => (
+      filePath !== 'SKILL.md'
+      && filePath !== missingLicense
+      && !candidatePaths.has(filePath)
+    ));
+  if (missingChampionFiles.length) {
+    const referencedMissing = missingChampionFiles.filter(filePath => (
+      entrypoint.content.includes(filePath) || filePath === missingLicense
+    ));
+    if (referencedMissing.length) {
+      blockingIssues.push(issue({
+        severity: 'blocking',
+        surface: 'package-fidelity',
+        message: `Candidate package dropped champion file(s) still referenced or required by SKILL.md: ${referencedMissing.join(', ')}.`,
+        recommendation: 'Preserve referenced auxiliary files from the champion package during local ablations.',
+      }));
+    } else {
+      nonIssues.push(`Candidate omitted unreferenced champion auxiliary file(s): ${missingChampionFiles.join(', ')}.`);
+    }
+  } else {
+    nonIssues.push('Candidate preserved champion auxiliary package files.');
+  }
+}
+
+function referencedLicensePath(licenseValue) {
+  const value = String(licenseValue || '');
+  const match = value.match(/\b(LICENSE(?:\.[A-Za-z0-9]+)?)\b/);
+  return match ? match[1] : null;
 }
 
 function reviewInstructionalDepth({ entrypoint, championPackage, experimentPlan, blockingIssues, nonIssues }) {

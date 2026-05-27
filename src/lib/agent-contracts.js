@@ -485,6 +485,9 @@ ${formatContextBlock(outputContract)}
 Current champion SKILL.md:
 ${context.championSkill || 'No current champion skill exists yet.'}
 
+Current champion package:
+${formatChampionPackageForCreator(context.championPackage)}
+
 ${context.revision ? `Revision attempt: ${context.revision.attempt}
 
 You are revising a candidate that failed adversarial preflight. Produce a full replacement candidate package, not a patch. Preserve the assigned experiment arm and the experiment intent, but fix every blocking issue. Do not import the other arm's mechanism just because it seems useful; if a review recommendation conflicts with this arm's preserve/control instructions, keep the assigned arm faithful and only fix the actual blocking problem.
@@ -504,6 +507,7 @@ Experiment discipline:
 - Start from the champion's structure, activation policy, voice, file layout, and core workflow. Change only what the assigned experiment arm requires.
 - Preserve every unrelated section and behavior unless the active experiment plan explicitly calls for a high_divergence_reset.
 - Preserve the champion's instructional depth and specificity. Do not compress a rich existing skill into a short generic summary; if the champion is detailed, the candidate should remain comparably detailed while changing only the tested surface.
+- Preserve required auxiliary package files from the champion, such as LICENSE.txt, referenced scripts, references, or assets, unless the assigned experiment explicitly removes or replaces that package surface. Return every file needed for the generated package to be self-contained.
 - For a control/status-quo arm, it is acceptable for the package to be nearly identical to the champion except for safe spec cleanup; do not add the treatment arm's explicit mechanism.
 - Your rationale and selfCritique must identify what was intentionally preserved and what changed because of the selected parameters.
 
@@ -527,6 +531,19 @@ Authoring rules for this package, on top of that standard:
 
 If assigned candidateA, use candidateId "candidate-a" and experimentArm "candidateA". If assigned candidateB, use candidateId "candidate-b" and experimentArm "candidateB".
 Return JSON with candidateId, experimentArm, strategy, changedParameterIds, files [{path, content}], rationale, expectedAdvantages, expectedRisks, and selfCritique. candidateId/experimentArm/strategy/changedParameterIds are Skill RSI metadata returned in the JSON ONLY — they must NOT appear inside any package file.`;
+}
+
+function formatChampionPackageForCreator(championPackage) {
+  if (!championPackage?.files?.length) return 'No current champion package exists yet.';
+  const parts = championPackage.files.map(file => {
+    if (file.path === 'SKILL.md') return `- SKILL.md (shown above)`;
+    const preview = typeof file.content === 'string' ? file.content : file.contentPreview;
+    const content = typeof preview === 'string' && preview.trim()
+      ? `\n  Content:\n  """\n${preview.slice(0, 2000)}\n  """`
+      : '';
+    return `- ${file.path}${content}`;
+  });
+  return parts.join('\n');
 }
 
 function normalizeOutputType(outputType) {

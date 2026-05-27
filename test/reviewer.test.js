@@ -252,3 +252,98 @@ ${championBody}
   assert.equal(review.approveForEval, false);
   assert.ok(review.blockingIssues.some(issue => issue.surface === 'instructional-depth'));
 });
+
+test('candidate reviewer treats frontmatter-only missing license files as advisory', async () => {
+  const cwd = await fs.mkdtemp(path.join(os.tmpdir(), 'skill-rsi-review-missing-license-'));
+  const skillDir = path.join(cwd, 'skill');
+  await fs.mkdir(skillDir, { recursive: true });
+  await fs.writeFile(path.join(skillDir, 'SKILL.md'), `---
+name: frontend-design
+description: Use when helping agents produce production-ready frontend implementation code.
+license: Complete terms in LICENSE.txt
+---
+
+# Frontend Design
+
+## Workflow
+1. Produce code.
+2. Validate the implementation.
+`, 'utf8');
+
+  const review = await reviewCandidatePackage({
+    candidate: {
+      candidateId: 'candidate-a',
+      experimentArm: 'candidateA',
+      skillPath: skillDir,
+      changedParameterIds: ['p01'],
+    },
+    experimentPlan: { focusParameterIds: ['p01'] },
+  });
+
+  assert.equal(review.approveForEval, true);
+  assert.equal(review.blockingIssues.some(issue => issue.surface === 'package-fidelity'), false);
+  assert.ok(review.recommendedEdits.some(issue => (
+    issue.surface === 'package-fidelity'
+    && issue.message.includes('LICENSE.txt')
+  )));
+  assert.equal(review.nonIssues.some(item => item.includes('preserved champion auxiliary')), false);
+});
+
+test('candidate reviewer blocks dropped champion auxiliary files still referenced by SKILL.md', async () => {
+  const cwd = await fs.mkdtemp(path.join(os.tmpdir(), 'skill-rsi-review-dropped-reference-'));
+  const skillDir = path.join(cwd, 'skill');
+  await fs.mkdir(skillDir, { recursive: true });
+  await fs.writeFile(path.join(skillDir, 'SKILL.md'), `---
+name: ux-design
+description: Use when helping agents design production UX.
+---
+
+# UX Design
+
+Load references/heuristics.md before giving final guidance.
+`, 'utf8');
+
+  const review = await reviewCandidatePackage({
+    candidate: {
+      candidateId: 'candidate-b',
+      experimentArm: 'candidateB',
+      skillPath: skillDir,
+      changedParameterIds: ['p02'],
+    },
+    experimentPlan: {
+      focusParameterIds: ['p02'],
+      arms: {
+        candidateA: { strategyName: 'local edit', mutationInstructions: ['Adjust the example density.'] },
+        candidateB: { strategyName: 'control', mutationInstructions: ['Preserve the reference-loading behavior.'] },
+      },
+    },
+    championPackage: {
+      files: [
+        {
+          path: 'SKILL.md',
+          kind: 'text',
+          content: `---
+name: ux-design
+description: Use when helping agents design production UX.
+---
+
+# UX Design
+
+Load references/heuristics.md before giving final guidance.
+`,
+        },
+        {
+          path: 'references/heuristics.md',
+          kind: 'text',
+          content: '# Heuristics\n\nPrefer clarity over novelty.\n',
+        },
+      ],
+    },
+  });
+
+  assert.equal(review.approveForEval, false);
+  assert.ok(review.blockingIssues.some(issue => (
+    issue.surface === 'package-fidelity'
+    && issue.message.includes('references/heuristics.md')
+  )));
+});

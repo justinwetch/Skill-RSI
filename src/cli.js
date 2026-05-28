@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 
-import { initProject } from './lib/init.js';
 import { runProject } from './lib/run-loop.js';
+import { initProject } from './lib/init.js';
 import { readProjectStatus } from './lib/status.js';
 import { loadSkillPackage } from './lib/skill-package.js';
 import { runHeadlessEval } from './lib/evaluator.js';
@@ -11,19 +11,28 @@ import { getProjectPaths, getRunPaths } from './lib/paths.js';
 import { readJson } from './lib/store.js';
 import { loadDotEnv } from './lib/env.js';
 import { readTimeline, renderTimeline } from './lib/timeline.js';
+import { checkVisualRunnerAvailability } from './lib/visual-runner.js';
 import {
+  createProjectFromLocalInput,
+  deleteProject,
   readProjectSummaries,
   readProjectSummary,
   readRunComparison,
   readRunDetail,
+  readRunProgress,
+  readSkillContent,
   recordHumanDecision,
+  UI_OPENAI_MODELS,
 } from './lib/ui-api.js';
 import fs from 'node:fs/promises';
+import path from 'node:path';
 
 const DEFAULT_TEST_MODEL = 'gpt-5.4-mini';
 
 function parseArgs(argv) {
-  const [command, projectName, ...rest] = argv;
+  const [command, maybeProjectName, ...tail] = argv;
+  const projectName = maybeProjectName && !maybeProjectName.startsWith('--') ? maybeProjectName : null;
+  const rest = projectName ? tail : [maybeProjectName, ...tail].filter(Boolean);
   const options = {};
 
   for (let i = 0; i < rest.length; i += 1) {
@@ -47,29 +56,35 @@ function printHelp() {
   console.log(`Skill RSI
 
 Usage:
-  skill-rsi init <project> --goal "Skill goal"
+  skill-rsi init <project> --goal "Skill goal" [--output text|code|code_visual] [--model ${DEFAULT_TEST_MODEL}] [--target-iterations 3]
+  skill-rsi init <project> --goal "Improve this skill" --baseline ./path/to/skill-or.zip
   skill-rsi run <project> --stub --loops 3
   skill-rsi run <project> --mock --real-eval --loops 1
-  skill-rsi run <project> --agentic --loops 1 --agent-model ${DEFAULT_TEST_MODEL}
+  skill-rsi run <project> --agentic --loops 1 [--model ${DEFAULT_TEST_MODEL}]
   skill-rsi step <project> --mock
   skill-rsi continuous <project> --mock --max-runs 10 --patience 3 --max-inconclusive 2
   skill-rsi hook <project> --mock --event hook.json
+  skill-rsi doctor [--json]
   skill-rsi projects
   skill-rsi status <project>
   skill-rsi summary <project>
+  skill-rsi progress <project> [--json]
   skill-rsi run-detail <project> [--run run-id]
   skill-rsi compare <project> [--run run-id]
   skill-rsi decide <project> --decision annotate --note "Reviewed"
   skill-rsi report <project>
   skill-rsi timeline <project> [--run run-id] [--json]
+  skill-rsi skill <project> --source champion|challenger|candidate-a|candidate-b [--run latest|run-id] [--file SKILL.md] [--json]
+  skill-rsi export-skill <project> --source champion|challenger|candidate-a|candidate-b --out ./exported-skill [--run latest|run-id]
+  skill-rsi delete <project> [--json]
   skill-rsi inspect-skill <path>
-  skill-rsi evaluate <name> --a ./skill-a --b ./skill-b --prompts prompts.json --criteria criteria.json --mock --out result.json
-  skill-rsi evaluate <name> --a ./skill-a --b ./skill-b --prompts prompts.json --criteria criteria.json --gen-model ${DEFAULT_TEST_MODEL} --judge-model ${DEFAULT_TEST_MODEL} --out result.json
+  skill-rsi evaluate <name> --a ./skill-a --b ./skill-b --prompts prompts.json --criteria criteria.json --output text|code|code_visual --mock --out result.json
+  skill-rsi evaluate <name> --a ./skill-a --b ./skill-b --prompts prompts.json --criteria criteria.json --output code_visual --visual-artifacts-dir ./visual-artifacts --gen-model ${DEFAULT_TEST_MODEL} --judge-model ${DEFAULT_TEST_MODEL} --out result.json
   skill-rsi agent <project> --name deconstructor --run-id contract-001 --out artifact.json
   skill-rsi agent <project> --name deconstructor --real --model ${DEFAULT_TEST_MODEL} --save-current --out artifact.json
   skill-rsi agent <project> --name creator --real --model ${DEFAULT_TEST_MODEL} --arm candidateA --candidate-dir .skill-rsi/projects/<project>/scratch/candidate-a
 
-Mock modes support offline loop development; evaluate also supports real text-only model generation and judging.`);
+Mock modes support offline loop development; evaluate supports text, code, and code + visual output contracts.`);
 }
 
 function resolveRunMode(options) {
@@ -86,12 +101,116 @@ function resolveStopRules(options) {
   };
 }
 
+function resolveModelOverrides(options) {
+  const model = options.model || null;
+  return {
+    generationModel: options['gen-model'] || model || null,
+    judgeModel: options['judge-model'] || model || null,
+    agentModel: options['agent-model'] || model || null,
+  };
+}
+
+function normalizeRunIdOption(value) {
+  if (!value || value === 'latest') return null;
+  return value;
+}
+
+function printJsonOrHuman(value, options, humanRenderer) {
+  if (options.json) {
+    console.log(JSON.stringify(value, null, 2));
+  } else {
+    console.log(humanRenderer(value));
+  }
+}
+
+function safeExportPath(rootDir, filePath) {
+  const destination = path.resolve(rootDir, filePath);
+  const rootWithSep = `${path.resolve(rootDir)}${path.sep}`;
+  if (destination !== path.resolve(rootDir) && !destination.startsWith(rootWithSep)) {
+    throw new Error(`Refusing to export unsafe path: ${filePath}`);
+  }
+  return destination;
+}
+
+function renderInitSummary(summary) {
+  const lines = [
+    `Initialized ${summary.projectId}`,
+    `Project: ${summary.projectDir}`,
+    `Goal: ${summary.goal}`,
+    `Output: ${summary.config.eval.outputType}`,
+    `Model: ${summary.config.models.agent}`,
+    `Target iterations: ${summary.state.runPolicy.targetIterations}`,
+    `Champion: ${summary.state.currentChampion?.candidateId || 'none'}`,
+  ];
+  return lines.join('\n');
+}
+
+function renderDoctor(result) {
+  return [
+    'Skill RSI doctor',
+    `Node: ${result.node}`,
+    `OpenAI key: ${result.openai.keyConfigured ? 'configured' : 'not configured'}`,
+    `Models: ${result.openai.models.join(', ')} (default ${result.openai.defaultModel})`,
+    `Visual runner: ${result.visualRunner.available ? `available (${result.visualRunner.browser})` : 'unavailable'}`,
+    result.visualRunner.available ? null : `Visual runner error: ${result.visualRunner.error}`,
+    result.visualRunner.available ? null : `Install hint: ${result.visualRunner.installHint}`,
+  ].filter(Boolean).join('\n');
+}
+
+function renderProgress(progress) {
+  const lines = [
+    `Project: ${progress.projectId}`,
+    `Run: ${progress.runId || 'none'}`,
+    `Status: ${progress.status}`,
+  ];
+  if (progress.runNumber !== null && progress.runNumber !== undefined) lines.push(`Iteration: ${progress.runNumber}`);
+  if (progress.competitionMode) lines.push(`Competition: ${progress.competitionMode}`);
+  if (progress.startedAt) lines.push(`Started: ${progress.startedAt}`);
+  if (progress.completedAt) lines.push(`Completed: ${progress.completedAt}`);
+  if (progress.events?.length) {
+    lines.push('', 'Events:');
+    for (const event of progress.events.slice(-12)) {
+      lines.push(`- ${event.event}`);
+    }
+  }
+  const detailLines = Object.entries(progress.stageDetails || {})
+    .flatMap(([stage, details]) => (details || []).map(detail => `- ${stage}: ${detail}`));
+  if (detailLines.length) {
+    lines.push('', 'Stage details:', ...detailLines);
+  }
+  return lines.join('\n');
+}
+
+function renderExportSummary(result) {
+  return [
+    `Exported ${result.source} skill for ${result.projectId}`,
+    `Files: ${result.fileCount}`,
+    `Output: ${result.outDir}`,
+  ].join('\n');
+}
+
 async function main() {
   await loadDotEnv(process.cwd());
   const { command, projectName, options } = parseArgs(process.argv.slice(2));
 
   if (!command || command === 'help' || command === '--help' || command === '-h') {
     printHelp();
+    return;
+  }
+
+  if (command === 'doctor') {
+    const visualRunner = await checkVisualRunnerAvailability();
+    const result = {
+      schemaVersion: 1,
+      node: process.version,
+      openai: {
+        keyConfigured: Boolean(process.env.OPENAI_API_KEY),
+        models: UI_OPENAI_MODELS,
+        defaultModel: DEFAULT_TEST_MODEL,
+      },
+      visualRunner,
+    };
+    printJsonOrHuman(result, options, renderDoctor);
     return;
   }
 
@@ -110,9 +229,24 @@ async function main() {
 
   if (command === 'init') {
     const goal = options.goal || `Improve the ${projectName} Agent Skill.`;
-    const result = await initProject({ cwd: process.cwd(), projectName, goal });
-    console.log(`Initialized ${result.projectId}`);
-    console.log(`Project: ${result.projectDir}`);
+    const outputType = options.output || 'text';
+    if (outputType === 'code_visual') {
+      const visualRunner = await checkVisualRunnerAvailability();
+      if (!visualRunner.available) {
+        throw new Error(`Visual runner unavailable: ${visualRunner.error}. ${visualRunner.installHint}`);
+      }
+    }
+    const result = await createProjectFromLocalInput({
+      cwd: process.cwd(),
+      projectName,
+      goal,
+      targetIterations: options['target-iterations'] || 3,
+      triggerMode: options['trigger-mode'] || 'manual',
+      outputType,
+      model: options.model || DEFAULT_TEST_MODEL,
+      baselinePath: options.baseline ? path.resolve(options.baseline) : null,
+    });
+    printJsonOrHuman(result, options, renderInitSummary);
     return;
   }
 
@@ -128,9 +262,7 @@ async function main() {
     }
 
     const goal = options.goal || `Improve the ${projectName} Agent Skill.`;
-    const generationModel = options['gen-model'] || DEFAULT_TEST_MODEL;
-    const judgeModel = options['judge-model'] || generationModel;
-    const agentModel = options['agent-model'] || generationModel;
+    const { generationModel, judgeModel, agentModel } = resolveModelOverrides(options);
     const result = await runProject({
       cwd: process.cwd(),
       projectName,
@@ -161,9 +293,7 @@ async function main() {
   if (command === 'step') {
     const mode = resolveRunMode(options) || 'stub';
     const goal = options.goal || `Improve the ${projectName} Agent Skill.`;
-    const generationModel = options['gen-model'] || DEFAULT_TEST_MODEL;
-    const judgeModel = options['judge-model'] || generationModel;
-    const agentModel = options['agent-model'] || generationModel;
+    const { generationModel, judgeModel, agentModel } = resolveModelOverrides(options);
     const result = await runProject({
       cwd: process.cwd(),
       projectName,
@@ -200,9 +330,7 @@ async function main() {
     }
     const goal = options.goal || `Improve the ${projectName} Agent Skill.`;
     const mode = resolveRunMode(options) || 'stub';
-    const generationModel = options['gen-model'] || DEFAULT_TEST_MODEL;
-    const judgeModel = options['judge-model'] || generationModel;
-    const agentModel = options['agent-model'] || generationModel;
+    const { generationModel, judgeModel, agentModel } = resolveModelOverrides(options);
     const result = await runProject({
       cwd: process.cwd(),
       projectName,
@@ -231,9 +359,7 @@ async function main() {
     const goal = options.goal || `Improve the ${projectName} Agent Skill.`;
     await initProject({ cwd: process.cwd(), projectName, goal });
     const mode = resolveRunMode(options) || 'stub';
-    const generationModel = options['gen-model'] || DEFAULT_TEST_MODEL;
-    const judgeModel = options['judge-model'] || generationModel;
-    const agentModel = options['agent-model'] || generationModel;
+    const { generationModel, judgeModel, agentModel } = resolveModelOverrides(options);
     const hookPath = await recordHookEvent({
       cwd: process.cwd(),
       projectName,
@@ -281,11 +407,17 @@ async function main() {
     return;
   }
 
+  if (command === 'progress') {
+    const progress = await readRunProgress({ cwd: process.cwd(), projectName });
+    printJsonOrHuman(progress, options, renderProgress);
+    return;
+  }
+
   if (command === 'run-detail') {
     const detail = await readRunDetail({
       cwd: process.cwd(),
       projectName,
-      runId: options.run || null,
+      runId: normalizeRunIdOption(options.run),
     });
     console.log(JSON.stringify(detail, null, 2));
     return;
@@ -295,7 +427,7 @@ async function main() {
     const comparison = await readRunComparison({
       cwd: process.cwd(),
       projectName,
-      runId: options.run || null,
+      runId: normalizeRunIdOption(options.run),
     });
     console.log(JSON.stringify(comparison, null, 2));
     return;
@@ -306,7 +438,7 @@ async function main() {
     const artifact = await recordHumanDecision({
       cwd: process.cwd(),
       projectName,
-      runId: options.run || null,
+      runId: normalizeRunIdOption(options.run),
       decision: options.decision,
       candidateId: options.candidate || null,
       note: options.note || '',
@@ -339,6 +471,65 @@ async function main() {
     return;
   }
 
+  if (command === 'skill') {
+    const skill = await readSkillContent({
+      cwd: process.cwd(),
+      projectName,
+      source: options.source || 'champion',
+      runId: normalizeRunIdOption(options.run),
+    });
+    if (options.json) {
+      console.log(JSON.stringify(skill, null, 2));
+      return;
+    }
+    if (!skill.available) {
+      throw new Error(`Skill source "${skill.source}" is not available for ${projectName}`);
+    }
+    const requestedFile = options.file || 'SKILL.md';
+    const file = skill.files.find(item => item.path === requestedFile);
+    if (!file || typeof file.text !== 'string') {
+      throw new Error(`File "${requestedFile}" was not found in ${skill.source}`);
+    }
+    console.log(file.text);
+    return;
+  }
+
+  if (command === 'export-skill') {
+    if (!options.out) throw new Error('export-skill requires --out');
+    const skill = await readSkillContent({
+      cwd: process.cwd(),
+      projectName,
+      source: options.source || 'champion',
+      runId: normalizeRunIdOption(options.run),
+    });
+    if (!skill.available) {
+      throw new Error(`Skill source "${skill.source}" is not available for ${projectName}`);
+    }
+    const outDir = path.resolve(options.out);
+    for (const file of skill.files) {
+      if (typeof file.text !== 'string') continue;
+      const destination = safeExportPath(outDir, file.path);
+      await fs.mkdir(path.dirname(destination), { recursive: true });
+      await fs.writeFile(destination, file.text, 'utf8');
+    }
+    const result = {
+      schemaVersion: 1,
+      projectId: skill.projectId,
+      source: skill.source,
+      runId: skill.runId,
+      outDir,
+      fileCount: skill.files.filter(file => typeof file.text === 'string').length,
+    };
+    printJsonOrHuman(result, options, renderExportSummary);
+    return;
+  }
+
+  if (command === 'delete') {
+    const result = await deleteProject({ cwd: process.cwd(), projectName });
+    printJsonOrHuman(result, options, deleted => `Deleted ${deleted.deleted}\nMoved to: ${deleted.trashedTo}`);
+    return;
+  }
+
   if (command === 'inspect-skill') {
     const skillPackage = await loadSkillPackage(projectName);
     console.log(JSON.stringify({
@@ -368,6 +559,10 @@ async function main() {
     }
     const generationModel = options['gen-model'] || DEFAULT_TEST_MODEL;
     const judgeModel = options['judge-model'] || generationModel;
+    const outputType = options.output || 'text';
+    if (outputType === 'code_visual' && !options.mock && !options['visual-artifacts-dir']) {
+      throw new Error('Real code_visual evaluation requires --visual-artifacts-dir');
+    }
 
     const result = await runHeadlessEval({
       skillAPath: options.a,
@@ -376,8 +571,10 @@ async function main() {
       criteriaPath: options.criteria,
       outputPath: options.out || null,
       mode: options.mock ? 'mock' : 'real',
+      outputType,
       generationModel,
       judgeModel,
+      visualArtifactsDir: options['visual-artifacts-dir'] ? path.resolve(options['visual-artifacts-dir']) : null,
       apiKeys: {
         anthropic: options['anthropic-key'],
         openai: options['openai-key'],

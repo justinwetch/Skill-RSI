@@ -82,6 +82,61 @@ export async function createProjectForUi({
   }
 }
 
+export async function createProjectFromLocalInput({
+  cwd,
+  projectName,
+  goal,
+  targetIterations = 3,
+  triggerMode = 'manual',
+  outputType = 'text',
+  model = 'gpt-5.4-mini',
+  baselinePath = null,
+}) {
+  if (typeof projectName !== 'string' || projectName.trim() === '') {
+    throw badRequest('Project name is required');
+  }
+  if (typeof goal !== 'string' || goal.trim() === '') {
+    throw badRequest('Project goal is required');
+  }
+  const normalizedTargetIterations = Number.parseInt(targetIterations, 10);
+  if (!Number.isInteger(normalizedTargetIterations) || normalizedTargetIterations < 1) {
+    throw badRequest('Target iterations must be a positive integer');
+  }
+  const normalizedTaskContract = normalizeTaskContract(null, outputType);
+  const normalizedOutputType = UI_OUTPUT_TYPES.includes(taskContractOutputType(normalizedTaskContract))
+    ? taskContractOutputType(normalizedTaskContract)
+    : 'text';
+  const normalizedModel = normalizeUiModel(model);
+  const paths = getProjectPaths(cwd, projectName);
+  if (await pathExists(paths.stateJson)) {
+    const error = new Error(`Project "${paths.projectId}" already exists`);
+    error.statusCode = 409;
+    throw error;
+  }
+  const preflightSource = baselinePath
+    ? await preflightLocalBaselineSkill(baselinePath)
+    : null;
+
+  await initProject({
+    cwd,
+    projectName,
+    goal,
+    runPolicy: {
+      triggerMode,
+      targetIterations: normalizedTargetIterations,
+    },
+    evalOutputType: normalizedOutputType,
+    taskContract: normalizedTaskContract,
+    models: {
+      agent: normalizedModel,
+      generation: normalizedModel,
+      judge: normalizedModel,
+    },
+  });
+  if (preflightSource) await installBaselineSkill({ paths, sourcePath: preflightSource.sourcePath });
+  return readProjectSummary({ cwd, projectName });
+}
+
 function normalizeUiModel(model) {
   return UI_OPENAI_MODELS.includes(model) ? model : 'gpt-5.4-mini';
 }
@@ -421,6 +476,19 @@ async function preflightBaselineSkill({ cwd, files = [], archive = null }) {
     return { tmpDir, sourcePath };
   } catch (error) {
     await fs.rm(tmpDir, { recursive: true, force: true });
+    if (error.statusCode) throw error;
+    throw badRequest(`Baseline skill could not be loaded: ${error.message}`);
+  }
+}
+
+async function preflightLocalBaselineSkill(sourcePath) {
+  try {
+    const skillPackage = await loadSkillPackage(sourcePath);
+    if (!skillPackage.validation.valid) {
+      throw badRequest(`Baseline skill is invalid: ${skillPackage.validation.errors.join('; ')}`);
+    }
+    return { sourcePath };
+  } catch (error) {
     if (error.statusCode) throw error;
     throw badRequest(`Baseline skill could not be loaded: ${error.message}`);
   }

@@ -62,14 +62,26 @@ OPENAI_API_KEY=sk-...
 Stub mode runs without API calls:
 
 ```bash
-node src/cli.js init my-skill --goal "Help agents write clear technical documentation."
+node src/cli.js init my-skill \
+  --goal "Help agents write clear technical documentation." \
+  --output text \
+  --model gpt-5.4-mini \
+  --target-iterations 3
 node src/cli.js run my-skill --stub --loops 3
+```
+
+Start from an existing skill package:
+
+```bash
+node src/cli.js init my-skill \
+  --goal "Improve this existing skill." \
+  --baseline ./path/to/skill-or.zip
 ```
 
 Real agentic run:
 
 ```bash
-node src/cli.js run my-skill --agentic --real-eval --loops 1 --agent-model gpt-5.4-mini
+node src/cli.js run my-skill --agentic --real-eval --loops 1
 ```
 
 Inspect results:
@@ -77,8 +89,10 @@ Inspect results:
 ```bash
 node src/cli.js status my-skill
 node src/cli.js summary my-skill
+node src/cli.js progress my-skill
 node src/cli.js timeline my-skill
 node src/cli.js report my-skill
+node src/cli.js skill my-skill --source champion
 ```
 
 ## Local UI
@@ -175,35 +189,54 @@ After a promotion, `champion/skill/` is updated and `history/current-summary.md`
 
 ```bash
 # Project management
-node src/cli.js init <name> --goal "..."
+node src/cli.js doctor
+node src/cli.js init <name> --goal "..." --output text|code|code_visual --model gpt-5.4-mini --target-iterations 3
+node src/cli.js init <name> --goal "..." --baseline ./path/to/skill-or.zip
 node src/cli.js projects
 node src/cli.js status <project>
+node src/cli.js delete <project>
 
 # Running loops
 node src/cli.js run <project> --stub --loops 3
-node src/cli.js run <project> --agentic --real-eval --loops 1 --agent-model gpt-5.4-mini
+node src/cli.js run <project> --agentic --real-eval --loops 1
+node src/cli.js run <project> --agentic --real-eval --loops 1 --model gpt-5.5
 node src/cli.js step <project>
 node src/cli.js continuous <project> --agentic --real-eval --max-runs 5 --patience 3
 node src/cli.js hook <project> --agentic --real-eval --event hook.json
 
 # Inspection
 node src/cli.js summary <project>
+node src/cli.js progress <project>
 node src/cli.js compare <project>
 node src/cli.js timeline <project>
 node src/cli.js report <project>
 node src/cli.js run-detail <project>
+node src/cli.js skill <project> --source champion
+node src/cli.js skill <project> --source challenger --run latest --json
+node src/cli.js export-skill <project> --source champion --out ./exported-skill
 node src/cli.js inspect-skill <path/to/skill>
 
 # Standalone evaluation
 node src/cli.js evaluate <project> \
   --a ./skill-a --b ./skill-b \
   --prompts prompts.json --criteria criteria.json \
+  --output text \
+  --gen-model gpt-5.4-mini --judge-model gpt-5.4-mini \
+  --out result.json
+
+node src/cli.js evaluate <project> \
+  --a ./skill-a --b ./skill-b \
+  --prompts prompts.json --criteria criteria.json \
+  --output code_visual \
+  --visual-artifacts-dir ./visual-artifacts \
   --gen-model gpt-5.4-mini --judge-model gpt-5.4-mini \
   --out result.json
 
 # Annotation, not required promotion
 node src/cli.js decide <project> --decision annotate --note "Reviewed."
 ```
+
+`init --output code_visual` checks local screenshot runner availability before creating the project. Run `node src/cli.js doctor` for OpenAI key status, supported model names, and visual runner diagnostics. Per-run model flags override project config and should be used intentionally because they make the run history less uniform.
 
 ## Project Workspace
 

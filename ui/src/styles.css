@@ -442,7 +442,7 @@ input:focus, textarea:focus, select:focus, .num:focus { outline: none; border-co
 .create p.lede { color: var(--color-text-secondary); margin: 0 0 24px; }
 .field { display: block; margin-bottom: 18px; }
 .field > span { display: block; font-size: 14px; color: var(--color-text-secondary); margin-bottom: 7px; }
-.field input, .field textarea { width: 100%; border: 1px solid var(--color-border); background: var(--color-bg-tertiary); color: var(--color-text-primary); border-radius: var(--radius-md); padding: 10px 13px; font-size: 15px; }
+.field input, .field textarea, .field select { width: 100%; border: 1px solid var(--color-border); background: var(--color-bg-tertiary); color: var(--color-text-primary); border-radius: var(--radius-md); padding: 10px 13px; font-size: 15px; }
 .field textarea { min-height: 88px; resize: vertical; line-height: 1.6; }
 .field-hint { margin: 7px 0 0; font-size: 12.5px; line-height: 1.5; color: var(--color-text-muted); }
 .field-hint.warning-text { color: var(--color-warning); }

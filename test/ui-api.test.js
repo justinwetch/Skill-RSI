@@ -113,6 +113,9 @@ test('ui api creates new projects and rejects duplicates', async () => {
   assert.equal(created.state.runPolicy.targetIterations, 3);
   assert.equal(created.config.trigger.targetIterations, 3);
   assert.equal(created.config.budget.estimatedTokensPerLoop, 50000);
+  assert.equal(created.config.models.agent, 'gpt-5.4-mini');
+  assert.equal(created.config.models.generation, 'gpt-5.4-mini');
+  assert.equal(created.config.models.judge, 'gpt-5.4-mini');
 
   const summaries = await readProjectSummaries({ cwd });
   assert.equal(summaries.length, 1);
@@ -126,6 +129,30 @@ test('ui api creates new projects and rejects duplicates', async () => {
     }),
     /already exists/
   );
+});
+
+test('ui api stores the selected project model across all model roles', async () => {
+  const cwd = await fs.mkdtemp(path.join(os.tmpdir(), 'skill-rsi-ui-api-model-'));
+
+  const created = await createProjectForUi({
+    cwd,
+    projectName: 'Model Project',
+    goal: 'Store model choice from setup.',
+    model: 'gpt-5.5',
+  });
+
+  assert.equal(created.config.models.agent, 'gpt-5.5');
+  assert.equal(created.config.models.generation, 'gpt-5.5');
+  assert.equal(created.config.models.judge, 'gpt-5.5');
+
+  const fallback = await createProjectForUi({
+    cwd,
+    projectName: 'Fallback Model Project',
+    goal: 'Normalize unsupported model names.',
+    model: 'gpt-5.4-large',
+  });
+
+  assert.equal(fallback.config.models.agent, 'gpt-5.4-mini');
 });
 
 test('ui api derives task contracts from UI output type defaults', async () => {

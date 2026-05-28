@@ -8,7 +8,15 @@ function yamlScalar(value) {
   return JSON.stringify(String(value));
 }
 
-export async function initProject({ cwd, projectName, goal, runPolicy = null, evalOutputType = 'text', taskContract = null }) {
+export async function initProject({
+  cwd,
+  projectName,
+  goal,
+  runPolicy = null,
+  evalOutputType = 'text',
+  taskContract = null,
+  models = null,
+}) {
   const paths = getProjectPaths(cwd, projectName);
   const createdAt = new Date().toISOString();
   const normalizedRunPolicy = normalizeRunPolicy(runPolicy);
@@ -74,6 +82,7 @@ export async function initProject({ cwd, projectName, goal, runPolicy = null, ev
         outputType: normalizedEvalOutputType,
         taskContract: normalizedTaskContract,
       },
+      ...(models ? { models: { ...DEFAULT_PROJECT_CONFIG.models, ...models } } : {}),
     });
   }
 

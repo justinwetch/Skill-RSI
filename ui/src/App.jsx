@@ -117,6 +117,11 @@ const ACCENTS = [
   { soft: 'var(--color-skill-a-subtle)', strong: 'var(--color-skill-a)', icon: GitPullRequest },
   { soft: 'var(--color-warning-subtle)', strong: 'var(--color-warning)', icon: MessageSquare },
 ];
+const OPENAI_KEY_STORAGE_KEY = 'skill-rsi-openai-api-key';
+const OPENAI_MODELS = [
+  { id: 'gpt-5.4-mini', label: 'gpt-5.4-mini', note: 'Default for lower-cost iteration.' },
+  { id: 'gpt-5.5', label: 'gpt-5.5', note: 'Higher-capability model with higher expected cost.' },
+];
 
 export default function App() {
   const [theme, setTheme] = useState(() => localStorage.getItem('skill-rsi-theme') || 'light');
@@ -142,12 +147,14 @@ export default function App() {
   const [draft, setDraft] = useState({
     mode: 'scratch',
     outputType: 'text',
+    model: 'gpt-5.4-mini',
     name: '',
     goal: '',
     baselineFiles: [],
     baselineZip: null,
     baselineMarkdown: null,
   });
+  const [openAiKey, setOpenAiKey] = useState(() => localStorage.getItem(OPENAI_KEY_STORAGE_KEY) || '');
   const [capabilities, setCapabilities] = useState(null);
   const [skillSource, setSkillSource] = useState('champion');
   const [skillData, setSkillData] = useState(null);
@@ -217,6 +224,19 @@ export default function App() {
 
   async function handleStart(count) {
     if (!selectedId || busy) return;
+    let runtimeCapabilities = capabilities;
+    if (!openAiKey.trim() && !runtimeCapabilities?.openai?.keyConfigured) {
+      try {
+        runtimeCapabilities = await fetchCapabilities();
+        setCapabilities(runtimeCapabilities);
+      } catch {
+        runtimeCapabilities = null;
+      }
+    }
+    if (!openAiKey.trim() && !runtimeCapabilities?.openai?.keyConfigured) {
+      setError('Add an OpenAI API key before running real loops.');
+      return;
+    }
     const preCount = summary?.state?.runCount || 0;
     const preLastId = summary?.state?.lastRunId || null;
     setBusy(true); setError('');
@@ -250,6 +270,7 @@ export default function App() {
         mode: 'agentic',
         evalMode: 'real',
         maxRuns: null,
+        openAiApiKey: openAiKey.trim() || null,
       });
       clearTimers();
       await loadProjectData(selectedId);
@@ -292,6 +313,7 @@ export default function App() {
             triggerMode: 'manual',
             outputType: draft.outputType || 'text',
             taskContract: getDraftTaskContract(draft),
+            model: draft.model || 'gpt-5.4-mini',
             baselineFiles,
             baselineArchive,
           });
@@ -303,6 +325,7 @@ export default function App() {
       setDraft({
         mode: 'scratch',
         outputType: 'text',
+        model: 'gpt-5.4-mini',
         name: '',
         goal: '',
         baselineFiles: [],
@@ -362,6 +385,12 @@ export default function App() {
     finally { setInspectLoading(false); }
   }
 
+  function updateOpenAiKey(value) {
+    setOpenAiKey(value);
+    if (value.trim()) localStorage.setItem(OPENAI_KEY_STORAGE_KEY, value);
+    else localStorage.removeItem(OPENAI_KEY_STORAGE_KEY);
+  }
+
   return (
     <div className="app">
       <div className="topbar">
@@ -386,6 +415,7 @@ export default function App() {
       {view === 'create' && (
         <CreateView draft={draft} setDraft={setDraft} busy={busy}
           capabilities={capabilities} setCapabilities={setCapabilities}
+          openAiKey={openAiKey} setOpenAiKey={updateOpenAiKey}
           onSubmit={handleCreate} onCancel={() => setView('list')} />
       )}
 
@@ -680,12 +710,26 @@ function TrendChip({ latest }) {
 
 /* ---------------- create ---------------- */
 
-function CreateView({ draft, setDraft, busy, onSubmit, onCancel, capabilities, setCapabilities }) {
+function CreateView({
+  draft,
+  setDraft,
+  busy,
+  onSubmit,
+  onCancel,
+  capabilities,
+  setCapabilities,
+  openAiKey,
+  setOpenAiKey,
+}) {
   const existing = draft.mode === 'existing';
   const hasBaseline = Boolean(draft.baselineZip || draft.baselineFiles?.length || draft.baselineMarkdown);
   const setMode = mode => setDraft(d => ({ ...d, mode }));
   const visualRunner = capabilities?.visualRunner || null;
   const visualUnavailable = visualRunner && !visualRunner.available;
+  const serverKeyConfigured = Boolean(capabilities?.openai?.keyConfigured);
+  useEffect(() => {
+    if (!capabilities) fetchCapabilities().then(setCapabilities).catch(() => {});
+  }, [capabilities, setCapabilities]);
   async function setOutputType(outputType) {
     if (outputType === 'code_visual') {
       try {
@@ -781,6 +825,35 @@ function CreateView({ draft, setDraft, busy, onSubmit, onCancel, capabilities, s
         )}
         <p className="field-hint">This controls the artifact Skill RSI expects candidate skills to produce.</p>
       </div>
+
+      <div className="field">
+        <span>Model</span>
+        <select value={draft.model || 'gpt-5.4-mini'}
+          onChange={e => setDraft({ ...draft, model: e.target.value })}>
+          {OPENAI_MODELS.map(model => (
+            <option key={model.id} value={model.id}>{model.label}</option>
+          ))}
+        </select>
+        <p className="field-hint">
+          {(OPENAI_MODELS.find(model => model.id === (draft.model || 'gpt-5.4-mini')) || OPENAI_MODELS[0]).note}
+          {' '}This model is fixed for the project’s run history.
+        </p>
+      </div>
+
+      <label className="field">
+        <span>OpenAI API key</span>
+        <input type="password" value={openAiKey}
+          placeholder={serverKeyConfigured ? 'Using server environment key' : 'Paste key'}
+          onChange={e => setOpenAiKey(e.target.value)}
+          autoComplete="off" />
+        <p className={`field-hint ${!openAiKey.trim() && !serverKeyConfigured ? 'warning-text' : ''}`}>
+          {openAiKey.trim()
+            ? 'OpenAI key saved locally in this browser.'
+            : serverKeyConfigured
+              ? 'OpenAI key available from local server environment.'
+              : 'Add an OpenAI key before running real loops.'}
+        </p>
+      </label>
 
       <form onSubmit={onSubmit}>
         {existing && (
@@ -1021,6 +1094,7 @@ function RunBar({ summary, loops, setLoops, busy, onStart }) {
   const usage = summary.state.budgetUsage || {};
   const maxRuns = budget.maxRuns;
   const taskContractLabel = formatTaskContract(summary.config?.eval?.taskContract);
+  const modelLabel = summary.config?.models?.agent || 'gpt-5.4-mini';
   return (
     <div className="run-bar">
       <div className="copy">
@@ -1031,7 +1105,7 @@ function RunBar({ summary, loops, setLoops, busy, onStart }) {
           improvement {loops === 1 ? 'loop' : 'loops'}
         </div>
         <div className="subtle">
-          {policy.triggerMode || policy.mode || 'manual'} · {taskContractLabel} · target {policy.targetIterations || loops}
+          {policy.triggerMode || policy.mode || 'manual'} · {taskContractLabel} · {modelLabel} · target {policy.targetIterations || loops}
           {maxRuns ? ` · max ${maxRuns} runs` : ''}
           {usage.estimatedTokens ? ` · ~${formatCompact(usage.estimatedTokens)} tokens used` : ''}
         </div>

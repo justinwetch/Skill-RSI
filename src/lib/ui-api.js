@@ -11,6 +11,7 @@ import { normalizeTaskContract, taskContractOutputType } from './task-contracts.
 
 const MAX_BASELINE_ZIP_BYTES = 25 * 1024 * 1024;
 const UI_OUTPUT_TYPES = ['text', 'code', 'code_visual'];
+export const UI_OPENAI_MODELS = ['gpt-5.4-mini', 'gpt-5.5'];
 
 export async function createProjectForUi({
   cwd,
@@ -19,6 +20,7 @@ export async function createProjectForUi({
   targetIterations = 3,
   triggerMode = 'manual',
   outputType = 'text',
+  model = 'gpt-5.4-mini',
   baselineFiles = [],
   baselineArchive = null,
 }) {
@@ -36,6 +38,7 @@ export async function createProjectForUi({
   const normalizedOutputType = UI_OUTPUT_TYPES.includes(taskContractOutputType(normalizedTaskContract))
     ? taskContractOutputType(normalizedTaskContract)
     : 'text';
+  const normalizedModel = normalizeUiModel(model);
   const paths = getProjectPaths(cwd, projectName);
   if (await pathExists(paths.stateJson)) {
     const error = new Error(`Project "${paths.projectId}" already exists`);
@@ -66,12 +69,21 @@ export async function createProjectForUi({
       },
       evalOutputType: normalizedOutputType,
       taskContract: normalizedTaskContract,
+      models: {
+        agent: normalizedModel,
+        generation: normalizedModel,
+        judge: normalizedModel,
+      },
     });
     if (preflightSource) await installBaselineSkill({ paths, sourcePath: preflightSource.sourcePath });
     return readProjectSummary({ cwd, projectName });
   } finally {
     if (preflightSource) await fs.rm(preflightSource.tmpDir, { recursive: true, force: true });
   }
+}
+
+function normalizeUiModel(model) {
+  return UI_OPENAI_MODELS.includes(model) ? model : 'gpt-5.4-mini';
 }
 
 export async function readProjectSummaries({ cwd }) {
@@ -118,6 +130,7 @@ export async function readProjectSummary({ cwd, projectName }) {
         stablePromptCount: config.eval.stablePromptCount,
         explorationPromptCount: config.eval.explorationPromptCount,
       },
+      models: config.models,
       portability: config.portability,
     },
     history: {

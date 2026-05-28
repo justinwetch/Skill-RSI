@@ -16,6 +16,7 @@ import {
   readRunProgress,
   readSkillContent,
   recordHumanDecision,
+  UI_OPENAI_MODELS,
 } from './lib/ui-api.js';
 import { checkVisualRunnerAvailability } from './lib/visual-runner.js';
 
@@ -71,6 +72,11 @@ async function handleApi(request, response, url) {
     writeJson(response, 200, {
       schemaVersion: 1,
       visualRunner: await checkVisualRunnerAvailability(),
+      openai: {
+        keyConfigured: Boolean(process.env.OPENAI_API_KEY),
+        models: UI_OPENAI_MODELS,
+        defaultModel: DEFAULT_MODEL,
+      },
     });
     return;
   }
@@ -89,6 +95,7 @@ async function handleApi(request, response, url) {
       targetIterations: body.targetIterations || 3,
       triggerMode: body.triggerMode || 'manual',
       outputType: body.outputType || 'text',
+      model: body.model || DEFAULT_MODEL,
       baselineFiles: body.baselineFiles || [],
       baselineArchive: body.baselineArchive || null,
     }));
@@ -171,6 +178,9 @@ async function handleApi(request, response, url) {
       generationModel,
       judgeModel,
       agentModel,
+      apiKeys: {
+        ...(body.openAiApiKey ? { openai: body.openAiApiKey } : {}),
+      },
       stopRules: body.stopRules || {},
       triggerMode: body.triggerMode || 'manual',
     });

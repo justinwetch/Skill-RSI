@@ -375,8 +375,23 @@ input:focus, textarea:focus, select:focus, .num:focus { outline: none; border-co
 .visual-error { margin: 0 0 8px; font-size: 12px; line-height: 1.5; color: var(--color-danger); }
 .visual-shots { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 8px; }
 .visual-shot { margin: 0; min-width: 0; }
-.visual-shot img { display: block; width: 100%; aspect-ratio: 16 / 10; object-fit: cover; object-position: top center; background: var(--color-bg-tertiary); border: 1px solid var(--color-border); border-radius: 8px; }
+.visual-shot-button { display: block; width: 100%; padding: 0; border: none; background: none; border-radius: 8px; cursor: zoom-in; text-align: left; }
+.visual-shot-button:focus-visible { outline: 2px solid var(--color-accent); outline-offset: 3px; }
+.visual-shot-button img { display: block; width: 100%; aspect-ratio: 16 / 10; object-fit: cover; object-position: top center; background: var(--color-bg-tertiary); border: 1px solid var(--color-border); border-radius: 8px; transition: border-color 0.15s, transform 0.15s; }
+.visual-shot-button:hover img { border-color: var(--color-accent); transform: translateY(-1px); }
 .visual-shot figcaption { margin-top: 4px; font-size: 11px; color: var(--color-text-muted); }
+.lightbox { position: fixed; inset: 0; z-index: 100; display: flex; align-items: center; justify-content: center; padding: 28px; }
+.lightbox-backdrop { position: absolute; inset: 0; border: none; background: rgba(0, 0, 0, 0.72); cursor: zoom-out; }
+.lightbox-panel { position: relative; width: min(1180px, 100%); max-height: calc(100vh - 56px); display: flex; flex-direction: column; background: var(--color-bg-primary); border: 1px solid var(--color-border); border-radius: var(--radius-md); box-shadow: var(--shadow-lg); overflow: hidden; }
+.lightbox-head { display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 12px 14px; border-bottom: 1px solid var(--color-border); }
+.lightbox-title { font-size: 14px; font-weight: 600; color: var(--color-text-primary); }
+.lightbox-meta { margin-top: 2px; font-size: 12px; color: var(--color-text-muted); }
+.lightbox-actions { display: flex; align-items: center; gap: 8px; }
+.lightbox-image { display: block; width: 100%; max-height: calc(100vh - 140px); object-fit: contain; background: var(--color-bg-secondary); }
+@media (max-width: 640px) {
+  .lightbox { padding: 12px; }
+  .lightbox-head { align-items: flex-start; flex-direction: column; }
+}
 
 /* ===== skill viewer ===== */
 .seg { display: inline-flex; background: var(--color-bg-tertiary); border-radius: var(--radius-md); padding: 3px; gap: 2px; }

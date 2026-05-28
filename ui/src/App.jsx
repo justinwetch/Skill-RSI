@@ -4,6 +4,7 @@ import {
   ArrowRight, Play, Trophy, Check, CheckCircle2, ArrowUp, Minus, FileText,
   Loader2, Database, Layout, GitPullRequest, MessageSquare, TrendingUp, Scale,
   Beaker, Swords, Search, Flag, Pencil, Trash2, Upload, Sparkles, Package,
+  X, ExternalLink,
 } from 'lucide-react';
 import {
   createProject, deleteProject, fetchProjects, fetchProjectSummary, fetchRunDetail,
@@ -159,6 +160,7 @@ export default function App() {
   const [inspectLoading, setInspectLoading] = useState(false);
   const [evidenceFrom, setEvidenceFrom] = useState('home');
   const [skillFrom, setSkillFrom] = useState('home');
+  const [lightboxImage, setLightboxImage] = useState(null);
   const timers = useRef([]);
 
   useEffect(() => {
@@ -403,8 +405,10 @@ export default function App() {
           evidenceFrom={evidenceFrom} skillFrom={skillFrom}
           onBack={() => { setView('list'); loadProjects(); }}
           onStart={handleStart} onViewSkill={viewSkill} onOpenRun={openRun}
+          onOpenImage={setLightboxImage}
         />
       )}
+      {lightboxImage && <ImageLightbox image={lightboxImage} onClose={() => setLightboxImage(null)} />}
     </div>
   );
 }
@@ -720,13 +724,6 @@ function CreateView({ draft, setDraft, busy, onSubmit, onCancel, capabilities, s
       title: 'Code + visuals',
       desc: 'Prompts require complete browser-renderable UI code, then judge the rendered result.',
     },
-    {
-      key: 'visual',
-      icon: Layout,
-      title: 'Visual only',
-      desc: 'Deferred until image-only artifact generation and judging are defined.',
-      disabled: true,
-    },
   ];
   return (
     <div className="create animate-slide-up">
@@ -915,7 +912,7 @@ function Project(props) {
     skillSource, skillData, compareData, skillLoading, skillFile, setSkillFile,
     inspectDetail, inspectComparison, inspectLoading, inspectRunId,
     evidenceFrom, skillFrom,
-    onBack, onStart, onViewSkill, onOpenRun,
+    onBack, onStart, onViewSkill, onOpenRun, onOpenImage,
   } = props;
 
   const runs = summary.state.runCount || 0;
@@ -954,7 +951,7 @@ function Project(props) {
           : <Evidence runDetail={inspectDetail} comparison={inspectComparison}
               openEval={openEval} setOpenEval={setOpenEval}
               evTab={evTab} setEvTab={setEvTab} onViewSkill={onViewSkill}
-              iterLabel={iterationLabel(summary, inspectRunId)} />
+              iterLabel={iterationLabel(summary, inspectRunId)} onOpenImage={onOpenImage} />
       )}
 
       {screen === 'skill' && (
@@ -977,7 +974,8 @@ function Project(props) {
           {screen === 'running' ? (
             <RunningLoop fallbackStage={stageIdx} elapsed={elapsed} progress={progress}
               totalLoops={runningLoops} baseRunCount={baseRunCount} defaultIteration={runs + 1}
-              firstRun={runningFirst} premise={summary.history?.nextLoopPremise} />
+              firstRun={runningFirst} premise={summary.history?.nextLoopPremise}
+              outputType={summary.config?.eval?.outputType} />
           ) : (
             <>
               <NextLoopPremise premise={summary.history?.nextLoopPremise} />
@@ -1062,7 +1060,7 @@ function formatTaskContract(taskContract) {
 
 /* ---------------- running loop ---------------- */
 
-function RunningLoop({ fallbackStage, elapsed, progress, totalLoops, baseRunCount, defaultIteration, firstRun, premise }) {
+function RunningLoop({ fallbackStage, elapsed, progress, totalLoops, baseRunCount, defaultIteration, firstRun, premise, outputType }) {
   const [openStages, setOpenStages] = useState(() => new Set());
   const events = progress?.events || [];
   // Whether stage 0 is "map the space" vs "deconstruct" is decided by what the run actually did.
@@ -1098,7 +1096,7 @@ function RunningLoop({ fallbackStage, elapsed, progress, totalLoops, baseRunCoun
 
   const iteration = progress?.runNumber || defaultIteration;
   const loopK = Math.min(totalLoops, Math.max(1, iteration - baseRunCount));
-  const intent = getLoopIntent({ progress, stageIdx, stage0First, premise });
+  const intent = getLoopIntent({ progress, stageIdx, stage0First, premise, outputType });
   function toggleStage(key, currentlyOpen) {
     setOpenStages(prev => {
       const next = new Set(prev);
@@ -1193,49 +1191,35 @@ function RunningLoop({ fallbackStage, elapsed, progress, totalLoops, baseRunCoun
   );
 }
 
-function getLoopIntent({ progress, stageIdx, stage0First, premise }) {
-  const details = progress?.stageDetails || {};
-  const planQuestion = findDetailValue(details.plan, 'Question:');
-  const planArms = findDetailValue(details.plan, 'Arms:');
-  const planChallenge = findDetailValue(details.plan, 'Challenge:');
-  const decision = findDetailValue(details.decide, 'Decision:');
-  const tryNext = findDetailValue(details.decide, 'Try next:');
+function getLoopIntent({ progress, stageIdx, stage0First, premise, outputType }) {
   const currentStage = STAGE_KEYS[Math.min(stageIdx, STAGE_KEYS.length - 1)] || 'deconstruct';
 
-  if (decision) return `Decision: ${decision}${tryNext ? `; next: ${tryNext}` : ''}`;
-  if (currentStage === 'evaluate') {
-    return planQuestion
-      ? `Evaluating: ${planQuestion}`
-      : progress?.competitionMode === 'cold_start_duel'
-        ? 'Evaluating candidate A vs. B against the prompt bank'
-        : 'Evaluating the challenger against the champion';
+  if (currentStage === 'deconstruct') {
+    return stage0First
+      ? 'Mapping the skill space and research context'
+      : 'Deconstructing the current champion';
+  }
+  if (currentStage === 'plan') return 'Planning this round’s experiment';
+  if (currentStage === 'generate') {
+    return progress?.competitionMode === 'cold_start_duel'
+      ? 'Generating Candidate A and Candidate B'
+      : 'Generating a challenger';
   }
   if (currentStage === 'review') {
-    return planQuestion
-      ? `Reviewing: ${planQuestion}`
-      : progress?.competitionMode === 'cold_start_duel'
-        ? 'Reviewing whether both candidates are valid enough to evaluate'
-        : 'Reviewing whether the challenger is valid enough to evaluate';
+    return progress?.competitionMode === 'cold_start_duel'
+      ? 'Reviewing Candidate A and Candidate B'
+      : 'Reviewing the challenger';
   }
-  if (currentStage === 'generate') {
-    return planChallenge
-      ? `Generating challenger: ${planChallenge}`
-      : planArms
-        ? `Generating variants: ${planArms}`
-        : progress?.competitionMode === 'cold_start_duel'
-          ? 'Generating two first-pass candidate skills'
-          : 'Generating one focused challenger';
+  if (currentStage === 'evaluate') {
+    return outputType === 'code_visual'
+      ? 'Rendering and judging screenshots'
+      : 'Evaluating outputs against the prompt bank';
   }
-  if (planQuestion) return `Testing: ${planQuestion}`;
+  if (currentStage === 'decide') return 'Analyzing results and recording the next loop plan';
   if (premise?.notes?.length) return `Premise: ${premise.notes[0]}`;
   return stage0First
     ? 'Mapping the skill space and creating first candidates'
     : 'Deconstructing the current champion and planning the next ablation';
-}
-
-function findDetailValue(details = [], prefix) {
-  const match = details.find(detail => typeof detail === 'string' && detail.startsWith(prefix));
-  return match ? match.slice(prefix.length).trim() : '';
 }
 
 function Stage({ state, label, Icon, line, lineFilled }) {
@@ -1481,7 +1465,7 @@ function SecondaryRow({ summary, runDetail }) {
 
 /* ---------------- evidence (SkillEval-style) ---------------- */
 
-function Evidence({ runDetail, comparison, openEval, setOpenEval, evTab, setEvTab, onViewSkill, iterLabel }) {
+function Evidence({ runDetail, comparison, openEval, setOpenEval, evTab, setEvTab, onViewSkill, iterLabel, onOpenImage }) {
   const mode = comparison?.competitionMode || runDetail?.experimentPlan?.competitionMode || 'cold_start_duel';
   const duel = mode === 'cold_start_duel' ? runDetail?.evals?.candidateDuel : runDetail?.evals?.challenge;
   if (!duel) return <div className="empty">No evaluation was recorded for this run.</div>;
@@ -1528,7 +1512,8 @@ function Evidence({ runDetail, comparison, openEval, setOpenEval, evTab, setEvTa
           {evals.map(ev => (
             <PromptRow key={ev.id} ev={ev} criteria={criteria} labels={labels}
               open={openEval === ev.id}
-              onToggle={() => setOpenEval(openEval === ev.id ? null : ev.id)} />
+              onToggle={() => setOpenEval(openEval === ev.id ? null : ev.id)}
+              onOpenImage={onOpenImage} />
           ))}
         </div>
       )}
@@ -1613,7 +1598,7 @@ function CriteriaTab({ criteria, evals, labels = { a: 'A', b: 'B' } }) {
   );
 }
 
-function PromptRow({ ev, criteria, labels = { a: 'Candidate A', b: 'Candidate B' }, open, onToggle }) {
+function PromptRow({ ev, criteria, labels = { a: 'Candidate A', b: 'Candidate B' }, open, onToggle, onOpenImage }) {
   const w = ev.judge?.winner;
   const winClass = w === 'skillA' ? 'a' : w === 'skillB' ? 'b' : '';
   const winLabel = w === 'skillA' ? labels.a : w === 'skillB' ? labels.b : 'tie';
@@ -1647,8 +1632,8 @@ function PromptRow({ ev, criteria, labels = { a: 'Candidate A', b: 'Candidate B'
           )}
           {visual && (
             <div className="visual-grid">
-              <VisualOutput label={labels.a} render={visual.a} side="a" />
-              <VisualOutput label={labels.b} render={visual.b} side="b" />
+              <VisualOutput label={labels.a} render={visual.a} side="a" onOpenImage={onOpenImage} />
+              <VisualOutput label={labels.b} render={visual.b} side="b" onOpenImage={onOpenImage} />
             </div>
           )}
           {(out.a || out.b) && (
@@ -1663,7 +1648,7 @@ function PromptRow({ ev, criteria, labels = { a: 'Candidate A', b: 'Candidate B'
   );
 }
 
-function VisualOutput({ label, render, side }) {
+function VisualOutput({ label, render, side, onOpenImage }) {
   if (!render) return null;
   const shots = render.screenshots || [];
   const failed = render.status === 'failed' || render.blankScreenDetected;
@@ -1678,7 +1663,9 @@ function VisualOutput({ label, render, side }) {
         <div className="visual-shots">
           {shots.map(shot => (
             <figure className="visual-shot" key={`${shot.viewport}-${shot.path}`}>
-              <img src={artifactUrl(shot.path)} alt={`${label} ${shot.viewport} render`} loading="lazy" />
+              <button type="button" className="visual-shot-button" onClick={() => onOpenImage?.({ label, shot, failed })}>
+                <img src={artifactUrl(shot.path)} alt={`${label} ${shot.viewport} render`} loading="lazy" />
+              </button>
               <figcaption>{shot.viewport} · {shot.width}×{shot.height}{shot.blank ? ' · blank flagged' : ''}</figcaption>
             </figure>
           ))}
@@ -1686,6 +1673,41 @@ function VisualOutput({ label, render, side }) {
       ) : (
         <div className="empty sm">No screenshot artifact recorded.</div>
       )}
+    </div>
+  );
+}
+
+function ImageLightbox({ image, onClose }) {
+  const { label, shot, failed } = image;
+  const url = artifactUrl(shot.path);
+  useEffect(() => {
+    function onKeyDown(event) {
+      if (event.key === 'Escape') onClose();
+    }
+    window.addEventListener('keydown', onKeyDown);
+    return () => window.removeEventListener('keydown', onKeyDown);
+  }, [onClose]);
+
+  return (
+    <div className="lightbox" role="dialog" aria-modal="true" aria-label={`${label} ${shot.viewport} render`}>
+      <button type="button" className="lightbox-backdrop" aria-label="Close image viewer" onClick={onClose} />
+      <div className="lightbox-panel">
+        <div className="lightbox-head">
+          <div>
+            <div className="lightbox-title">{label} render</div>
+            <div className="lightbox-meta">
+              {shot.viewport} · {shot.width}×{shot.height}
+              {shot.blank ? ' · blank flagged' : ''}
+              {failed ? ' · render issue' : ''}
+            </div>
+          </div>
+          <div className="lightbox-actions">
+            <a className="btn sm" href={url} target="_blank" rel="noreferrer"><ExternalLink size={14} /> Open image</a>
+            <button type="button" className="icon-btn" aria-label="Close image viewer" onClick={onClose}><X size={17} /></button>
+          </div>
+        </div>
+        <img className="lightbox-image" src={url} alt={`${label} ${shot.viewport} render`} />
+      </div>
     </div>
   );
 }

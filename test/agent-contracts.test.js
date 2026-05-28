@@ -140,6 +140,8 @@ Load [heuristics](references/heuristics.md).
   assert.match(result.prompt, /Agent Skills standard:/);
   assert.match(result.prompt, /artifactEvidence/);
   assert.match(result.prompt, /couplingNotes/);
+  assert.match(result.prompt, /Treat ontology as the stable domain map/);
+  assert.match(result.prompt, /Every proposed parameter must be grounded in champion\/package evidence/);
 });
 
 test('real deconstructor contract validates injected model JSON', async () => {
@@ -233,6 +235,8 @@ test('real agent artifact can be saved as current context for the next agent', a
     mode: 'mock',
   });
   assert.match(planner.prompt, /Saved parameterization/);
+  assert.match(planner.prompt, /Ontology guardrail context:/);
+  assert.match(planner.prompt, /Prefer deconstruction evidence when choosing what to test/);
 });
 
 test('real experiment planner normalizes common arm aliases', async () => {
@@ -403,6 +407,8 @@ test('creator prompt includes Agent Skills standard and Skill Creator guidance',
   assert.match(result.prompt, /Preserve every unrelated section and behavior/);
   assert.match(result.prompt, /Preserve the champion's instructional depth/);
   assert.match(result.prompt, /control\/status-quo arm/);
+  assert.match(result.prompt, /Do not redesign from ontology/);
+  assert.match(result.prompt, /ontology may justify preserving domain correctness/);
   assert.match(result.prompt, /Never invent author\/version metadata/);
   assert.match(result.prompt, /never claim OpenAI, Codex, Claude, Anthropic, Skill RSI, or any AI system as the skill author/);
 });

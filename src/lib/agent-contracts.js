@@ -431,6 +431,11 @@ Current champion: ${context.state.currentChampion?.skillHash || 'none'}
 Ontology context:
 ${formatContextBlock(context.ontology)}
 
+Ontology use discipline:
+- Treat ontology as the stable domain map: quality axes, task classes, authorities, failure modes, and drift checks.
+- Do not let ontology override the current champion artifact. Every proposed parameter must be grounded in champion/package evidence or explicit history evidence.
+- Use ontology to identify missing or underdeveloped surfaces, not to invent a wholesale replacement direction.
+
 Research packet:
 ${formatContextBlock(context.researchPacket)}
 
@@ -469,6 +474,9 @@ Run ID: ${context.runId}
 Parameterization to plan from:
 ${formatContextBlock(context.parameterization)}
 
+Ontology guardrail context:
+${formatContextBlock(context.ontology)}
+
 Experiment history summary:
 ${formatContextBlock(compactHistory(context.history))}
 
@@ -485,6 +493,7 @@ Turn the parameterization into a focused experiment. Return JSON matching ABExpe
 runId, competitionMode, experimentQuestion, focusParameterIds, controlledParameterIds, hypothesis, arms, evalFocus, successMetrics, promotionRisks, reasonNotTestingOtherHighPriorityParameters.
 Select one to three related parameters and hold unrelated parameters constant.
 Default to an ablation-style/local-variation experiment: vary only the selected focus parameters, explicitly preserve the current champion's unrelated structure and behavior, and make the challenger narrow enough that the analyst can tell which deconstructed hypothesis moved the result.
+Prefer deconstruction evidence when choosing what to test. Use ontology only as a guardrail to detect coverage gaps, original-goal drift, untested task classes, or domain failure modes that the parameterization underrepresents.
 State success metrics that are measurable under the task contract. Do not plan experiments whose effect would be invisible or impossible to score from the contract's prompt context and expected artifact.
 Honor manager guidance. Do not select avoid.parameterIds unless you explicitly cite new evidence in reasonNotTestingOtherHighPriorityParameters. If strategy.experimentFamily is "high_divergence_reset", plan one high-divergence challenger against the current champion instead of another small local mutation.
 
@@ -512,6 +521,11 @@ Assigned experiment arm: ${context.experimentArm || 'candidateA'}
 
 Ontology context:
 ${formatContextBlock(context.ontology)}
+
+Ontology use discipline:
+- Treat ontology as background domain guardrails: what good output must preserve, known failure modes, authority-informed constraints, and task coverage.
+- Do not redesign from ontology. The active experiment plan and champion are more specific than the ontology.
+- If a current champion exists, ontology may justify preserving domain correctness or avoiding a failure mode, but it must not broaden the challenger beyond the selected parameters.
 
 Active experiment plan:
 ${formatContextBlock(context.experimentPlan)}

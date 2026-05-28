@@ -4,6 +4,8 @@ Recursive self-improvement for Agent Skills.
 
 Given a skill goal, Skill RSI creates or imports an Agent Skill, evaluates it, and keeps improving it through controlled loops. A scratch project starts with a cold-start duel to crown the first champion. After that, each loop generates one focused challenger, evaluates it directly against the current champion, and promotes only when the challenger clears the promotion policy.
 
+![Skill RSI project home](screenshots/readme-latest-project-20260528-1724/01-project-home.png)
+
 For the origin story, see [Open Sourcing SkillEval](https://www.justinwetch.com/blog/skilleval).
 
 ## Why
@@ -12,7 +14,41 @@ After building [SkillEval](https://github.com/justinwetch/SkillEval), the evalua
 
 The human remains the goal setter and budget owner. The system does the repetitive hypothesis generation, variant creation, evaluation, and history keeping.
 
+## Evidence-Backed Decisions
+
+Every promotion decision links back to prompt-level evidence: the prompt, judge rationale, criterion scores, and both candidate outputs.
+
+![Prompt-level evaluation evidence](screenshots/readme-latest-project-20260528-1724/06-evidence-prompt-expanded.png)
+
+Skill RSI also keeps the candidate packages inspectable, so you can see what changed before accepting a new champion.
+
+![Candidate skill diff](screenshots/readme-latest-project-20260528-1724/08-candidate-compare.png)
+
+## UI Walkthrough
+
+The summary view shows the head-to-head result at a glance.
+
+![Evaluation summary](screenshots/readme-latest-project-20260528-1724/03-evidence-summary.png)
+
+The detailed breakdown explains where each candidate won across the criteria.
+
+![Detailed evaluation breakdown](screenshots/readme-latest-project-20260528-1724/04-evidence-detailed-breakdown.png)
+
+The prompt list keeps every judgment inspectable.
+
+![Prompt evidence list](screenshots/readme-latest-project-20260528-1724/05-evidence-prompts.png)
+
+The champion skill can be opened directly from the UI.
+
+![Champion skill viewer](screenshots/readme-latest-project-20260528-1724/07-champion-skill.png)
+
+The history view records the improvement trajectory over time.
+
+![Improvement history](screenshots/readme-latest-project-20260528-1724/02-history.png)
+
 ## How It Works
+
+For the canonical explanation of the loop and agent roles, see [docs/HOW_IT_WORKS.md](docs/HOW_IT_WORKS.md).
 
 First scratch run:
 
@@ -288,7 +324,7 @@ The UI can also use a pasted key saved locally in the browser. Project files sto
 
 `Code + visuals` projects require generated skills to produce complete standalone browser-renderable UI code. Skill RSI renders each output with Playwright/system Chromium, captures desktop/tablet/mobile screenshots, records render diagnostics, and sends the text plus images to the judge.
 
-Visual-only generation is not exposed in the product. There is no image-only skill artifact contract yet.
+The product exposes `Code + visuals`, where the artifact is still browser-renderable code. Separate rendered-media generation is not part of the product surface.
 
 ## Built On
 

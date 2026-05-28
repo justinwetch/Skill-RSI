@@ -1,0 +1,90 @@
+{
+  "createdAt": "2026-05-28T17:24:33.447Z",
+  "baseUrl": "http://127.0.0.1:5173/",
+  "outputDir": "/Users/justinwetch/Documents/ClaudeCode/Skill RSI/screenshots/readme-latest-project-20260528-1724",
+  "project": {
+    "id": "linkedin-posting",
+    "label": "Linkedin Posting"
+  },
+  "viewport": {
+    "name": "desktop",
+    "width": 1440,
+    "height": 1200
+  },
+  "theme": "light",
+  "maxAspectRatio": "2:1 height:width",
+  "screenshots": [
+    {
+      "file": "01-project-home.png",
+      "path": "/Users/justinwetch/Documents/ClaudeCode/Skill RSI/screenshots/readme-latest-project-20260528-1724/01-project-home.png",
+      "screen": "Latest project home with champion verdict",
+      "stateId": "project-home",
+      "source": "linkedin-posting latest",
+      "status": "captured",
+      "notes": null
+    },
+    {
+      "file": "02-history.png",
+      "path": "/Users/justinwetch/Documents/ClaudeCode/Skill RSI/screenshots/readme-latest-project-20260528-1724/02-history.png",
+      "screen": "Latest project history",
+      "stateId": "history",
+      "source": "linkedin-posting history",
+      "status": "captured",
+      "notes": null
+    },
+    {
+      "file": "03-evidence-summary.png",
+      "path": "/Users/justinwetch/Documents/ClaudeCode/Skill RSI/screenshots/readme-latest-project-20260528-1724/03-evidence-summary.png",
+      "screen": "Latest project evidence summary",
+      "stateId": "evidence-summary",
+      "source": "linkedin-posting latest run",
+      "status": "captured",
+      "notes": null
+    },
+    {
+      "file": "04-evidence-detailed-breakdown.png",
+      "path": "/Users/justinwetch/Documents/ClaudeCode/Skill RSI/screenshots/readme-latest-project-20260528-1724/04-evidence-detailed-breakdown.png",
+      "screen": "Latest project detailed evidence breakdown",
+      "stateId": "evidence-detailed-breakdown",
+      "source": "linkedin-posting latest run",
+      "status": "captured",
+      "notes": null
+    },
+    {
+      "file": "05-evidence-prompts.png",
+      "path": "/Users/justinwetch/Documents/ClaudeCode/Skill RSI/screenshots/readme-latest-project-20260528-1724/05-evidence-prompts.png",
+      "screen": "Latest project prompt evidence list",
+      "stateId": "evidence-prompts",
+      "source": "linkedin-posting latest run",
+      "status": "captured",
+      "notes": null
+    },
+    {
+      "file": "06-evidence-prompt-expanded.png",
+      "path": "/Users/justinwetch/Documents/ClaudeCode/Skill RSI/screenshots/readme-latest-project-20260528-1724/06-evidence-prompt-expanded.png",
+      "screen": "Latest project expanded prompt evidence",
+      "stateId": "evidence-prompt-expanded",
+      "source": "linkedin-posting latest run",
+      "status": "captured",
+      "notes": null
+    },
+    {
+      "file": "07-champion-skill.png",
+      "path": "/Users/justinwetch/Documents/ClaudeCode/Skill RSI/screenshots/readme-latest-project-20260528-1724/07-champion-skill.png",
+      "screen": "Latest project champion skill viewer",
+      "stateId": "champion-skill",
+      "source": "linkedin-posting champion",
+      "status": "captured",
+      "notes": null
+    },
+    {
+      "file": "08-candidate-compare.png",
+      "path": "/Users/justinwetch/Documents/ClaudeCode/Skill RSI/screenshots/readme-latest-project-20260528-1724/08-candidate-compare.png",
+      "screen": "Latest project candidate A/B skill diff",
+      "stateId": "candidate-compare",
+      "source": "linkedin-posting candidate duel",
+      "status": "captured",
+      "notes": null
+    }
+  ]
+}

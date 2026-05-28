@@ -4,9 +4,11 @@ Recursive Self-Improvement for Agent Skills
 
 This document is the conceptual source of truth for architecture and product intent.
 
+Current v0 note: the implemented competition model is now **cold-start duel, then champion challenge**. The first scratch run may generate Candidate A and Candidate B to crown an initial champion. Once a champion exists, each later loop generates one focused challenger and evaluates it directly against the current champion. Baseline uploads count as an existing champion and start with deconstruction/challenge rather than ontology/cold-start generation.
+
 ## 1. Goal
 
-Skill RSI is a system that repeatedly improves Agent Skill packages by generating independent candidate skill versions, evaluating them with a headless SkillEval-style A/B harness, interpreting the results, and promoting the best version into the next iteration.
+Skill RSI is a system that repeatedly improves Agent Skill packages by generating a focused challenger, evaluating it with a headless SkillEval-style harness, interpreting the results, and promoting the challenger only when it clearly beats the current champion.
 
 SkillEval answers "which of these two skills performed better?" Skill RSI answers the missing upstream question: "what should the next challenger skill be, and why?" The human remains a supervisor and budget owner instead of the person manually inventing every variant.
 
@@ -18,8 +20,8 @@ The product should support three operating modes:
 
 The core output of every loop is one of:
 
-1. Keep current champion: no candidate has enough evidence to replace it.
-2. Promote candidate: a candidate becomes the new champion skill.
+1. Keep current champion: no challenger has enough evidence to replace it.
+2. Promote challenger: the challenger becomes the new champion skill.
 3. Edit champion: make a small targeted edit instead of replacing the whole skill.
 4. Request new experiment: evaluation was inconclusive or exposed a missing test dimension.
 
@@ -85,7 +87,7 @@ Flow:
 
 1. Manager creates a project workspace and run ID.
 2. Ontology subgraph maps the skill's possibility space and creates the initial parameter taxonomy.
-3. Experiment planner creates an initial broad A/B brief from the ontology.
+3. Experiment planner creates an initial cold-start duel brief from the ontology.
 4. Candidate creator A creates one complete skill package.
 5. Candidate creator B independently creates another complete skill package.
 6. Preflight validates both packages against the Agent Skills spec and local project rules.
@@ -116,15 +118,15 @@ Flow:
 
 1. Manager reads compact history, initial context, and current champion.
 2. Deconstruction subagent analyzes the latest champion and parameterizes the current skill: what surfaces exist for improvement, what hypotheses attach to each surface, and what evidence from prior runs matters.
-3. Ontology subgraph refreshes only if deconstruction reveals a changed domain assumption or a missing category in the parameter taxonomy.
-4. Experiment planner converts the parameter map into a concrete A/B experiment brief.
-5. Two creator subagents independently produce challenger candidates from that experiment brief.
-6. Candidate duel compares challenger A vs challenger B on an exploration batch.
-7. Promotion gate compares the winning challenger against the current champion on the stable batch.
+3. Ontology refreshes only if deconstruction reveals a changed domain assumption or missing category. Otherwise it remains a stable domain guardrail.
+4. Experiment planner converts the parameter map into a concrete champion-challenge brief.
+5. One creator produces a challenger from that brief as a localized ablation-style variation of the champion.
+6. Preflight validates the challenger package and can request one bounded revision.
+7. Headless eval compares challenger directly against the current champion.
 8. Analyst recommends promote, keep, edit, or request a new experiment.
 9. History writer records what changed, what was learned, and what should be tried next.
 
-This keeps the "two independent paths" design while preventing a new candidate from replacing a proven champion just because it beat another weak candidate.
+This keeps later loops controlled: the current champion is the control, and the challenger is the only treatment.
 It also makes every later loop hypothesis-driven: the system first asks what can be changed, then chooses which change to test.
 
 ## 5. Orchestration Graph
@@ -135,18 +137,13 @@ Use a deterministic state machine first. A graph framework can be introduced lat
 init_run
   -> load_project_state
   -> build_initial_ontology_or_deconstruct_current_skill
-  -> plan_ab_experiment
-  -> generate_candidate_a
-  -> generate_candidate_b
-  -> adversarial_review_a
-  -> adversarial_review_b
-  -> revise_candidate_a
-  -> revise_candidate_b
+  -> plan_experiment
+  -> generate_cold_start_candidates_or_challenger
+  -> adversarial_review
+  -> revise_blocked_candidate_or_challenger
   -> validate_packages
   -> design_eval_batch
-  -> run_candidate_duel
-  -> analyze_duel
-  -> run_champion_gate
+  -> run_cold_start_duel_or_champion_challenge
   -> analyze_promotion
   -> apply_decision
   -> write_history
@@ -162,7 +159,7 @@ Every node should be resumable. If a model call fails or an eval times out, the 
 Responsibility:
 
 - Own the loop state and final decision.
-- Design the round-level A/B experiment after reading the parameterization.
+- Design the round-level experiment after reading the parameterization.
 - Decide which prior artifacts are relevant enough to load.
 - Prevent overfitting, scope creep, and runaway cost.
 - Convert analyst recommendations into an explicit next action.
@@ -178,8 +175,8 @@ Inputs:
 Outputs:
 
 - Run plan.
-- Candidate strategy assignments.
-- Parameter focus and A/B experiment brief.
+- Candidate/challenger strategy assignments.
+- Parameter focus and experiment brief.
 - Final loop decision.
 - Next-run notes.
 
@@ -246,7 +243,7 @@ Responsibility:
 
 - Given history context, initial context, and the latest champion skill, deconstruct the current skill into granular improvement parameters.
 - Identify what surfaces can be changed, what each change might improve, what it might damage, and how an experiment could detect the difference.
-- Produce hypotheses without deciding the final A/B plan.
+- Produce hypotheses without deciding the final experiment plan.
 
 Inputs:
 
@@ -328,22 +325,24 @@ Design notes:
 
 Responsibility:
 
-- Convert the parameterization into a specific A/B experiment.
+- Convert the parameterization into a specific experiment.
 - Decide which parameters are worth testing now and which should remain controlled.
-- Produce the candidate strategy assignments for creator A and creator B.
+- Produce either cold-start Candidate A/B assignments or one champion-present challenger assignment.
 
 Output schema:
 
 ```ts
 type ABExperimentPlan = {
   runId: string;
+  competitionMode: "cold_start_duel" | "champion_challenge" | "high_divergence_reset";
   experimentQuestion: string;
   focusParameterIds: string[];
   controlledParameterIds: string[];
   hypothesis: string;
   arms: {
-    candidateA: ExperimentArm;
-    candidateB: ExperimentArm;
+    candidateA?: ExperimentArm;
+    candidateB?: ExperimentArm;
+    challenger?: ExperimentArm;
   };
   evalFocus: {
     promptTaxonomyTargets: string[];
@@ -369,23 +368,25 @@ Default policy:
 - Test one to three related parameters per loop.
 - Keep unrelated parameters as controlled constants.
 - Prefer experiments that can produce observable differences in a 10-prompt batch.
-- If the parameter map suggests many weak hypotheses, plan an exploratory A/B experiment.
+- If there is no champion, plan a cold-start duel.
+- If a champion exists, default to one champion challenge: the champion is the control and the challenger is the treatment.
+- If the parameter map suggests many weak hypotheses, plan a narrow exploratory challenger or request prompt/eval refinement.
 - If one hypothesis is strong and localized, plan a narrow edit-vs-restructure experiment.
 
 Useful experiment templates:
 
-- One-parameter bidirectional test: candidate A pushes parameter X higher while candidate B pushes it lower.
-- One-parameter challenger test: candidate A mutates parameter X while candidate B preserves the champion's current treatment as a control.
-- Two-parameter exploration: candidate A mutates parameter X and candidate B mutates parameter Y, accepting weaker signal in exchange for broader search.
-- High-divergence reset: one candidate intentionally explores a substantially different strategy when recent rounds show local-maxima behavior.
-- Surgical edit vs restructure: one candidate makes a localized change and the other reorganizes the relevant section or package surface more aggressively.
+- Cold-start duel: Candidate A and Candidate B take meaningfully different first-version strategies when no champion exists.
+- One-parameter champion challenge: challenger mutates parameter X while the current champion remains the control.
+- High-divergence reset: one challenger intentionally explores a substantially different strategy when recent rounds show local-maxima behavior.
+- Surgical local edit: challenger makes a localized change while preserving unrelated champion structure.
 
 ### 6.5 Candidate Creator Agents
 
 Responsibility:
 
-- Create complete skill package candidates from the same goal, ontology, parameterization, and A/B experiment plan.
-- Work independently to reduce correlated failure.
+- Create a complete skill package candidate from the same goal, ontology, parameterization, and experiment plan.
+- On cold start, create independent Candidate A/B packages to reduce correlated failure.
+- Once a champion exists, create one localized challenger, not a wholesale reinvention.
 - Produce an outline, pause for adversarial implementation analysis, then implement.
 
 Internal flow:
@@ -395,7 +396,7 @@ Internal flow:
 3. Revise the outline using only concrete, useful critique.
 4. Write the final package files.
 
-Each creator should receive a different strategy assignment. Examples:
+Cold-start creators should receive different strategy assignments. Examples:
 
 - Creator A: lean procedural skill, minimal bundled resources, strong invocation boundaries.
 - Creator B: resource-rich skill with reference files, examples, and scripts where justified.
@@ -407,7 +408,7 @@ Output:
 ```ts
 type CandidatePackage = {
   candidateId: string;
-  experimentArm: "candidateA" | "candidateB";
+  experimentArm: "candidateA" | "candidateB" | "challenger";
   strategy: string;
   changedParameterIds: string[];
   files: SkillFile[];
@@ -479,8 +480,8 @@ type PromptBank = {
 
 Batch policy:
 
-- Use 6 stable prompts and 4 exploration prompts for normal scheduled runs.
-- Use 10 exploration prompts for first-run candidate discovery.
+- Use 6 stable prompts and 4 exploration/provisional prompts for normal champion-challenge runs.
+- Use 10 exploration prompts for first-run cold-start discovery.
 - Promote strong exploration prompts into stable only after they reveal durable signal.
 - Retire prompts that are too easy, impossible, ambiguous, or leak implementation details.
 
@@ -488,7 +489,7 @@ Batch policy:
 
 Responsibility:
 
-- Run the paired candidate outputs.
+- Run paired outputs: Candidate A vs Candidate B for cold start, challenger vs champion for champion-present runs.
 - Preserve raw outputs, timing, model metadata, screenshots when relevant, judge responses, and parsed scores.
 
 Required extensions over current SkillEval:
@@ -555,6 +556,7 @@ Use local filesystem storage for MVP. It is transparent, git-friendly, and easy 
 .skill-rsi/
 └── projects/
     └── ux-design/
+        ├── config.json
         ├── project.yaml
         ├── state.json
         ├── champion/
@@ -580,17 +582,15 @@ Use local filesystem storage for MVP. It is transparent, git-friendly, and easy 
         │       ├── deconstruction/
         │       │   ├── parameterization.json
         │       │   └── experiment-plan.json
-        │       ├── candidates/
+        │       ├── candidates/          # cold-start only
         │       │   ├── candidate-a/
-        │       │   │   ├── skill/
-        │       │   │   ├── rationale.md
-        │       │   │   └── review.json
         │       │   └── candidate-b/
+        │       ├── challenger/          # champion-present runs
         │       ├── eval/
         │       │   ├── config.json
         │       │   ├── candidate-duel.json
-        │       │   ├── champion-gate.json
-        │       │   └── raw/
+        │       │   ├── challenge.json
+        │       │   └── visual/
         │       ├── analysis/
         │       │   ├── recommendation.json
         │       │   └── report.md
@@ -617,43 +617,30 @@ Use local filesystem storage for MVP. It is transparent, git-friendly, and easy 
 
 ## 8. Project Configuration
 
-Example `project.yaml`:
+Example `config.json` model and policy shape:
 
-```yaml
-name: ux-design
-goal: Help agents design better UX for production applications.
-target_skill_name: ux-design
-portability:
-  target: agent-skills-standard
-  allow_client_specific_features: false
-models:
-  creator: configurable-model-id
-  judge: configurable-model-id
-  analyst: configurable-model-id
-deconstruction:
-  min_parameters: 12
-  max_focus_parameters_per_experiment: 3
-  refresh_ontology_when_missing_taxonomy: true
-eval:
-  default_batch_size: 10
-  stable_prompt_count: 6
-  exploration_prompt_count: 4
-  output_type: auto
-  allow_visual_runner: true
-promotion:
-  min_win_delta: 2
-  min_score_delta: 4
-  allow_promotion_on_low_confidence: false
-  require_no_critical_regressions: true
-budget:
-  max_loops_per_run: 1
-  max_parallel_model_calls: 6
-  max_generation_tokens_per_candidate: 24000
-  max_eval_tokens_per_loop: 300000
-triggers:
-  mode: manual
-  cron: null
-  hooks: []
+```json
+{
+  "models": {
+    "agent": "gpt-5.4-mini",
+    "generation": "gpt-5.4-mini",
+    "judge": "gpt-5.4-mini"
+  },
+  "eval": {
+    "outputType": "text",
+    "stablePromptCount": 6,
+    "explorationPromptCount": 4
+  },
+  "promotion": {
+    "minWinDelta": 2,
+    "minScoreDelta": 4,
+    "requireNoCriticalRegression": true
+  },
+  "trigger": {
+    "mode": "manual",
+    "targetIterations": 3
+  }
+}
 ```
 
 ## 9. Headless SkillEval Extraction
@@ -677,7 +664,7 @@ SkillEval's useful logic should become a headless library.
 3. Add run IDs, skill hashes, prompt IDs, and model metadata to every result.
 4. Add random blind labels so judges do not see candidate names.
 5. Add ties or inconclusive judgments.
-6. Add deterministic config loading from `project.yaml`.
+6. Add deterministic config loading from `config.json`, with `project.yaml` as a compact companion.
 7. Add structured errors and partial run recovery.
 8. Add CLI command surface.
 
@@ -687,7 +674,7 @@ Proposed CLI:
 skill-rsi init --name ux-design --goal "Help agents design better UX"
 skill-rsi run ux-design --batch 10
 skill-rsi evaluate ux-design --a path/to/skill-a --b path/to/skill-b
-skill-rsi promote ux-design --run <run-id> --candidate <candidate-id>
+skill-rsi decide ux-design --decision annotate --note "Reviewed."
 skill-rsi history ux-design
 skill-rsi daemon ux-design
 ```
@@ -708,12 +695,12 @@ Decision table:
 
 | Condition | Decision |
 | --- | --- |
-| Candidate clearly beats champion | Promote candidate |
-| Candidate improves one area but regresses critical stable prompts | Keep current, record targeted edit notes |
-| Candidate and champion are close | Keep current, request larger or different eval batch |
-| Both candidates fail on the same class | Keep current, add eval/ontology notes |
+| Challenger clearly beats champion | Promote challenger |
+| Challenger improves one area but regresses critical stable prompts | Keep current, record targeted edit notes |
+| Challenger and champion are close | Keep current, request larger or different eval batch |
+| Cold-start candidates both fail on the same class | No confident champion, add eval/ontology notes |
 | Eval prompts are flawed | Request new experiment, do not promote |
-| Candidate is better but bloated or non-portable | Edit current or regenerate with constraints |
+| Challenger is better but bloated or non-portable | Keep current or regenerate with constraints |
 
 ## 11. Evaluation Design
 
@@ -830,7 +817,7 @@ type HistoryIndex = {
 - Judge transcripts.
 - Full candidate packages.
 - Deconstruction and parameterization records.
-- A/B experiment plans.
+- Experiment plans.
 - Detailed analyst reports.
 - Prior ontology versions.
 - Prompt retirement rationale.
@@ -859,7 +846,7 @@ Run until a stop condition fires:
 
 - Budget exhausted.
 - `patience` runs without meaningful improvement.
-- Analyst recommends human review.
+- Stop rules request a human checkpoint.
 - N consecutive inconclusive runs.
 - Promotion confidence falls below threshold.
 - Manager detects local-maxima behavior and schedules either a high-divergence run or a human checkpoint.
@@ -922,25 +909,25 @@ Spec validation should check:
 
 Build the smallest useful version first:
 
-1. CLI-only project.
+1. CLI and local UI project.
 2. Local filesystem storage.
-3. Text-only evaluation first.
+3. Text, code, and `code_visual_standalone` evaluation.
 4. Initial ontology plus recurring deconstruction/parameterization.
-5. A/B experiment planner.
-6. Two independent candidate creators.
+5. Cold-start duel plus champion-challenge planner.
+6. Two independent cold-start candidate creators; one challenger creator after a champion exists.
 7. Batch size 10.
-8. Headless SkillEval A/B runner.
+8. Headless SkillEval-style paired runner.
 9. Analyst recommendation.
 10. Champion promotion.
 11. Compact history summary.
 
-Explicitly out of MVP:
+Still outside current v0 scope:
 
-- Web UI.
 - Distributed queues.
 - Multi-judge adjudication.
 - Automated GitHub PR creation.
-- Rich visual regression workflows.
+- Image-only visual skill outputs.
+- Rich package/app visual regression workflows beyond standalone browser-renderable artifacts.
 - Long-term hosted database.
 - Cross-agent benchmark runners beyond SkillEval's model-call pattern.
 
@@ -1010,18 +997,18 @@ Tasks:
 - Implement ontology prompt contract.
 - Implement deconstruction and parameterization prompt contract.
 - Implement parameter schema with at least 12 required improvement surfaces.
-- Implement A/B experiment planner prompt contract.
+- Implement experiment planner prompt contract.
 - Implement creator prompt contract.
 - Implement adversarial review prompt contract.
-- Generate two package candidates from the experiment plan into run workspace.
-- Revise candidates after adversarial review.
+- Generate cold-start candidates or one champion-present challenger into the run workspace.
+- Revise blocked candidates/challengers after adversarial review.
 
 Acceptance criteria:
 
-- Given a goal and context, the system creates two valid, meaningfully different skill packages.
-- Given an existing champion, the system produces a granular parameter map and an explicit A/B experiment plan before generating candidates.
-- Candidate rationale identifies strategy, expected advantages, and risks.
-- Candidate rationale lists changed parameter IDs and controlled parameter IDs.
+- Given a goal and context with no champion, the system creates two valid, meaningfully different cold-start skill packages.
+- Given an existing champion, the system produces a granular parameter map and an explicit champion-challenge plan before generating one challenger.
+- Candidate/challenger rationale identifies strategy, expected advantages, and risks.
+- Candidate/challenger rationale lists changed parameter IDs and controlled parameter IDs.
 - Adversarial review can block evaluation on spec or safety failures.
 
 ### Milestone 5: Eval Design And Prompt Bank
@@ -1076,20 +1063,20 @@ Acceptance criteria:
 
 ### Milestone 8: Visual And UI Expansion
 
-Status: deferred / v2. This should not be treated as part of the default text-first RSI loop until the visual evaluation contract has been discussed and specified. See section 21.
+Status: partially implemented for local v0. The supported visual path is `code_visual_standalone`; visual-only/image-only output remains deferred. See section 21.
 
 Possible tasks:
 
-- Reuse SkillEval screenshot server for visual outputs.
+- Render standalone browser UI outputs and store screenshots.
 - Add visual output artifact storage.
-- Build optional web UI for run history, candidates, and comparisons.
-- Add human review interface.
+- Build local web UI for run history, challengers, comparisons, and screenshot inspection.
+- Keep human annotations optional and separate from promotion.
 
 Possible acceptance criteria:
 
-- Visual skills can be evaluated without using the SkillEval GUI.
+- Code + visuals skills can be evaluated without using the SkillEval GUI.
 - Screenshots are stored alongside judge results.
-- Human reviewer can override or annotate analyst recommendations.
+- Human reviewer can annotate analyst recommendations without becoming part of required promotion.
 
 ## 17. Example End-To-End UX
 
@@ -1120,10 +1107,10 @@ Report: .skill-rsi/projects/ux-design/runs/2026-05-25T210000Z/analysis/report.md
 | --- | --- |
 | Eval overfitting | Keep stable prompts hidden from candidate creators when possible; use exploration prompts; inspect prompt-specific hacks |
 | Skill bloat | Enforce `SKILL.md` length and context budget; require references for detail |
-| False promotion from noisy batch | Use champion gate, promotion thresholds, and "inconclusive" decisions |
+| False promotion from noisy batch | Use direct champion challenge, promotion thresholds, stable-prompt regression checks, and "inconclusive" decisions |
 | Judge bias | Blind labels, randomized order, optional multiple judges |
-| Candidate convergence | Assign different strategies and forbid creators from seeing each other's work |
-| Parameter sprawl | Require prioritization, limit each A/B experiment to one to three related parameters, and track controlled constants |
+| Candidate convergence | Use independent strategy assignments for cold start; use narrow ablation-style challengers after a champion exists |
+| Parameter sprawl | Require prioritization, limit each experiment to one to three related parameters, and track controlled constants |
 | Local maxima | Track recent no-improvement streaks and schedule high-divergence or reset-to-baseline experiments |
 | Drift from original goal | Periodically compare champion against the original goal, ontology, and human-provided constraints |
 | Cost runaway | Enforce per-project run, token, and spend caps before scheduling any unattended loop |

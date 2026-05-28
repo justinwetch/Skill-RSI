@@ -10,14 +10,13 @@ This is not a separate SkillEval clone inside Skill RSI. The clean implementatio
 
 Enable **Code + visuals** as the first visual path.
 
-Keep **Visuals only** disabled. Visual-only outputs are not yet a coherent Agent Skill contract in this product because there is no image-generation/rendering artifact standard, no deterministic renderer, and no obvious promotion gate that is comparable to text/code skill outputs.
+Do not expose **Visuals only**. Visual-only outputs are not yet a coherent Agent Skill contract in this product because there is no image-generation/rendering artifact standard, no deterministic renderer, and no obvious promotion gate that is comparable to text/code skill outputs.
 
-The UI should continue to expose only output artifact choices:
+The UI should expose only these output artifact choices:
 
 - Text
 - Code
 - Code + visuals
-- Visuals only, disabled
 
 Do not expose task-environment language. Backend task contracts remain internal guardrails.
 

@@ -564,7 +564,7 @@ ${context.skillCreatorGuidance || '(skill creator guidance unavailable)'}
 === END SKILL CREATOR GUIDANCE ===
 
 Authoring rules for this package, on top of that standard:
-- Frontmatter: include the required name and description; add an optional key (license, compatibility, metadata, allowed-tools) only if it genuinely applies, and put extras like author/version INSIDE metadata. Never invent non-spec top-level keys such as id, status, audience, summary, or a top-level version.
+- Frontmatter: include the required name and description; add an optional key (license, compatibility, metadata, allowed-tools) only if it genuinely applies, and put extras like author/version INSIDE metadata. Metadata is optional; for scratch-created skills, omit metadata unless there is a real end-user reason. Never invent author/version metadata, and never claim OpenAI, Codex, Claude, Anthropic, Skill RSI, or any AI system as the skill author. Never invent non-spec top-level keys such as id, status, audience, summary, or a top-level version.
 - name: a lowercase-hyphen slug reflecting the skill's purpose (e.g. "reddit-content-writer"), NEVER the Skill RSI candidate id.
 - description: specific and end-user facing (what it does + when to use it); it must NOT mention Skill RSI, skill-rsi, evaluation runs, test runs, or "vertical slice".
 - The package must contain NOTHING about Skill RSI or its machinery anywhere in any file: no Skill RSI/skill-rsi names, Skill RSI authorship metadata, run ids, candidate ids, parameter ids, experiment/A-B/duel/eval/judge/scoring language, "Run Context" sections, or changed-parameter lists. It should read as if a skilled independent author wrote it for production use.
@@ -964,7 +964,41 @@ function ensureSkillFrontmatter(content, { candidateId, strategy }) {
   if (!/^description:\s*.+$/m.test(frontmatter)) {
     frontmatter = `${frontmatter}\ndescription: ${description}`;
   }
+  frontmatter = stripDisallowedAuthorshipMetadata(frontmatter);
   return `---\n${frontmatter}\n---\n${body}`;
+}
+
+function stripDisallowedAuthorshipMetadata(frontmatter) {
+  const lines = String(frontmatter || '').split('\n');
+  const output = [];
+  for (let index = 0; index < lines.length; index += 1) {
+    const line = lines[index];
+    if (/^author\s*:/i.test(line) && hasDisallowedAuthorValue(line)) continue;
+    const inlineMetadata = line.match(/^metadata:\s*(.+)$/i);
+    if (inlineMetadata && hasDisallowedAuthorValue(inlineMetadata[1])) continue;
+    if (/^metadata:\s*$/i.test(line)) {
+      const block = [];
+      let cursor = index + 1;
+      while (cursor < lines.length && /^\s+/.test(lines[cursor])) {
+        const child = lines[cursor];
+        if (!/^\s+author\s*:/i.test(child) || !hasDisallowedAuthorValue(child)) {
+          block.push(child);
+        }
+        cursor += 1;
+      }
+      if (block.length > 0) {
+        output.push(line, ...block);
+      }
+      index = cursor - 1;
+      continue;
+    }
+    output.push(line);
+  }
+  return output.join('\n').trim();
+}
+
+function hasDisallowedAuthorValue(value) {
+  return /\b(openai|chatgpt|codex|claude|anthropic|skill\s*rsi|skill-rsi|ai-generated|generated\s+by\s+ai)\b/i.test(String(value || ''));
 }
 
 function slugifySkillName(value) {

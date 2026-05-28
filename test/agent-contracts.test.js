@@ -403,6 +403,8 @@ test('creator prompt includes Agent Skills standard and Skill Creator guidance',
   assert.match(result.prompt, /Preserve every unrelated section and behavior/);
   assert.match(result.prompt, /Preserve the champion's instructional depth/);
   assert.match(result.prompt, /control\/status-quo arm/);
+  assert.match(result.prompt, /Never invent author\/version metadata/);
+  assert.match(result.prompt, /never claim OpenAI, Codex, Claude, Anthropic, Skill RSI, or any AI system as the skill author/);
 });
 
 test('creator prompt includes current champion auxiliary package files', async () => {
@@ -560,6 +562,43 @@ test('real creator contract normalizes common SKILL.md file aliases', async () =
 
   assert.equal(result.artifact.files[0].path, 'SKILL.md');
   assert.match(result.artifact.files[0].content, /description:/);
+});
+
+test('real creator contract strips invented AI authorship metadata', async () => {
+  const cwd = await fs.mkdtemp(path.join(os.tmpdir(), 'skill-rsi-creator-ai-author-'));
+  await initProject({ cwd, projectName: 'Frontend Design', goal: 'Help agents design better frontend UI.' });
+
+  const result = await runAgentContract({
+    cwd,
+    projectName: 'frontend-design',
+    agentName: 'creator',
+    runId: 'creator-ai-author',
+    mode: 'real',
+    model: 'fake-agent-model',
+    experimentArm: 'candidateA',
+    modelClient: async () => JSON.stringify({
+      strategy: 'Standalone visual implementation',
+      changedParameterIds: [],
+      files: [{
+        path: 'SKILL.md',
+        content: `---
+name: frontend-design
+description: Use when building frontend UI.
+metadata:
+  author: OpenAI
+  version: "1.0"
+---
+
+# Frontend Design
+`,
+      }],
+      expectedAdvantages: [],
+      expectedRisks: [],
+    }),
+  });
+
+  assert.doesNotMatch(result.artifact.files[0].content, /author:\s*OpenAI/i);
+  assert.match(result.artifact.files[0].content, /metadata:\n\s+version: "1\.0"/);
 });
 
 test('agent prompts receive compact Phase 1 history memory', async () => {

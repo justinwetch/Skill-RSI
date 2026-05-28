@@ -1266,7 +1266,7 @@ function Verdict({ summary, runDetail, comparison, busy, onStart, onEvidence }) 
       <p className="verdict-body">{rec.reasoning || winLine}</p>
       <div className="verdict-actions">
         {(runDetail?.evals?.candidateDuel || runDetail?.evals?.challenge) && (
-          <button className="btn ghost" onClick={onEvidence}><FileText size={16} /> Detailed Data <ArrowRight size={15} /></button>
+          <button className="btn" onClick={onEvidence}><FileText size={16} /> Detailed Data <ArrowRight size={15} /></button>
         )}
       </div>
       {(observations.length > 0 || guidance) && (
@@ -1606,30 +1606,17 @@ function PromptRow({ ev, criteria, labels = { a: 'Candidate A', b: 'Candidate B'
   const visual = visualOutputs(ev);
   return (
     <div style={{ borderTop: '1px solid var(--color-border)' }}>
-      <button className="row-click" onClick={onToggle}
-        style={{ display: 'flex', alignItems: 'center', gap: 12, width: '100%', background: 'none', border: 'none', padding: '13px 4px', color: 'var(--color-text-primary)', textAlign: 'left' }}>
-        <span style={{ flex: 1, fontSize: 14 }}>{promptGist(ev.prompt?.text)}</span>
-        <span style={{ fontSize: 13, color: 'var(--color-text-secondary)', fontVariantNumeric: 'tabular-nums', whiteSpace: 'nowrap' }}>{labels.a} {ev.judge?.scoreA} · {labels.b} {ev.judge?.scoreB}</span>
+      <button className="row-click prompt-row" onClick={onToggle}>
+        <span className="prompt-row-text">{promptGist(ev.prompt?.text)}</span>
+        <span className="prompt-row-scores">{labels.a} {ev.judge?.scoreA} · {labels.b} {ev.judge?.scoreB}</span>
         <span className={`pill ${winClass}`} style={{ justifyContent: 'center' }}>{winLabel}</span>
         {open ? <ChevronUp size={15} style={{ color: 'var(--color-text-secondary)' }} /> : <ChevronDown size={15} style={{ color: 'var(--color-text-muted)' }} />}
       </button>
       {open && (
         <div className="ev-detail">
+          <div className="full-prompt">{ev.prompt?.text || 'Prompt text was not recorded.'}</div>
           <p className="ev-reason">{ev.judge?.reasoning || 'No judge rationale recorded.'}</p>
-          {criteria.length > 0 && (
-            <div className="crit-grid">
-              {criteria.map(c => (
-                <div className="crit" key={c.id}>
-                  <span className="nm">{c.name}</span>
-                  <div className="vals">
-                    <span className="va">{labels.a} {ev.judge?.breakdown?.skillA?.[c.id] ?? '–'}</span>
-                    <span className="sep">·</span>
-                    <span className="vb">{labels.b} {ev.judge?.breakdown?.skillB?.[c.id] ?? '–'}</span>
-                  </div>
-                </div>
-              ))}
-            </div>
-          )}
+          {criteria.length > 0 && <CriterionScoreTable criteria={criteria} ev={ev} labels={labels} />}
           {visual && (
             <div className="visual-grid">
               <VisualOutput label={labels.a} render={visual.a} side="a" onOpenImage={onOpenImage} />
@@ -1646,6 +1633,49 @@ function PromptRow({ ev, criteria, labels = { a: 'Candidate A', b: 'Candidate B'
       )}
     </div>
   );
+}
+
+function CriterionScoreTable({ criteria, ev, labels }) {
+  return (
+    <div className="crit-table-wrap">
+      <table className="crit-table">
+        <thead>
+          <tr>
+            <th>Criterion</th>
+            <th>{labels.a}</th>
+            <th>{labels.b}</th>
+            <th>Edge</th>
+          </tr>
+        </thead>
+        <tbody>
+          {criteria.map(c => {
+            const a = ev.judge?.breakdown?.skillA?.[c.id];
+            const b = ev.judge?.breakdown?.skillB?.[c.id];
+            const edge = scoreEdge(a, b, labels);
+            return (
+              <tr key={c.id}>
+                <td>{c.name}</td>
+                <td className={edge.side === 'a' ? 'win-a' : ''}>{formatScore(a)}</td>
+                <td className={edge.side === 'b' ? 'win-b' : ''}>{formatScore(b)}</td>
+                <td className={`edge ${edge.side}`}>{edge.label}</td>
+              </tr>
+            );
+          })}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
+function formatScore(value) {
+  return value == null ? '–' : value;
+}
+
+function scoreEdge(a, b, labels) {
+  if (a == null || b == null) return { side: '', label: 'n/a' };
+  if (a > b) return { side: 'a', label: `${labels.a} +${a - b}` };
+  if (b > a) return { side: 'b', label: `${labels.b} +${b - a}` };
+  return { side: 'tie', label: 'Tie' };
 }
 
 function VisualOutput({ label, render, side, onOpenImage }) {
@@ -1889,8 +1919,7 @@ function promptGist(text) {
     const t = taskLine.replace(/task:\s*/i, '').trim().replace(/\.$/, '');
     return t.charAt(0).toUpperCase() + t.slice(1) + '.';
   }
-  const first = String(text).split('\n')[0];
-  return first.length > 96 ? first.slice(0, 93) + '…' : first;
+  return String(text).split('\n')[0];
 }
 function outputs(ev) {
   const vals = Object.values(ev.results || {});

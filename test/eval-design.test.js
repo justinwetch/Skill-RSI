@@ -167,11 +167,12 @@ test('evaluation designer enforces UI-code output contract', () => {
     outputType: 'code_visual',
   });
 
-  assert.equal(design.bank.outputType, 'code');
-  assert.equal(design.bank.taskContractId, 'code_standalone');
-  assert.ok(design.prompts.every(prompt => prompt.outputType === 'code'));
-  assert.match(design.prompts[0].text, /There is no existing repository context/);
-  assert.ok(design.criteria.some(criterion => criterion.id === 'contract_validity'));
+  assert.equal(design.bank.outputType, 'code_visual');
+  assert.equal(design.bank.taskContractId, 'code_visual_standalone');
+  assert.ok(design.prompts.every(prompt => prompt.outputType === 'code_visual'));
+  assert.match(design.prompts[0].text, /complete HTML document/);
+  assert.ok(design.criteria.some(criterion => criterion.id === 'renderability'));
+  assert.ok(design.criteria.some(criterion => criterion.id === 'visual_hierarchy'));
 });
 
 test('evaluation designer resets stale prompt bank when output type changes', () => {
@@ -333,9 +334,44 @@ test('strict prompt naturalization fails instead of using deterministic fallback
     error => {
       assert.equal(error.name, 'PromptAuthoringError');
       assert.equal(error.provenance.fallbackPromptCount, 1);
+      assert.equal(error.provenance.invalidPromptDetails[0].text, 'Update the existing app to add search.');
       return true;
     },
   );
+});
+
+test('visual prompt naturalization rejects recommendation-only prompts', async () => {
+  const design = designEvalBatch({
+    runId: 'run-naturalized-visual',
+    goal: 'Help agents implement polished front-end screens.',
+    ontology: { qualityAxes: ['visual hierarchy'], targetTasks: ['build a landing page'] },
+    parameterization: { parameters: [{ id: 'p01', surface: 'renderable output' }] },
+    experimentPlan: { focusParameterIds: ['p01'] },
+    outputType: 'code_visual',
+    stablePromptCount: 1,
+    explorationPromptCount: 0,
+  });
+  const calls = [];
+
+  await naturalizeEvalPrompts({
+    design,
+    goal: 'Help agents implement polished front-end screens.',
+    model: 'fake-judge-model',
+    outputType: 'code_visual',
+    modelClient: async request => {
+      calls.push(request);
+      if (calls.length === 1) {
+        return JSON.stringify({ prompts: ['Recommend a visual direction for a tutoring landing page.'] });
+      }
+      return JSON.stringify({ prompts: ['Build a self-contained browser-renderable tutoring landing page. Return one complete HTML document with inline CSS and JavaScript.'] });
+    },
+  });
+
+  assert.equal(calls.length, 2);
+  assert.match(calls[0].messages[0].content, /code_visual_standalone/);
+  assert.match(calls[0].messages[0].content, /Return one complete standalone HTML document with inline CSS and JavaScript/);
+  assert.match(design.prompts[0].text, /complete HTML document/);
+  assert.equal(design.bank.promptAuthoring.source, 'model_naturalized');
 });
 
 test('evaluation designer creates contract-valid codebase edit prompts', () => {

@@ -763,6 +763,7 @@ async function runStubLoop({
     candidateB,
     challenger,
     promotedCandidateId,
+    recommendation,
     budgetEstimate,
   });
 
@@ -1437,6 +1438,7 @@ async function runAgenticLoop({
       retryPolicy: evalRetryPolicy,
       apiKeys,
       modelClient: agentClient,
+      visualArtifactsDir: runPaths.evalVisualDir,
     });
     await appendTimeline(runPaths.timelineJsonl, 'candidate_duel.completed', { winner: candidateDuel.stats.winner });
   }
@@ -1459,6 +1461,7 @@ async function runAgenticLoop({
       retryPolicy: evalRetryPolicy,
       apiKeys,
       modelClient: agentClient,
+      visualArtifactsDir: runPaths.evalVisualDir,
     });
     await appendTimeline(runPaths.timelineJsonl, 'challenge.completed', { winner: challenge.stats.winner });
   }
@@ -1513,6 +1516,7 @@ async function runAgenticLoop({
     candidateB,
     challenger,
     promotedCandidateId: recommendation.recommendedChampionCandidateId,
+    recommendation,
     budgetEstimate,
   });
 
@@ -1953,6 +1957,7 @@ async function runMockLoop({
     candidateB,
     challenger,
     promotedCandidateId: recommendation.recommendedChampionCandidateId,
+    recommendation,
     budgetEstimate,
   });
 
@@ -2273,7 +2278,7 @@ function createStubRecommendation({ runId, promotedCandidateId, candidateDuel = 
   };
 }
 
-async function applyDecision({ paths, runPaths, state, runId, runNumber, candidateA = null, candidateB = null, challenger = null, promotedCandidateId, budgetEstimate = null }) {
+async function applyDecision({ paths, runPaths, state, runId, runNumber, candidateA = null, candidateB = null, challenger = null, promotedCandidateId, recommendation = null, budgetEstimate = null }) {
   let currentChampion = state.currentChampion;
 
   if (promotedCandidateId) {
@@ -2289,6 +2294,8 @@ async function applyDecision({ paths, runPaths, state, runId, runNumber, candida
       candidateId: promotedCandidateId,
       skillHash,
       skillPath: paths.championSkillDir,
+      provisional: Boolean(recommendation?.resultSummary?.provisionalBootstrap),
+      confidence: recommendation?.confidence || null,
     };
   }
 

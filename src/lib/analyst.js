@@ -105,9 +105,12 @@ export function createPolicyRecommendation({
   const decisiveEval = activeChallenge || candidateDuel;
   const challengeMode = experimentPlan?.competitionMode !== 'cold_start_duel' && activeChallenge;
   const duelWinnerCandidateId = candidateDuel ? getCandidateWinnerId(candidateDuel, candidateDuel.stats.winner) : null;
+  const coldStartBootstrap = !challengeMode && !state.currentChampion && candidateDuel
+    ? chooseColdStartBootstrapWinner(candidateDuel)
+    : null;
   const candidateWinnerId = challengeMode
     ? (activeChallenge.stats.winner === 'skillA' ? 'challenger' : null)
-    : duelWinnerCandidateId;
+    : (duelWinnerCandidateId || coldStartBootstrap?.candidateId || null);
   const scoreDelta = activeChallenge
     ? Math.max(0, decisiveEval.stats.scoreDelta || 0)
     : Math.abs(decisiveEval.stats.scoreDelta || 0);
@@ -126,22 +129,30 @@ export function createPolicyRecommendation({
   // First run (no champion yet) uses a lenient gate; later runs use the configured margins.
   const minScoreDelta = hasChampion ? thresholds.minScoreDelta : 1;
   const minWinDelta = hasChampion ? thresholds.minWinDelta : 1;
-  const canPromote = candidateWinnerId
+  const canStrictlyPromote = candidateWinnerId
     && scoreDelta >= minScoreDelta
     && winDelta >= minWinDelta
     && criticalRegressions.length === 0
     && completionRate >= thresholds.minEvalCompletionRate;
+  const canBootstrapPromote = coldStartBootstrap
+    && candidateWinnerId === coldStartBootstrap.candidateId
+    && criticalRegressions.length === 0
+    && completionRate >= thresholds.minEvalCompletionRate;
+  const canPromote = canStrictlyPromote || canBootstrapPromote;
   const promotedCandidateId = canPromote ? candidateWinnerId : null;
+  const provisionalBootstrap = Boolean(promotedCandidateId && !canStrictlyPromote && canBootstrapPromote);
 
   return validateRecommendation({
     runId,
     decision: promotedCandidateId ? 'promote' : hasChampion ? 'keep_current' : 'request_new_experiment',
     recommendedChampionCandidateId: promotedCandidateId,
-    confidence: promotedCandidateId && scoreDelta >= minScoreDelta + 3 ? 'high' : promotedCandidateId ? 'medium' : 'low',
+    confidence: provisionalBootstrap ? 'low' : promotedCandidateId && scoreDelta >= minScoreDelta + 3 ? 'high' : promotedCandidateId ? 'medium' : 'low',
     reasoning: promotedCandidateId
       ? (hasChampion
         ? `${candidateLabel(promotedCandidateId)} beat the current champion in the head-to-head test by a clear margin, so it becomes the new champion.`
-        : `${candidateLabel(promotedCandidateId)} won the head-to-head test and becomes the first champion.`)
+        : provisionalBootstrap
+          ? `${candidateLabel(promotedCandidateId)} becomes a provisional first champion because the first run produced usable evidence but no clear aggregate winner. The next loop should challenge it directly.`
+          : `${candidateLabel(promotedCandidateId)} won the head-to-head test and becomes the first champion.`)
       : (hasChampion
         ? 'No new version beat the current champion by a clear enough margin, so the current champion stays.'
         : 'Neither version was a clear enough winner to crown a champion yet.'),
@@ -152,6 +163,9 @@ export function createPolicyRecommendation({
       activeChallenge
         ? `Against the current champion, ${activeChallenge.stats.winner === 'skillA' ? 'the challenger came out ahead' : activeChallenge.stats.winner === 'skillB' ? 'the current champion held its lead' : 'it was a tie'}.`
         : 'There was no current champion to compare against yet.',
+      provisionalBootstrap
+        ? `The aggregate score tied, but ${candidateLabel(promotedCandidateId)} had the stronger prompt-level win pattern, so it is being used as a low-confidence starting point instead of leaving the project without a champion.`
+        : null,
       criticalRegressions.length
         ? `Stable-prompt regression blocked promotion on ${criticalRegressions.length} prompt(s).`
         : 'No critical stable-prompt regression was detected.',
@@ -161,7 +175,7 @@ export function createPolicyRecommendation({
       experimentPlan.focusParameterIds.length
         ? `This round tested changes to: ${cleanParamList(experimentPlan.focusParameterIds)}.`
         : 'No specific change was isolated this round.',
-    ],
+    ].filter(Boolean),
     nextRoundGuidance: {
       vary: promotedCandidateId ? 'next highest-priority untested parameter' : 'evaluation batch or experiment arm contrast',
       preserve: promotedCandidateId
@@ -174,10 +188,14 @@ export function createPolicyRecommendation({
     resultSummary: {
       ...summarizeEval(decisiveEval),
       criticalRegressions,
+      provisionalBootstrap,
+      bootstrapReason: provisionalBootstrap ? coldStartBootstrap.reason : null,
     },
     signalAssessment: {
-      strongSignals: promotedCandidateId ? [`${promotedCandidateId} cleared deterministic promotion thresholds.`] : [],
-      weakSignals: promotedCandidateId ? [] : [
+      strongSignals: promotedCandidateId && !provisionalBootstrap ? [`${promotedCandidateId} cleared deterministic promotion thresholds.`] : [],
+      weakSignals: promotedCandidateId && provisionalBootstrap
+        ? [coldStartBootstrap.reason, 'The aggregate score did not produce a clear winner.']
+        : promotedCandidateId ? [] : [
         'The score or win margin was below promotion threshold.',
         ...criticalRegressions.map(item => `Stable regression on ${item.promptId}: ${item.delta}`),
         ...(completionRate < thresholds.minEvalCompletionRate ? ['Too many prompt-level eval failures'] : []),
@@ -189,16 +207,37 @@ export function createPolicyRecommendation({
       ? [`Preserve ${promotedCandidateId}'s treatment of ${experimentPlan.focusParameterIds.join(', ')}.`]
       : ['Run a sharper experiment or use a larger batch before promotion.'],
     nextExperimentNotes: promotedCandidateId
-      ? ['Deconstruct the promoted champion before choosing the next surface.']
+      ? provisionalBootstrap
+        ? ['Treat this as a provisional baseline and challenge it immediately with a controlled tweak.']
+        : ['Deconstruct the promoted champion before choosing the next surface.']
       : ['Review prompt-level judge reasoning before retrying this parameter family.'],
     historySummary: promotedCandidateId
-      ? `Promoted ${candidateLabel(promotedCandidateId)} as the new champion.`
+      ? provisionalBootstrap
+        ? `Selected ${candidateLabel(promotedCandidateId)} as a provisional first champion from usable but tied cold-start evidence.`
+        : `Promoted ${candidateLabel(promotedCandidateId)} as the new champion.`
       : 'Kept the current champion; no clear winner this round.',
     promptBankRecommendations: diagnosePromptBank(activeChallenge || candidateDuel),
   });
 }
 
 function mergePolicyAndAnalyst({ policy, analyst }) {
+  if (policy.decision === 'promote'
+    && policy.resultSummary?.provisionalBootstrap
+    && analyst.decision !== 'promote') {
+    return validateRecommendation({
+      ...policy,
+      observations: [
+        ...policy.observations,
+        ...analyst.observations,
+        'The analysis was cautious, but cold-start bootstrap policy selected a provisional champion so the next loop can challenge a concrete baseline.',
+      ],
+      nextExperimentNotes: [
+        ...(policy.nextExperimentNotes || []),
+        ...(analyst.nextExperimentNotes || []),
+      ],
+    });
+  }
+
   if (analyst.decision !== 'promote') {
     return validateRecommendation({
       ...analyst,
@@ -242,7 +281,7 @@ function mergePolicyAndAnalyst({ policy, analyst }) {
   return validateRecommendation({
     ...analyst,
     decision: 'promote',
-    recommendedChampionCandidateId: analyst.recommendedChampionCandidateId || policy.recommendedChampionCandidateId,
+    recommendedChampionCandidateId: policy.recommendedChampionCandidateId,
     observations: [
       ...policy.observations,
       ...analyst.observations,
@@ -426,6 +465,33 @@ function getCandidateWinnerId(evalRun, winner) {
   if (!evalRun || winner === 'tie') return null;
   if (winner === 'skillA') return 'candidate-a';
   if (winner === 'skillB') return 'candidate-b';
+  return null;
+}
+
+function chooseColdStartBootstrapWinner(evalRun) {
+  if (!evalRun?.stats) return null;
+  const completionRate = evalRun.stats?.confidence?.completionRate ?? 1;
+  if (completionRate <= 0) return null;
+  const skillAWins = Number(evalRun.stats.skillAWins || 0);
+  const skillBWins = Number(evalRun.stats.skillBWins || 0);
+  const promptWinDelta = Math.abs(skillAWins - skillBWins);
+  if (promptWinDelta >= 2) {
+    return {
+      candidateId: skillAWins > skillBWins ? 'candidate-a' : 'candidate-b',
+      reason: `Prompt-level wins favored ${skillAWins > skillBWins ? 'Candidate A' : 'Candidate B'} by ${promptWinDelta}.`,
+    };
+  }
+
+  const totalScoreA = Number(evalRun.stats.totalScoreA || 0);
+  const totalScoreB = Number(evalRun.stats.totalScoreB || 0);
+  const scoreDelta = Math.abs(totalScoreA - totalScoreB);
+  if (scoreDelta >= 1) {
+    return {
+      candidateId: totalScoreA > totalScoreB ? 'candidate-a' : 'candidate-b',
+      reason: `Aggregate score favored ${totalScoreA > totalScoreB ? 'Candidate A' : 'Candidate B'} by ${scoreDelta}.`,
+    };
+  }
+
   return null;
 }
 

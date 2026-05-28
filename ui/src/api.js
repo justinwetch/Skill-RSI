@@ -9,6 +9,10 @@ export async function createProject(payload) {
   });
 }
 
+export async function fetchCapabilities() {
+  return request('/api/capabilities');
+}
+
 export async function fetchProjectSummary(projectId) {
   return request(`/api/projects/${encodeURIComponent(projectId)}/summary`);
 }
@@ -32,6 +36,10 @@ export async function fetchProgress(projectId) {
 export async function fetchSkill(projectId, source = 'champion', runId = null) {
   const query = runId ? `?runId=${encodeURIComponent(runId)}` : '';
   return request(`/api/projects/${encodeURIComponent(projectId)}/skills/${encodeURIComponent(source)}${query}`);
+}
+
+export function artifactUrl(filePath) {
+  return `/api/artifacts?path=${encodeURIComponent(filePath)}`;
 }
 
 export async function recordDecision(projectId, payload) {

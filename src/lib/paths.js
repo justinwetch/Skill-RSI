@@ -70,6 +70,7 @@ export function getRunPaths(projectPaths, runId) {
     championDir: path.join(runDir, 'champion'),
     evalDir: path.join(runDir, 'eval'),
     evalConfigJson: path.join(runDir, 'eval', 'config.json'),
+    evalVisualDir: path.join(runDir, 'eval', 'visual'),
     promptBankUpdateJson: path.join(runDir, 'eval', 'prompt-bank-update.json'),
     candidateDuelJson: path.join(runDir, 'eval', 'candidate-duel.json'),
     challengeJson: path.join(runDir, 'eval', 'challenge.json'),

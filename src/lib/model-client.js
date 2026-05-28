@@ -86,7 +86,7 @@ async function callOpenAI({ apiKey, model, systemPrompt, messages, maxTokens, js
   for (const message of messages) {
     input.push({
       role: message.role === 'assistant' ? 'assistant' : 'user',
-      content: normalizeTextContent(message.content),
+      content: normalizeOpenAIContent(message.content),
     });
   }
 
@@ -155,6 +155,31 @@ function normalizeTextContent(content) {
     return content.map(part => part.text || String(part)).join('\n');
   }
   return String(content ?? '');
+}
+
+function normalizeOpenAIContent(content) {
+  if (!Array.isArray(content)) return normalizeTextContent(content);
+  const parts = [];
+  for (const part of content) {
+    if (typeof part === 'string') {
+      parts.push({ type: 'input_text', text: part });
+      continue;
+    }
+    if (part?.type === 'input_text' && typeof part.text === 'string') {
+      parts.push({ type: 'input_text', text: part.text });
+      continue;
+    }
+    if (part?.type === 'input_image' && typeof part.image_url === 'string') {
+      parts.push({ type: 'input_image', image_url: part.image_url });
+      continue;
+    }
+    if (part?.imageUrl || part?.image_url) {
+      parts.push({ type: 'input_image', image_url: part.imageUrl || part.image_url });
+      continue;
+    }
+    parts.push({ type: 'input_text', text: part?.text || String(part ?? '') });
+  }
+  return parts;
 }
 
 function extractAnthropicText(data) {

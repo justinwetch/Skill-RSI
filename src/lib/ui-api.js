@@ -115,7 +115,6 @@ export async function readProjectSummary({ cwd, projectName }) {
       eval: {
         outputType: config.eval.outputType,
         taskContract: config.eval.taskContract,
-        visualRunner: config.eval.visualRunner,
         stablePromptCount: config.eval.stablePromptCount,
         explorationPromptCount: config.eval.explorationPromptCount,
       },

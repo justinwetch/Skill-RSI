@@ -17,6 +17,7 @@ import {
   readSkillContent,
   recordHumanDecision,
 } from './lib/ui-api.js';
+import { checkVisualRunnerAvailability } from './lib/visual-runner.js';
 
 const DEFAULT_PORT = 8765;
 const DEFAULT_MODEL = 'gpt-5.4-mini';
@@ -63,6 +64,19 @@ async function handleApi(request, response, url) {
       schemaVersion: 1,
       projects: await readProjectSummaries({ cwd: repoRoot }),
     });
+    return;
+  }
+
+  if (request.method === 'GET' && parts.length === 2 && parts[1] === 'capabilities') {
+    writeJson(response, 200, {
+      schemaVersion: 1,
+      visualRunner: await checkVisualRunnerAvailability(),
+    });
+    return;
+  }
+
+  if (request.method === 'GET' && parts.length === 2 && parts[1] === 'artifacts') {
+    await serveArtifact(response, url.searchParams.get('path') || '');
     return;
   }
 
@@ -212,12 +226,34 @@ async function serveStatic(response, requestPath) {
   }
 }
 
+async function serveArtifact(response, requestedPath) {
+  if (!requestedPath) throw badRequest('artifact path is required');
+  const artifactPath = path.resolve(requestedPath);
+  const artifactRoot = path.join(repoRoot, '.skill-rsi');
+  const [realArtifactPath, realArtifactRoot] = await Promise.all([
+    fs.realpath(artifactPath),
+    fs.realpath(artifactRoot),
+  ]);
+  if (!realArtifactPath.startsWith(`${realArtifactRoot}${path.sep}`)) {
+    throw badRequest('artifact path is outside Skill RSI artifacts');
+  }
+  const allowed = new Set(['.png', '.jpg', '.jpeg', '.webp', '.html', '.json']);
+  if (!allowed.has(path.extname(realArtifactPath).toLowerCase())) {
+    throw badRequest('artifact type is not supported');
+  }
+  response.writeHead(200, { 'Content-Type': contentType(realArtifactPath) });
+  response.end(await fs.readFile(realArtifactPath));
+}
+
 function contentType(filePath) {
   if (filePath.endsWith('.html')) return 'text/html; charset=utf-8';
   if (filePath.endsWith('.js')) return 'text/javascript; charset=utf-8';
   if (filePath.endsWith('.css')) return 'text/css; charset=utf-8';
   if (filePath.endsWith('.svg')) return 'image/svg+xml';
   if (filePath.endsWith('.png')) return 'image/png';
+  if (filePath.endsWith('.jpg') || filePath.endsWith('.jpeg')) return 'image/jpeg';
+  if (filePath.endsWith('.webp')) return 'image/webp';
+  if (filePath.endsWith('.json')) return 'application/json; charset=utf-8';
   return 'application/octet-stream';
 }
 

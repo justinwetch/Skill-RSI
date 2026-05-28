@@ -7,7 +7,7 @@ import {
 } from 'lucide-react';
 import {
   createProject, deleteProject, fetchProjects, fetchProjectSummary, fetchRunDetail,
-  fetchComparison, fetchSkill, fetchProgress, runStep,
+  fetchComparison, fetchSkill, fetchProgress, fetchCapabilities, artifactUrl, runStep,
 } from './api.js';
 
 const STAGES = [
@@ -147,6 +147,7 @@ export default function App() {
     baselineZip: null,
     baselineMarkdown: null,
   });
+  const [capabilities, setCapabilities] = useState(null);
   const [skillSource, setSkillSource] = useState('champion');
   const [skillData, setSkillData] = useState(null);
   const [compareData, setCompareData] = useState(null);
@@ -382,6 +383,7 @@ export default function App() {
 
       {view === 'create' && (
         <CreateView draft={draft} setDraft={setDraft} busy={busy}
+          capabilities={capabilities} setCapabilities={setCapabilities}
           onSubmit={handleCreate} onCancel={() => setView('list')} />
       )}
 
@@ -408,6 +410,13 @@ export default function App() {
 }
 
 function getDraftTaskContract(draft) {
+  if (draft.outputType === 'code_visual') {
+    return {
+      id: 'code_visual_standalone',
+      artifactType: 'code',
+      environment: 'standalone',
+    };
+  }
   const artifactType = draft.outputType === 'code' ? 'code' : 'text';
   return {
     id: artifactType === 'code' ? 'code_standalone' : 'text_standalone',
@@ -667,11 +676,31 @@ function TrendChip({ latest }) {
 
 /* ---------------- create ---------------- */
 
-function CreateView({ draft, setDraft, busy, onSubmit, onCancel }) {
+function CreateView({ draft, setDraft, busy, onSubmit, onCancel, capabilities, setCapabilities }) {
   const existing = draft.mode === 'existing';
   const hasBaseline = Boolean(draft.baselineZip || draft.baselineFiles?.length || draft.baselineMarkdown);
   const setMode = mode => setDraft(d => ({ ...d, mode }));
-  const setOutputType = outputType => setDraft(d => ({ ...d, outputType }));
+  const visualRunner = capabilities?.visualRunner || null;
+  const visualUnavailable = visualRunner && !visualRunner.available;
+  async function setOutputType(outputType) {
+    if (outputType === 'code_visual') {
+      try {
+        const nextCapabilities = await fetchCapabilities();
+        setCapabilities(nextCapabilities);
+        if (!nextCapabilities.visualRunner?.available) return;
+      } catch {
+        setCapabilities({
+          visualRunner: {
+            available: false,
+            error: 'Could not check local visual runner.',
+            installHint: 'Start or restart the Skill RSI server, then try again.',
+          },
+        });
+        return;
+      }
+    }
+    setDraft(d => ({ ...d, outputType }));
+  }
   const outputTypes = [
     {
       key: 'text',
@@ -689,14 +718,13 @@ function CreateView({ draft, setDraft, busy, onSubmit, onCancel }) {
       key: 'code_visual',
       icon: Layout,
       title: 'Code + visuals',
-      desc: 'Deferred until rendered screenshot and visual judging are wired in.',
-      disabled: true,
+      desc: 'Prompts require complete browser-renderable UI code, then judge the rendered result.',
     },
     {
       key: 'visual',
       icon: Layout,
       title: 'Visual only',
-      desc: 'Deferred until screenshot and visual judging are wired in.',
+      desc: 'Deferred until image-only artifact generation and judging are defined.',
       disabled: true,
     },
   ];
@@ -748,6 +776,12 @@ function CreateView({ draft, setDraft, busy, onSubmit, onCancel }) {
             );
           })}
         </div>
+        {visualUnavailable && (
+          <p className="field-hint warning-text">
+            Code + visuals needs a local browser renderer. {visualRunner.error ? `${visualRunner.error} ` : ''}
+            {visualRunner.installHint || 'Run npx playwright install chromium, or install Google Chrome/Chromium locally.'}
+          </p>
+        )}
         <p className="field-hint">This controls the artifact Skill RSI expects candidate skills to produce.</p>
       </div>
 
@@ -1014,6 +1048,8 @@ function RunBar({ summary, loops, setLoops, busy, onStart }) {
 
 function formatTaskContract(taskContract) {
   switch (taskContract?.id) {
+    case 'code_visual_standalone':
+      return 'code + visuals output';
     case 'code_standalone':
     case 'codebase_edit':
       return 'code output';
@@ -1582,6 +1618,7 @@ function PromptRow({ ev, criteria, labels = { a: 'Candidate A', b: 'Candidate B'
   const winClass = w === 'skillA' ? 'a' : w === 'skillB' ? 'b' : '';
   const winLabel = w === 'skillA' ? labels.a : w === 'skillB' ? labels.b : 'tie';
   const out = outputs(ev);
+  const visual = visualOutputs(ev);
   return (
     <div style={{ borderTop: '1px solid var(--color-border)' }}>
       <button className="row-click" onClick={onToggle}
@@ -1608,6 +1645,12 @@ function PromptRow({ ev, criteria, labels = { a: 'Candidate A', b: 'Candidate B'
               ))}
             </div>
           )}
+          {visual && (
+            <div className="visual-grid">
+              <VisualOutput label={labels.a} render={visual.a} side="a" />
+              <VisualOutput label={labels.b} render={visual.b} side="b" />
+            </div>
+          )}
           {(out.a || out.b) && (
             <div className="outputs">
               <div className="output-col a"><h5>{labels.a} output</h5><pre className="output-pre">{out.a || '—'}</pre></div>
@@ -1615,6 +1658,33 @@ function PromptRow({ ev, criteria, labels = { a: 'Candidate A', b: 'Candidate B'
             </div>
           )}
         </div>
+      )}
+    </div>
+  );
+}
+
+function VisualOutput({ label, render, side }) {
+  if (!render) return null;
+  const shots = render.screenshots || [];
+  const failed = render.status === 'failed' || render.blankScreenDetected;
+  return (
+    <div className={`visual-output ${side}`}>
+      <div className="visual-head">
+        <h5>{label} render</h5>
+        <span className={`pill ${failed ? 'warning' : 'success'}`}>{failed ? 'render issue' : 'rendered'}</span>
+      </div>
+      {render.error?.message && <p className="visual-error">{render.error.message}</p>}
+      {shots.length > 0 ? (
+        <div className="visual-shots">
+          {shots.map(shot => (
+            <figure className="visual-shot" key={`${shot.viewport}-${shot.path}`}>
+              <img src={artifactUrl(shot.path)} alt={`${label} ${shot.viewport} render`} loading="lazy" />
+              <figcaption>{shot.viewport} · {shot.width}×{shot.height}{shot.blank ? ' · blank flagged' : ''}</figcaption>
+            </figure>
+          ))}
+        </div>
+      ) : (
+        <div className="empty sm">No screenshot artifact recorded.</div>
       )}
     </div>
   );
@@ -1805,4 +1875,10 @@ function outputs(ev) {
   const a = vals.find(v => v.sourceSkill === 'skillA');
   const b = vals.find(v => v.sourceSkill === 'skillB');
   return { a: a?.content || '', b: b?.content || '' };
+}
+function visualOutputs(ev) {
+  const vals = Object.values(ev.results || {});
+  const a = vals.find(v => v.sourceSkill === 'skillA')?.visual || ev.visual?.skillA || null;
+  const b = vals.find(v => v.sourceSkill === 'skillB')?.visual || ev.visual?.skillB || null;
+  return a || b ? { a, b } : null;
 }

@@ -1150,16 +1150,15 @@ Report: .skill-rsi/projects/ux-design/runs/2026-05-25T210000Z/analysis/report.md
 - Agent Skills evaluation guidance: https://agentskills.io/skill-creation/evaluating-skills
 - Claude Code skills documentation: https://code.claude.com/docs/en/skills
 
-## 21. Deferred / V2: Visual And UI Expansion
+## 21. Visual And UI Expansion
 
-Phase 5 is intentionally deferred and requires discussion before implementation. The core text-only RSI loop should remain the default path until there is a concrete visual skill target and clear agreement on how visual evidence should affect promotion.
+Initial visual work now targets a narrow `code_visual_standalone` path: generated outputs must be complete browser-renderable HTML artifacts, Skill RSI renders them locally, and screenshots become evaluation evidence. Text eval remains the default path.
 
-The likely implementation chunks are:
+Still-deferred visual work:
 
-1. Visual contract only: define the artifact schema without running visual eval yet. This should include screenshot paths, viewport metadata, render errors, image hashes, judge modality, and how visual failures affect promotion.
-2. Minimal screenshot runner: adapt the SkillEval screenshot-server approach into a small headless runner behind `eval.visualRunner: true`. Text eval stays the default.
-3. UI artifact viewing: add read-only surfaces for screenshots, visual judge output, and render failures. Avoid approval controls unless they are backed by implemented backend behavior.
-4. Audit annotations: keep human review as annotation/audit by default, not a required promotion step, so the RSI premise remains intact.
+1. Visual-only artifacts: define an image-only artifact contract before exposing it in the UI.
+2. Package-based visual apps: support React/Vite/Next packages only after the single-file HTML path is reliable.
+3. Audit annotations: keep human review as annotation/audit by default, not a required promotion step, so the RSI premise remains intact.
 
 Open questions before work starts:
 

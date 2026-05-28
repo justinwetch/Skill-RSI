@@ -365,6 +365,18 @@ input:focus, textarea:focus, select:focus, .num:focus { outline: none; border-co
 .output-col.a h5 { color: var(--color-skill-a); }
 .output-col.b h5 { color: var(--color-skill-b); }
 .output-pre { margin: 0; background: var(--color-bg-secondary); border: 1px solid var(--color-border); border-radius: var(--radius-sm); padding: 10px 12px; font-family: var(--font-mono); font-size: 11.5px; line-height: 1.6; color: var(--color-text-secondary); white-space: pre-wrap; word-break: break-word; max-height: 220px; overflow: auto; }
+.visual-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin: 0 0 14px; }
+@media (max-width: 760px) { .visual-grid { grid-template-columns: 1fr; } }
+.visual-output { background: var(--color-bg-secondary); border: 1px solid var(--color-border); border-radius: var(--radius-sm); padding: 10px; min-width: 0; }
+.visual-output.a h5 { color: var(--color-skill-a); }
+.visual-output.b h5 { color: var(--color-skill-b); }
+.visual-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-bottom: 8px; }
+.visual-head h5 { margin: 0; font-size: 12px; font-weight: 600; }
+.visual-error { margin: 0 0 8px; font-size: 12px; line-height: 1.5; color: var(--color-danger); }
+.visual-shots { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 8px; }
+.visual-shot { margin: 0; min-width: 0; }
+.visual-shot img { display: block; width: 100%; aspect-ratio: 16 / 10; object-fit: cover; object-position: top center; background: var(--color-bg-tertiary); border: 1px solid var(--color-border); border-radius: 8px; }
+.visual-shot figcaption { margin-top: 4px; font-size: 11px; color: var(--color-text-muted); }
 
 /* ===== skill viewer ===== */
 .seg { display: inline-flex; background: var(--color-bg-tertiary); border-radius: var(--radius-md); padding: 3px; gap: 2px; }
@@ -408,6 +420,7 @@ input:focus, textarea:focus, select:focus, .num:focus { outline: none; border-co
 .field input, .field textarea { width: 100%; border: 1px solid var(--color-border); background: var(--color-bg-tertiary); color: var(--color-text-primary); border-radius: var(--radius-md); padding: 10px 13px; font-size: 15px; }
 .field textarea { min-height: 88px; resize: vertical; line-height: 1.6; }
 .field-hint { margin: 7px 0 0; font-size: 12.5px; line-height: 1.5; color: var(--color-text-muted); }
+.field-hint.warning-text { color: var(--color-warning); }
 
 /* mode fork: where version 1 comes from */
 .mode-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-bottom: 24px; }

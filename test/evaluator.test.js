@@ -62,8 +62,41 @@ test('headless evaluator accepts non-visual code output contracts', async () => 
     outputType: 'code_visual',
   });
 
-  assert.equal(result.outputType, 'code');
-  assert.equal(result.taskContract.id, 'code_standalone');
+  assert.equal(result.outputType, 'code_visual');
+  assert.equal(result.taskContract.id, 'code_visual_standalone');
+
+  await assert.rejects(() => runHeadlessEval({
+    skillAPath: skillA,
+    skillBPath: skillB,
+    promptsPath,
+    criteriaPath,
+    mode: 'real',
+    runId: 'run-code-visual-real-eval',
+    outputType: 'code_visual',
+    generationModel: 'gpt-5.4-mini',
+    judgeModel: 'gpt-5.4-mini',
+    modelClient: async () => '<!doctype html><html><body><main>Visible UI</main></body></html>',
+  }), /Visual evaluation requires visualArtifactsDir/);
+
+  await assert.rejects(() => runHeadlessEval({
+    skillAPath: skillA,
+    skillBPath: skillB,
+    promptsPath,
+    criteriaPath,
+    mode: 'real',
+    runId: 'run-code-visual-unavailable',
+    outputType: 'code_visual',
+    generationModel: 'gpt-5.4-mini',
+    judgeModel: 'gpt-5.4-mini',
+    modelClient: async () => '<!doctype html><html><body><main>Visible UI</main></body></html>',
+    visualArtifactsDir: path.join(cwd, 'visual'),
+    visualRunnerCheck: async () => ({
+      available: false,
+      error: 'no browser',
+      installHint: 'install chromium',
+    }),
+  }), /Visual runner unavailable: no browser\. install chromium/);
+
   await assert.rejects(() => runHeadlessEval({
     skillAPath: skillA,
     skillBPath: skillB,
@@ -138,6 +171,73 @@ test('runs a real text evaluation with an injected model client', async () => {
   assert.deepEqual(result.evaluations[0].judge.parsedScores.breakdown.skillA, { correctness: 5 });
   assert.match(calls[2].systemPrompt, /Task contract:/);
   assert.match(calls[2].systemPrompt, /text_standalone/);
+});
+
+test('real visual evaluation renders artifacts and sends screenshot inputs to judge', async () => {
+  const cwd = await fs.mkdtemp(path.join(os.tmpdir(), 'skill-rsi-real-visual-eval-'));
+  const skillA = await writeSkill(cwd, 'skill-a', 'Skill A');
+  const skillB = await writeSkill(cwd, 'skill-b', 'Skill B');
+  const promptsPath = path.join(cwd, 'prompts.json');
+  const criteriaPath = path.join(cwd, 'criteria.json');
+  const screenshotPath = path.join(cwd, 'shot.png');
+  const calls = [];
+
+  await fs.writeFile(screenshotPath, Buffer.from('fake png'));
+  await fs.writeFile(promptsPath, JSON.stringify([
+    {
+      id: 'p1',
+      text: 'Build a self-contained browser-renderable landing page. Return one complete HTML document with inline CSS and JavaScript.',
+    },
+  ]));
+  await fs.writeFile(criteriaPath, JSON.stringify([
+    { id: 'renderability', name: 'Renderability', description: 'Renders visible UI' },
+  ]));
+
+  const result = await runHeadlessEval({
+    skillAPath: skillA,
+    skillBPath: skillB,
+    promptsPath,
+    criteriaPath,
+    mode: 'real',
+    runId: 'run-real-visual-001',
+    outputType: 'code_visual',
+    taskContract: { id: 'code_visual_standalone' },
+    generationModel: 'fake-gen-model',
+    judgeModel: 'fake-judge-model',
+    visualArtifactsDir: path.join(cwd, 'visual'),
+    visualRunnerCheck: async () => ({ available: true, browser: 'test', error: null, installHint: null }),
+    visualRenderer: async ({ outputDir }) => ({
+      status: 'complete',
+      artifactPath: path.join(outputDir, 'artifact.html'),
+      screenshots: [{ viewport: 'desktop', width: 1440, height: 1000, path: screenshotPath, blank: false }],
+      consoleMessages: [],
+      pageErrors: [],
+      requestFailures: [],
+      elapsedMs: 1,
+      blankScreenDetected: false,
+      error: null,
+    }),
+    modelClient: async request => {
+      calls.push(request);
+      if (request.jsonMode) {
+        assert.equal(Array.isArray(request.messages[0].content), true);
+        assert.ok(request.messages[0].content.some(part => part.type === 'input_image'));
+        return JSON.stringify({
+          winner: 'skillA',
+          scoreA: 5,
+          scoreB: 4,
+          breakdown: { skillA: { renderability: 5 }, skillB: { renderability: 4 } },
+          reasoning: 'Skill A renders stronger.',
+        });
+      }
+      return '<!doctype html><html><body><main>Visible UI</main></body></html>';
+    },
+  });
+
+  assert.equal(result.outputType, 'code_visual');
+  assert.equal(result.evaluations[0].visual.skillA.status, 'complete');
+  assert.equal(result.evaluations[0].judge.winner, 'skillA');
+  assert.equal(calls.length, 3);
 });
 
 test('real evaluation records per-prompt generation failure without failing whole run', async () => {

@@ -300,7 +300,17 @@ test('manager detects local maxima and switches to high-divergence reset plannin
   const state = JSON.parse(await fs.readFile(first.paths.stateJson, 'utf8'));
   if (!state.currentChampion) {
     await fs.mkdir(first.paths.championSkillDir, { recursive: true });
-    await fs.writeFile(path.join(first.paths.championSkillDir, 'SKILL.md'), '# Seed champion\n\nUsed to test local-maxima planning.\n', 'utf8');
+    await fs.writeFile(path.join(first.paths.championSkillDir, 'SKILL.md'), [
+      '---',
+      'name: seed-champion',
+      'description: Used to test local-maxima planning for UX design skill improvement.',
+      '---',
+      '',
+      '# Seed champion',
+      '',
+      'Used to test local-maxima planning.',
+      '',
+    ].join('\n'), 'utf8');
     await fs.writeFile(first.paths.stateJson, `${JSON.stringify({
       ...state,
       currentChampion: {

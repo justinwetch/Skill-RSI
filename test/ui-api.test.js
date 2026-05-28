@@ -149,6 +149,15 @@ test('ui api derives task contracts from UI output type defaults', async () => {
   assert.equal(codeProject.config.eval.outputType, 'code');
   assert.equal(codeProject.config.eval.taskContract.id, 'code_standalone');
 
+  const visualCodeProject = await createProjectForUi({
+    cwd,
+    projectName: 'Visual Code Skill',
+    goal: 'Improve a frontend implementation skill.',
+    outputType: 'code_visual',
+  });
+  assert.equal(visualCodeProject.config.eval.outputType, 'code_visual');
+  assert.equal(visualCodeProject.config.eval.taskContract.id, 'code_visual_standalone');
+
   const summary = await readProjectSummary({ cwd, projectName: 'Code Skill' });
   assert.equal(summary.config.eval.outputType, 'code');
   assert.equal(summary.config.eval.taskContract.id, 'code_standalone');

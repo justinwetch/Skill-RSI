@@ -2,6 +2,7 @@ export const TASK_CONTRACT_IDS = [
   'text_standalone',
   'text_source_grounded',
   'code_standalone',
+  'code_visual_standalone',
   'codebase_edit',
 ];
 
@@ -57,6 +58,25 @@ const DEFINITIONS = {
       'Must not imply hidden files are available.',
     ],
   },
+  code_visual_standalone: {
+    id: 'code_visual_standalone',
+    artifactType: 'code',
+    environment: 'standalone',
+    label: 'Standalone visual code',
+    outputType: 'code_visual',
+    requiredPromptContext: ['implementation goal', 'screen or component context', 'visual and interaction expectations'],
+    expectedArtifact: 'A complete self-contained browser-renderable implementation with visible UI.',
+    insufficientContextBehavior: 'State minimal assumptions and produce a concrete standalone browser implementation instead of asking for repo files.',
+    promptInstruction: 'Each user request must ask for a complete browser-renderable implementation as a single standalone HTML document with inline CSS and JavaScript.',
+    userPromptRequirement: 'Return one complete standalone HTML document with inline CSS and JavaScript; do not return visual advice only.',
+    criteriaInstruction: 'The evaluated outputs are expected to be complete browser-renderable UI implementations. Criteria should reward renderability, visual quality, responsiveness, and implementation completeness.',
+    invalidPromptRules: [
+      'Must not require hidden repo files.',
+      'Must not ask for design recommendations only.',
+      'Must not ask for a moodboard, direction, critique, or advice instead of implementation.',
+      'Must request a single self-contained HTML document with visible UI.',
+    ],
+  },
   codebase_edit: {
     id: 'codebase_edit',
     artifactType: 'code',
@@ -100,7 +120,8 @@ export function taskContractOutputType(taskContract) {
 }
 
 export function deriveTaskContractId(artifactType = null, environment = null, outputType = null) {
-  const artifact = ['text', 'code'].includes(artifactType) ? artifactType : (outputType === 'code' || outputType === 'code_visual' ? 'code' : 'text');
+  if (outputType === 'code_visual') return 'code_visual_standalone';
+  const artifact = ['text', 'code'].includes(artifactType) ? artifactType : (outputType === 'code' ? 'code' : 'text');
   const env = ['standalone', 'source_grounded', 'codebase_edit'].includes(environment) ? environment : 'standalone';
   if (artifact === 'code' && env === 'codebase_edit') return 'codebase_edit';
   if (artifact === 'text' && env === 'source_grounded') return 'text_source_grounded';
@@ -121,6 +142,22 @@ export function isPromptContractValid(prompt, taskContract) {
     if (explicitlyNoRepo) return true;
     return !/\b(existing|current)\s+(codebase|repo|repository|app|project|files?)\b/i.test(text)
       && !/\b(update|modify|change|patch|fix)\s+(the\s+)?(existing|current)\b/i.test(text);
+  }
+
+  if (contract.id === 'code_visual_standalone') {
+    const asksForMissingFiles = /\b(ask|tell)\s+(me|us|the user)\s+what\s+files\b/i.test(text)
+      || /\b(request|ask for)\s+(the\s+)?(repo|repository|source files?|project files?)\b/i.test(text);
+    if (asksForMissingFiles) return false;
+    if (/\b(existing|current)\s+(codebase|repo|repository|app|project|files?)\b/i.test(text)) return false;
+    if (/\b(recommend|recommendation|advise|advice|critique|moodboard|visual direction|design direction)\b/i.test(text)) return false;
+    const asksForStandalone = /\b(single|one|self-contained|standalone|single-file|single file)\b/i.test(text);
+    const asksForBrowserArtifact = /\b(html|HTML|webpage|web page|page|screen|component|interface|dashboard|landing page)\b/i.test(text);
+    const asksForInlineWebCode = /\binline\s+(css|CSS)\b/i.test(text)
+      || /\b(css|CSS)[\s,]*(?:and\s+)?(javascript|JavaScript|JS|js)\b/i.test(text)
+      || /\b(html|HTML)[\s,/+]*(css|CSS)[\s,/+]*(?:and\s+)?(javascript|JavaScript|JS|js)\b/i.test(text);
+    const asksForVisibleImplementation = /\b(build|create|implement|code|write|make|design)\b/i.test(text)
+      && /\b(browser-renderable|renderable|visible UI|UI|interface|component|page|screen|dashboard|landing page|webpage|web page)\b/i.test(text);
+    return asksForStandalone && asksForBrowserArtifact && asksForInlineWebCode && asksForVisibleImplementation;
   }
 
   if (contract.id === 'codebase_edit') {

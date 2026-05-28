@@ -7,15 +7,19 @@ const DEFAULT_DIFFICULTIES = ['easy', 'medium', 'medium', 'hard'];
 const OUTPUT_CONTRACT_CRITERION_IDS = new Set([
   'implementation_readiness',
   'implemented_visual_output',
+  'renderability',
+  'visual_hierarchy',
+  'layout_responsiveness',
+  'interaction_quality',
   'context_fidelity',
   'artifact_completeness',
   'contract_validity',
 ]);
 
 // Model-written prompt generation, SkillEval-style. designEvalBatch still builds the
-// slots (ids, parameter targeting, difficulty, criteria) so all downstream logic and
-// tests are unchanged; here a model rewrites the templated slot text into realistic,
-// varied user requests. Falls back to the original text on any failure.
+// slots (ids, parameter targeting, difficulty, criteria) so downstream logic stays
+// stable; here a model rewrites the templated slot text into realistic, varied user
+// requests. Real eval runs use strict mode and fail instead of evaluating fallback prompts.
 const TEMPLATE_MARKERS = [
   'I need help with this skill goal:',
   'A user gives an incomplete but plausible request related to:',
@@ -29,6 +33,12 @@ function isTemplatedPrompt(text) {
 function buildPromptGenInstruction(goal, slots, outputType = 'text', taskContract = null) {
   const contract = normalizeTaskContract(taskContract, outputType);
   const outputContract = getOutputContract(outputType, contract);
+  const visualArtifactRule = contract.id === 'code_visual_standalone'
+    ? [
+      'For every prompt, include this exact final sentence so the artifact contract is explicit and scoreable:',
+      '"Return one complete standalone HTML document with inline CSS and JavaScript."',
+    ].join('\n')
+    : null;
   const lines = slots.map((slot, n) => (
     `${n + 1}. difficulty=${slot.difficulty || 'medium'}; the request should involve ${slot.task || 'using the skill'}`
     + `${slot.surface ? `, with realistic ambiguity or nuance around ${slot.surface}` : ''}`
@@ -41,6 +51,7 @@ function buildPromptGenInstruction(goal, slots, outputType = 'text', taskContrac
     `Expected answer contract: ${outputContract.promptInstruction}`,
     `Task contract: ${JSON.stringify(taskContractSummary(contract))}`,
     `Invalid prompt rules: ${contract.invalidPromptRules.join(' ')}`,
+    visualArtifactRule,
     'Rules: each prompt must read naturally with no meta-commentary; never use phrases like "skill surface under test", "quality axis", or "validate it for". Vary tone, length, domain specifics, and difficulty across the set. Exercise the noted aspect implicitly, never by naming it. The user request must make the expected answer contract unavoidable.',
     'Slots (write one prompt per slot, in order):',
     ...lines,
@@ -66,8 +77,8 @@ function parsePromptArray(raw, expectedCount) {
 
 // Model-generated eval criteria, modeled on SkillEval's generateFromSkills (criteria half).
 // Generated once on run 0 from the goal + both candidate skills, then locked/reused across runs
-// (run-loop only calls this when the prompt bank has no locked core criteria yet). Falls back to
-// the deterministic templates if the model is unavailable or returns something unusable.
+// (run-loop only calls this when the prompt bank has no locked core criteria yet). The
+// caller decides whether a null result is acceptable; real eval treats criteria failure as fatal.
 const CRITERIA_SYSTEM_PROMPT = `You are a configuration generator for an AI skill evaluation tool.
 
 Given a skill's goal and two candidate Agent Skill packages that will be compared head-to-head, generate fair evaluation criteria for judging the OUTPUTS those skills produce.
@@ -266,6 +277,10 @@ export async function naturalizeEvalPrompts({
       .map(index => targets[index])
       .filter(prompt => !fallbackIds.has(prompt.id))
       .map(prompt => prompt.id),
+    invalidPromptDetails: invalidIndexes.map(index => ({
+      id: targets[index].id,
+      text: selectedTexts[index],
+    })),
     failureReason: fallbackIds.size ? 'model_prompt_generation_remained_contract_invalid_after_repair' : null,
   });
   if (strict && fallbackIds.size > 0) {
@@ -332,6 +347,7 @@ function createPromptAuthoringProvenance({
   initialInvalidPromptIds = [],
   repairedPromptIds = [],
   fallbackPromptIds = [],
+  invalidPromptDetails = [],
   failureReason = null,
 }) {
   return {
@@ -344,6 +360,7 @@ function createPromptAuthoringProvenance({
     repairedPromptIds,
     fallbackPromptIds,
     fallbackPromptCount: fallbackPromptIds.length,
+    invalidPromptDetails,
     failureReason,
   };
 }
@@ -640,6 +657,15 @@ function createContractScenario({ contract, goal, surface, targetTask, qualityAx
     ].join('\n');
   }
 
+  if (contract.id === 'code_visual_standalone') {
+    return [
+      'Build a self-contained browser-renderable UI implementation for a realistic production use case.',
+      'Return one complete HTML document with inline CSS and JavaScript; it must render visible UI without existing repository files or build steps.',
+      `The interface should support the broader skill goal: ${goal}`,
+      `Emphasize ${surface}, make the visual hierarchy intentional, and include a compact in-page validation note for ${qualityAxis}.`,
+    ].join('\n');
+  }
+
   if (contract.id === 'codebase_edit') {
     return [
       'I need you to update this existing code, preserving the current structure and public behavior unless the request says otherwise.',
@@ -788,6 +814,40 @@ export function getOutputContract(outputType = 'text', taskContract = null) {
 
 function createOutputContractCriteria(taskContract) {
   const contract = normalizeTaskContract(taskContract);
+  if (contract.id === 'code_visual_standalone') {
+    return [
+      {
+        id: 'renderability',
+        name: 'Renderability',
+        description: 'The output is a complete standalone HTML artifact that renders visible UI without hidden repo files or build steps.',
+        stable: true,
+      },
+      {
+        id: 'visual_hierarchy',
+        name: 'Visual Hierarchy',
+        description: 'The rendered UI has clear hierarchy, spacing, typography, and information organization appropriate to the prompt.',
+        stable: true,
+      },
+      {
+        id: 'layout_responsiveness',
+        name: 'Layout Responsiveness',
+        description: 'The UI remains coherent across desktop, tablet, and mobile viewport constraints.',
+        stable: true,
+      },
+      {
+        id: 'interaction_quality',
+        name: 'Interaction Quality',
+        description: 'Interactive states or behaviors are implemented where the prompt implies them, without broken controls or visual dead ends.',
+        stable: true,
+      },
+      {
+        id: 'artifact_completeness',
+        name: 'Artifact Completeness',
+        description: `The output provides the expected artifact: ${contract.expectedArtifact}`,
+        stable: true,
+      },
+    ];
+  }
   return [
     {
       id: 'context_fidelity',

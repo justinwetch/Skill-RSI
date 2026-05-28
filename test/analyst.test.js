@@ -17,6 +17,71 @@ test('policy analyst promotes only when score and win deltas clear threshold', (
   assert.equal(recommendation.confidence, 'high');
 });
 
+test('policy analyst crowns a provisional cold-start champion from prompt-win evidence', () => {
+  const recommendation = createPolicyRecommendation({
+    runId: 'run-bootstrap',
+    state: { currentChampion: null },
+    candidateA: { candidateId: 'candidate-a', strategy: 'A' },
+    candidateB: { candidateId: 'candidate-b', strategy: 'B' },
+    experimentPlan: { focusParameterIds: ['p01'], competitionMode: 'cold_start_duel' },
+    candidateDuel: fakeEval({ winner: 'tie', scoreDelta: 0, skillAWins: 8, skillBWins: 2 }),
+  });
+
+  assert.equal(recommendation.decision, 'promote');
+  assert.equal(recommendation.recommendedChampionCandidateId, 'candidate-a');
+  assert.equal(recommendation.confidence, 'low');
+  assert.equal(recommendation.resultSummary.provisionalBootstrap, true);
+  assert.match(recommendation.reasoning, /provisional first champion/i);
+});
+
+test('policy analyst still leaves cold start without champion when there is no usable signal', () => {
+  const recommendation = createPolicyRecommendation({
+    runId: 'run-no-signal',
+    state: { currentChampion: null },
+    candidateA: { candidateId: 'candidate-a', strategy: 'A' },
+    candidateB: { candidateId: 'candidate-b', strategy: 'B' },
+    experimentPlan: { focusParameterIds: ['p01'], competitionMode: 'cold_start_duel' },
+    candidateDuel: fakeEval({ winner: 'tie', scoreDelta: 0, skillAWins: 0, skillBWins: 0, ties: 6 }),
+  });
+
+  assert.equal(recommendation.decision, 'request_new_experiment');
+  assert.equal(recommendation.recommendedChampionCandidateId, null);
+});
+
+test('real analyst cannot veto a deterministic provisional cold-start champion', async () => {
+  const recommendation = await analyzeRun({
+    mode: 'real',
+    runId: 'run-real-bootstrap',
+    goal: 'Help agents design better UX.',
+    state: { currentChampion: null },
+    history: { trajectory: [], parameterLog: [] },
+    ontology: null,
+    parameterization: { summary: 'Test activation.' },
+    experimentPlan: { focusParameterIds: ['p01'], competitionMode: 'cold_start_duel' },
+    candidateA: { candidateId: 'candidate-a', strategy: 'A' },
+    candidateB: { candidateId: 'candidate-b', strategy: 'B' },
+    candidateDuel: fakeEval({ winner: 'tie', scoreDelta: 0, skillAWins: 8, skillBWins: 2 }),
+    model: 'fake-analyst',
+    modelClient: async () => JSON.stringify({
+      decision: 'request_new_experiment',
+      recommendedChampionCandidateId: null,
+      confidence: 'low',
+      reasoning: 'Close aggregate result.',
+      observations: ['Analyst is cautious.'],
+      nextRoundGuidance: {
+        vary: 'x',
+        preserve: 'y',
+        investigate: 'z',
+      },
+    }),
+  });
+
+  assert.equal(recommendation.decision, 'promote');
+  assert.equal(recommendation.recommendedChampionCandidateId, 'candidate-a');
+  assert.equal(recommendation.resultSummary.provisionalBootstrap, true);
+  assert.ok(recommendation.observations.some(item => item.includes('provisional champion')));
+});
+
 test('real analyst recommendation cannot bypass deterministic policy block', async () => {
   const recommendation = await analyzeRun({
     mode: 'real',
@@ -103,8 +168,8 @@ test('policy analyst blocks promotion when stable prompts show critical regressi
   assert.ok(recommendation.observations.some(item => item.includes('Stable-prompt regression blocked promotion')));
 });
 
-function fakeEval({ winner, scoreDelta, skillAWins, skillBWins }) {
-  const totalEvals = skillAWins + skillBWins;
+function fakeEval({ winner, scoreDelta, skillAWins, skillBWins, ties = 0 }) {
+  const totalEvals = skillAWins + skillBWins + ties;
   return {
     runId: 'eval-001',
     mode: 'mock',
@@ -113,10 +178,13 @@ function fakeEval({ winner, scoreDelta, skillAWins, skillBWins }) {
       scoreDelta,
       skillAWins,
       skillBWins,
-      ties: 0,
+      ties,
       totalEvals,
       totalScoreA: 30 + scoreDelta,
       totalScoreB: 30,
+      confidence: {
+        completionRate: 1,
+      },
     },
     evaluations: Array.from({ length: totalEvals }, (_, index) => ({
       prompt: {
@@ -125,9 +193,9 @@ function fakeEval({ winner, scoreDelta, skillAWins, skillBWins }) {
         parameterIds: ['p01'],
       },
       judge: {
-        winner: index < skillAWins ? 'skillA' : 'skillB',
+        winner: index < skillAWins ? 'skillA' : index < skillAWins + skillBWins ? 'skillB' : 'tie',
         scoreA: 4,
-        scoreB: 3,
+        scoreB: index < skillAWins + skillBWins ? 3 : 4,
         reasoning: 'Injected judge reasoning.',
       },
     })),

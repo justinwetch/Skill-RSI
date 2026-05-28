@@ -1,11 +1,13 @@
 import fs from 'node:fs/promises';
 import crypto from 'node:crypto';
+import path from 'node:path';
 import { createRunId } from './paths.js';
 import { loadSkillPackage } from './skill-package.js';
 import { writeJson } from './store.js';
 import { validateHeadlessEvalRun } from './schema.js';
-import { callModel } from './model-client.js';
+import { callModel, inferProvider } from './model-client.js';
 import { normalizeTaskContract, taskContractSummary } from './task-contracts.js';
+import { checkVisualRunnerAvailability, imageFileToDataUrl, renderVisualArtifact } from './visual-runner.js';
 
 const TEXT_EVALUATED_OUTPUT_TYPES = ['text', 'code', 'code_visual'];
 
@@ -26,6 +28,9 @@ export async function runHeadlessEval({
   judgeMaxTokens = 4096,
   retryPolicy = {},
   taskContract = null,
+  visualArtifactsDir = null,
+  visualRunnerCheck = checkVisualRunnerAvailability,
+  visualRenderer = renderVisualArtifact,
 }) {
   const startedAt = new Date().toISOString();
   const startedMs = Date.now();
@@ -43,6 +48,18 @@ export async function runHeadlessEval({
   }
   if (mode === 'real' && (!generationModel || !judgeModel)) {
     throw new Error('Real evaluation requires generationModel and judgeModel');
+  }
+  if (mode === 'real' && normalizedTaskContract.id === 'code_visual_standalone' && modelClient === callModel && inferProvider(judgeModel) !== 'openai') {
+    throw new Error('Visual evaluation requires an OpenAI judge model with image-input support.');
+  }
+  if (mode === 'real' && normalizedTaskContract.id === 'code_visual_standalone') {
+    if (!visualArtifactsDir) {
+      throw new Error('Visual evaluation requires visualArtifactsDir so screenshots and render diagnostics can be persisted.');
+    }
+    const visualRunner = await visualRunnerCheck();
+    if (!visualRunner.available) {
+      throw new Error(`Visual runner unavailable: ${visualRunner.error}. ${visualRunner.installHint}`);
+    }
   }
 
   const [skillA, skillB, prompts, criteria] = await Promise.all([
@@ -79,6 +96,8 @@ export async function runHeadlessEval({
       judgeMaxTokens,
       retryPolicy: normalizedRetryPolicy,
       taskContract: normalizedTaskContract,
+      visualArtifactsDir,
+      visualRenderer,
     });
 
   const stats = summarizeEvaluations(evaluations);
@@ -178,8 +197,14 @@ async function evaluateRealPrompts({
   judgeMaxTokens,
   retryPolicy,
   taskContract,
+  visualArtifactsDir,
+  visualRenderer,
 }) {
   const evaluations = [];
+  const visualEval = taskContract?.id === 'code_visual_standalone';
+  if (visualEval && !visualArtifactsDir) {
+    throw new Error('Visual evaluation requires visualArtifactsDir so screenshots and render diagnostics can be persisted.');
+  }
 
   for (let index = 0; index < prompts.length; index += 1) {
     const prompt = prompts[index];
@@ -188,8 +213,20 @@ async function evaluateRealPrompts({
       generateSkillOutput({ skill: skillA, prompt, model: generationModel, apiKeys, modelClient, maxTokens, retryPolicy }),
       generateSkillOutput({ skill: skillB, prompt, model: generationModel, apiKeys, modelClient, maxTokens, retryPolicy }),
     ]);
+    const visual = visualEval && resultA.status === 'complete' && resultB.status === 'complete'
+      ? await renderVisualPromptOutputs({
+        visualArtifactsDir,
+        promptIndex: index,
+        resultA,
+        resultB,
+        visualRenderer,
+      })
+      : null;
+    const renderBlockingFailure = visualEval && hasRenderBlockingFailure(visual);
     const judge = resultA.status === 'complete' && resultB.status === 'complete'
-      ? await judgeRealOutputs({
+      ? renderBlockingFailure
+        ? createRenderFailureJudge({ visual, blindLabels })
+        : await judgeRealOutputs({
         prompt,
         criteria,
         resultA,
@@ -201,6 +238,7 @@ async function evaluateRealPrompts({
         blindLabels,
         retryPolicy,
         taskContract,
+        visual,
       })
       : createSkippedJudge({
         reason: 'generation_failed',
@@ -228,6 +266,7 @@ async function evaluateRealPrompts({
           elapsedMs: resultA.elapsedMs,
           attempts: resultA.attempts,
           failures: resultA.failures,
+          visual: visual?.skillA || null,
         },
         [blindLabels.skillB]: {
           sourceSkill: 'skillB',
@@ -237,8 +276,10 @@ async function evaluateRealPrompts({
           elapsedMs: resultB.elapsedMs,
           attempts: resultB.attempts,
           failures: resultB.failures,
+          visual: visual?.skillB || null,
         },
       },
+      visual,
       judge,
     });
   }
@@ -290,7 +331,7 @@ async function generateSkillOutput({ skill, prompt, model, apiKeys, modelClient,
   };
 }
 
-async function judgeRealOutputs({ prompt, criteria, resultA, resultB, model, apiKeys, modelClient, maxTokens, blindLabels, retryPolicy, taskContract = null }) {
+async function judgeRealOutputs({ prompt, criteria, resultA, resultB, model, apiKeys, modelClient, maxTokens, blindLabels, retryPolicy, taskContract = null, visual = null }) {
   const startedAt = Date.now();
   const response = await withRetry({
     phase: 'judging',
@@ -303,11 +344,13 @@ async function judgeRealOutputs({ prompt, criteria, resultA, resultB, model, api
         systemPrompt: buildJudgeSystemPrompt(criteria, taskContract),
         messages: [{
           role: 'user',
-          content: [
-            `Original user prompt:\n${getPromptText(prompt)}`,
-            `\n## ${blindLabels.skillA}\n${resultA.content}`,
-            `\n## ${blindLabels.skillB}\n${resultB.content}`,
-          ].join('\n\n'),
+          content: await buildJudgeUserContent({
+            prompt,
+            resultA,
+            resultB,
+            blindLabels,
+            visual,
+          }),
         }],
         maxTokens,
         jsonMode: true,
@@ -348,6 +391,108 @@ async function judgeRealOutputs({ prompt, criteria, resultA, resultB, model, api
     attempts: response.attempts.length + 1,
     failures: response.attempts,
   };
+}
+
+async function renderVisualPromptOutputs({ visualArtifactsDir, promptIndex, resultA, resultB, visualRenderer }) {
+  const promptDir = path.join(visualArtifactsDir, `prompt-${String(promptIndex + 1).padStart(3, '0')}`);
+  const [visualA, visualB] = await Promise.all([
+    visualRenderer({
+      content: resultA.content,
+      outputDir: path.join(promptDir, 'skillA'),
+      artifactName: 'skillA',
+    }),
+    visualRenderer({
+      content: resultB.content,
+      outputDir: path.join(promptDir, 'skillB'),
+      artifactName: 'skillB',
+    }),
+  ]);
+  return { skillA: visualA, skillB: visualB };
+}
+
+function hasRenderBlockingFailure(visual) {
+  if (!visual) return true;
+  return [visual.skillA, visual.skillB].some(result => result?.status === 'failed' || result?.blankScreenDetected);
+}
+
+function createRenderFailureJudge({ visual, blindLabels }) {
+  const aFailed = visual?.skillA?.status === 'failed' || visual?.skillA?.blankScreenDetected;
+  const bFailed = visual?.skillB?.status === 'failed' || visual?.skillB?.blankScreenDetected;
+  const winner = aFailed && bFailed ? 'tie' : aFailed ? 'skillB' : 'skillA';
+  const scoreA = aFailed ? 0 : 3;
+  const scoreB = bFailed ? 0 : 3;
+  return {
+    status: 'complete',
+    mode: 'visual-render-gate',
+    winner,
+    blindWinner: winner === 'tie' ? 'tie' : blindLabels[winner],
+    scoreA,
+    scoreB,
+    breakdown: {
+      skillA: { renderability: aFailed ? 1 : 3 },
+      skillB: { renderability: bFailed ? 1 : 3 },
+    },
+    reasoning: [
+      'Visual render gate applied before model judging.',
+      aFailed ? `Skill A render problem: ${visual?.skillA?.error?.message || 'blank or failed render'}` : 'Skill A rendered.',
+      bFailed ? `Skill B render problem: ${visual?.skillB?.error?.message || 'blank or failed render'}` : 'Skill B rendered.',
+    ].join(' '),
+    elapsedMs: 0,
+    attempts: 0,
+    failures: [],
+  };
+}
+
+async function buildJudgeUserContent({ prompt, resultA, resultB, blindLabels, visual }) {
+  const baseText = [
+    `Original user prompt:\n${getPromptText(prompt)}`,
+    `\n## ${blindLabels.skillA}\n${resultA.content}`,
+    visual ? `\n## ${blindLabels.skillA} render diagnostics\n${renderDiagnosticsText(visual.skillA)}` : '',
+    `\n## ${blindLabels.skillB}\n${resultB.content}`,
+    visual ? `\n## ${blindLabels.skillB} render diagnostics\n${renderDiagnosticsText(visual.skillB)}` : '',
+  ].filter(Boolean).join('\n\n');
+
+  if (!visual) return baseText;
+  const parts = [{ type: 'input_text', text: baseText }];
+  for (const [label, render] of [[blindLabels.skillA, visual.skillA], [blindLabels.skillB, visual.skillB]]) {
+    for (const screenshot of render?.screenshots || []) {
+      try {
+        parts.push({
+          type: 'input_text',
+          text: `${label} screenshot: ${screenshot.viewport} ${screenshot.width}x${screenshot.height}`,
+        });
+        parts.push({
+          type: 'input_image',
+          image_url: await imageFileToDataUrl(screenshot.path),
+        });
+      } catch {
+        parts.push({
+          type: 'input_text',
+          text: `${label} screenshot unavailable: ${screenshot.viewport}`,
+        });
+      }
+    }
+  }
+  return parts;
+}
+
+function renderDiagnosticsText(render) {
+  if (!render) return 'No render diagnostics.';
+  return JSON.stringify({
+    status: render.status,
+    blankScreenDetected: render.blankScreenDetected,
+    screenshots: (render.screenshots || []).map(screenshot => ({
+      viewport: screenshot.viewport,
+      width: screenshot.width,
+      height: screenshot.height,
+      blank: screenshot.blank,
+      path: screenshot.path,
+    })),
+    consoleMessages: render.consoleMessages,
+    pageErrors: render.pageErrors,
+    requestFailures: render.requestFailures,
+    error: render.error,
+  }, null, 2);
 }
 
 function createSkippedJudge({ reason, failures }) {
@@ -510,6 +655,7 @@ ${JSON.stringify(taskContractSummary(contract), null, 2)}
 
 Score each output from 1-5 for each criterion.
 Reward outputs that satisfy the task contract's expected artifact and context rules. Penalize advice-only answers when the contract expects an artifact. For code_standalone, penalize asking for repository files because no existing codebase is part of the task. For codebase_edit, reward faithful edits to the provided files and penalize unrelated rewrites or ignoring the supplied code. For source-grounded tasks, reward source fidelity and penalize invented source claims.
+For code_visual_standalone, judge both the code and rendered screenshots. Reward visible, complete, responsive UI implementations. Penalize recommendation-only answers, blank renders, broken layout, missing interactivity where requested, and outputs that require hidden repo/build context.
 
 Criteria:
 ${rubricText}

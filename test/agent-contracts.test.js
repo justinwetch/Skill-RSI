@@ -465,9 +465,9 @@ test('creator prompt includes the project output contract', async () => {
   });
 
   assert.match(result.prompt, /Expected user-output contract:/);
-  assert.match(result.prompt, /code_standalone/);
-  assert.match(result.prompt, /Complete runnable code/);
-  assert.match(result.prompt, /do not depend on hidden existing files/);
+  assert.match(result.prompt, /code_visual_standalone/);
+  assert.match(result.prompt, /browser-renderable UI implementations/);
+  assert.match(result.prompt, /single self-contained HTML document/);
 });
 
 test('ontology and deconstructor prompts receive the project output contract', async () => {

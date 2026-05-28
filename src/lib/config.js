@@ -35,7 +35,6 @@ export const DEFAULT_PROJECT_CONFIG = {
       artifactType: 'text',
       environment: 'standalone',
     },
-    visualRunner: false,
     retryPolicy: {
       generationMaxAttempts: 2,
       judgeMaxAttempts: 2,
@@ -142,7 +141,6 @@ function normalizeEval(raw) {
     explorationPromptCount: normalizePositiveInt(evalConfig.explorationPromptCount, DEFAULT_PROJECT_CONFIG.eval.explorationPromptCount),
     taskContract,
     outputType: TEXT_EVAL_OUTPUT_TYPES.includes(outputType) ? outputType : 'text',
-    visualRunner: Boolean(evalConfig.visualRunner),
     retryPolicy: normalizeRetryPolicy(evalConfig.retryPolicy),
   };
 }

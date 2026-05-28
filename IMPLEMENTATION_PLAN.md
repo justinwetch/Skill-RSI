@@ -4,6 +4,8 @@ Recursive Self-Improvement for Agent Skills
 
 This document is the conceptual source of truth for architecture and product intent.
 
+For a concise product and architecture explanation, see [docs/HOW_IT_WORKS.md](docs/HOW_IT_WORKS.md).
+
 Current v0 note: the implemented competition model is now **cold-start duel, then champion challenge**. The first scratch run may generate Candidate A and Candidate B to crown an initial champion. Once a champion exists, each later loop generates one focused challenger and evaluates it directly against the current champion. Baseline uploads count as an existing champion and start with deconstruction/challenge rather than ontology/cold-start generation.
 
 ## 1. Goal
@@ -926,7 +928,7 @@ Still outside current v0 scope:
 - Distributed queues.
 - Multi-judge adjudication.
 - Automated GitHub PR creation.
-- Image-only visual skill outputs.
+- Separate rendered-media skill outputs.
 - Rich package/app visual regression workflows beyond standalone browser-renderable artifacts.
 - Long-term hosted database.
 - Cross-agent benchmark runners beyond SkillEval's model-call pattern.
@@ -1063,7 +1065,7 @@ Acceptance criteria:
 
 ### Milestone 8: Visual And UI Expansion
 
-Status: partially implemented for local v0. The supported visual path is `code_visual_standalone`; visual-only/image-only output remains deferred. See section 21.
+Status: partially implemented for local v0. The supported visual path is `code_visual_standalone`; separate rendered-media output remains deferred. See section 21.
 
 Possible tasks:
 
@@ -1123,7 +1125,7 @@ Report: .skill-rsi/projects/ux-design/runs/2026-05-25T210000Z/analysis/report.md
 
 1. Should Skill RSI optimize only Agent Skills standard packages, or allow client-specific extensions per project?
 2. Should candidate creators see stable eval prompts? Default recommendation: no, except prompt taxonomy and quality axes.
-3. Should human approval be required before promotion? Default recommendation: optional, enabled for high-impact skills.
+3. Should manual signoff ever be required before promotion? Default recommendation: keep it as optional audit policy for high-impact skills, not part of the default RSI loop.
 4. Should Skill RSI live inside SkillEval or as a separate repo? Default recommendation: separate repo with a shared headless SkillEval package.
 5. Should scheduled runs automatically spend money? Default recommendation: require explicit project budgets and hard stop rules.
 6. Should later-loop deconstruction replace ontology entirely? Default recommendation: no. Use ontology to define the broad domain map and deconstruction to parameterize the current champion against that map.
@@ -1143,7 +1145,7 @@ Initial visual work now targets a narrow `code_visual_standalone` path: generate
 
 Still-deferred visual work:
 
-1. Visual-only artifacts: define an image-only artifact contract before exposing it in the UI.
+1. Separate rendered-media artifacts: define a coherent artifact contract before exposing them in the UI.
 2. Package-based visual apps: support React/Vite/Next packages only after the single-file HTML path is reliable.
 3. Audit annotations: keep human review as annotation/audit by default, not a required promotion step, so the RSI premise remains intact.
 

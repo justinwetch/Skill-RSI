@@ -1,18 +1,24 @@
 # Skill RSI
 
-Recursive self-improvement for Agent Skills.
+What if a skill could improve itself?
 
-Given a skill goal, Skill RSI creates or imports an Agent Skill, evaluates it, and keeps improving it through controlled loops. A scratch project starts with a cold-start duel to crown the first champion. After that, each loop generates one focused challenger, evaluates it directly against the current champion, and promotes only when the challenger clears the promotion policy.
+Recursive self-improvement is the phrase AI researchers reach for when they describe systems that get better without us in the loop. Usually it's a thought experiment. This one runs on your laptop.
 
-![Skill RSI project home](screenshots/readme-latest-project-20260528-1724/01-project-home.png)
+Give Skill RSI a goal and it writes an Agent Skill to chase it. Hand it a skill you already have and it makes that one better instead. Then the loop starts: study the skill, form a theory about what would help, build a variant, test it, keep the winner. Again and again, on its own, until you stop it.
+
+Before it writes a single line, it studies the domain. It researches the field into sourced claims, then compiles them into an ontology: a working model of who the skill serves, what excellent output looks like, the failure modes worth catching, and the authorities whose strong opinions sharpen what "good" means here. That ontology becomes the shared map every later loop builds on and the guardrail that keeps the work from drifting.
+
+Once there's a champion to beat, Skill RSI deconstructs it into more than a dozen testable surfaces, every one carrying a hypothesis, a regression risk, and a way to measure whether the change actually worked. Each loop the current champion is the control and the next variant is the treatment, both run against the same prompts under the same criteria. One variable moves at a time, so when a challenger wins, you know exactly what won.
+
+Skill RSI improves skills the way a research lab works: every loop is an experiment whose results are kept and built on, including a record of dead ends, so it never wastes time re-testing what doesn't work. Each pass starts better informed than the last, converging on what does.
+
+You set the goal. The research, the experiments, the evaluation, and the record-keeping run themselves.
+
+This is the sequel to SkillEval. SkillEval could tell you which of two skills was better. The question it left open was what to build next, and that part was still on you. Skill RSI closes the loop.
 
 For the origin story, see [Open Sourcing SkillEval](https://www.justinwetch.com/blog/skilleval).
 
-## Why
-
-After building [SkillEval](https://github.com/justinwetch/SkillEval), the evaluation bottleneck moved upstream. Comparing two skills was useful, but deciding what to test next was still manual. Skill RSI closes that loop: it researches the domain, maps improvement surfaces, plans a focused experiment, creates a challenger, evaluates the result, and records what the next loop should try.
-
-The human remains the goal setter and budget owner. The system does the repetitive hypothesis generation, variant creation, evaluation, and history keeping.
+![Skill RSI project home](screenshots/readme-latest-project-20260528-1724/01-project-home.png)
 
 ## Evidence-Backed Decisions
 

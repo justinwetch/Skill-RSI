@@ -1,0 +1,12 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" role="img" aria-labelledby="title desc">
+  <title id="title">Skill RSI icon</title>
+  <desc id="desc">A lab flask with recursive loop arrows.</desc>
+  <rect width="512" height="512" rx="112" fill="#18191d"/>
+  <path d="M213 88h86v34l-19 28v93l91 124c21 29 1 70-35 70H176c-36 0-56-41-35-70l91-124v-93l-19-28V88Z" fill="none" stroke="#f7f7f2" stroke-width="24" stroke-linejoin="round"/>
+  <path d="M198 302h116l42 57c10 14 0 33-17 33H173c-17 0-27-19-17-33l42-57Z" fill="#8bd4ff" opacity=".22"/>
+  <path d="M196 236h120" stroke="#f7f7f2" stroke-width="20" stroke-linecap="round"/>
+  <path d="M313 179c33 16 55 49 55 87 0 20-6 39-17 55" fill="none" stroke="#f0ad55" stroke-width="20" stroke-linecap="round"/>
+  <path d="M362 179h-49v49" fill="none" stroke="#f0ad55" stroke-width="20" stroke-linecap="round" stroke-linejoin="round"/>
+  <path d="M199 334c-33-16-55-49-55-87 0-20 6-39 17-55" fill="none" stroke="#88c98f" stroke-width="20" stroke-linecap="round"/>
+  <path d="M150 334h49v-49" fill="none" stroke="#88c98f" stroke-width="20" stroke-linecap="round" stroke-linejoin="round"/>
+</svg>

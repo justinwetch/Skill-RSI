@@ -3,7 +3,7 @@
     "skill-rsi": {
       "command": "node",
       "args": [
-        "plugins/skill-rsi/mcp/server.mjs"
+        "mcp/server.mjs"
       ]
     }
   }

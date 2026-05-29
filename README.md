@@ -164,6 +164,29 @@ The UI supports:
 
 Model choice is fixed at project creation for cleaner run history. API keys are not stored in project config; the UI stores pasted keys locally in the browser.
 
+## Codex Plugin
+
+Skill RSI also ships a repo-tracked Codex Plugin at [plugins/skill-rsi](plugins/skill-rsi). The plugin gives Codex an operator skill, a local MCP control plane, and a native MCP-UI console through `skill_rsi_open` where the host supports MCP Apps/UI resources.
+
+Install it locally from the repository root:
+
+```bash
+codex plugins install ./plugins/skill-rsi
+```
+
+Validate and smoke-check the plugin:
+
+```bash
+npm run plugin:validate
+npm run plugin:smoke
+```
+
+The plugin is a Codex-native control and inspection surface. It can create or import projects, run bounded loops, inspect history/evidence/skills, export champions, and explicitly consume queued Codex context. The local app remains the full evidence console, and the CLI remains the best surface for reproducible automation.
+
+MCP-UI support is host-dependent. `skill_rsi_open` always returns a readable text fallback, and hosts with MCP Apps/UI rendering also receive the embedded console. Codex hooks only queue context; they do not run RSI loops or spend model budget by themselves.
+
+For install/update details and troubleshooting, see [plugins/skill-rsi/README.md](plugins/skill-rsi/README.md). For the plugin release checklist, see [docs/CODEX_PLUGIN_RELEASE.md](docs/CODEX_PLUGIN_RELEASE.md).
+
 ## Operating Modes
 
 Manual:

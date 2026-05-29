@@ -1,0 +1,50 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 760" role="img" aria-labelledby="title desc">
+  <title id="title">Skill RSI Codex Plugin preview</title>
+  <desc id="desc">A compact preview of the Skill RSI plugin console with project state, next loop plan, evidence, and automation context.</desc>
+  <defs>
+    <linearGradient id="bg" x1="0" x2="1" y1="0" y2="1">
+      <stop offset="0" stop-color="#f7f7f2"/>
+      <stop offset="1" stop-color="#e8ebef"/>
+    </linearGradient>
+    <filter id="shadow" x="-10%" y="-10%" width="120%" height="120%">
+      <feDropShadow dx="0" dy="18" stdDeviation="22" flood-color="#1b1c20" flood-opacity=".16"/>
+    </filter>
+  </defs>
+  <rect width="1200" height="760" fill="url(#bg)"/>
+  <rect x="64" y="56" width="1072" height="648" rx="28" fill="#ffffff" filter="url(#shadow)"/>
+  <g transform="translate(104 96)">
+    <rect width="64" height="64" rx="18" fill="#18191d"/>
+    <path d="M26 14h12v11l-5 8v18l17 22H14l17-22V33l-5-8V14Z" fill="none" stroke="#fff" stroke-width="4" stroke-linejoin="round"/>
+    <text x="88" y="26" font-family="Inter, Arial, sans-serif" font-size="23" font-weight="700" fill="#18191d">Skill RSI</text>
+    <text x="88" y="56" font-family="Inter, Arial, sans-serif" font-size="16" fill="#6c7078">Codex-native control surface for recursive skill improvement</text>
+  </g>
+  <g transform="translate(104 200)">
+    <rect width="468" height="170" rx="20" fill="#f5f6f8" stroke="#d6d9de"/>
+    <text x="28" y="44" font-family="Inter, Arial, sans-serif" font-size="18" fill="#747780">Current champion</text>
+    <text x="28" y="88" font-family="Inter, Arial, sans-serif" font-size="34" font-weight="700" fill="#18191d">UX Design v4</text>
+    <text x="28" y="126" font-family="Inter, Arial, sans-serif" font-size="18" fill="#4f545d">Next loop: challenger vs champion</text>
+    <rect x="324" y="32" width="116" height="42" rx="21" fill="#dff0e3"/>
+    <text x="348" y="59" font-family="Inter, Arial, sans-serif" font-size="17" font-weight="700" fill="#3b8b4d">Ready</text>
+  </g>
+  <g transform="translate(628 200)">
+    <rect width="404" height="170" rx="20" fill="#f5f6f8" stroke="#d6d9de"/>
+    <text x="28" y="44" font-family="Inter, Arial, sans-serif" font-size="18" font-weight="700" fill="#18191d">Next Loop Plan</text>
+    <text x="28" y="84" font-family="Inter, Arial, sans-serif" font-size="17" fill="#4f545d">Test example density in critique guidance.</text>
+    <text x="28" y="116" font-family="Inter, Arial, sans-serif" font-size="17" fill="#4f545d">Preserve activation metadata and package shape.</text>
+  </g>
+  <g transform="translate(104 414)">
+    <rect width="468" height="190" rx="20" fill="#ffffff" stroke="#d6d9de"/>
+    <text x="28" y="46" font-family="Inter, Arial, sans-serif" font-size="18" font-weight="700" fill="#18191d">Latest evidence</text>
+    <rect x="28" y="74" width="412" height="20" rx="10" fill="#d7ebf8"/>
+    <rect x="28" y="112" width="330" height="20" rx="10" fill="#f3d9b8"/>
+    <rect x="28" y="150" width="374" height="20" rx="10" fill="#dfe9de"/>
+  </g>
+  <g transform="translate(628 414)">
+    <rect width="404" height="190" rx="20" fill="#ffffff" stroke="#d6d9de"/>
+    <text x="28" y="46" font-family="Inter, Arial, sans-serif" font-size="18" font-weight="700" fill="#18191d">Automation and context</text>
+    <text x="28" y="86" font-family="Inter, Arial, sans-serif" font-size="17" fill="#4f545d">Manual runs available</text>
+    <text x="28" y="120" font-family="Inter, Arial, sans-serif" font-size="17" fill="#4f545d">3 queued Codex context events</text>
+    <rect x="28" y="142" width="208" height="38" rx="19" fill="#18191d"/>
+    <text x="54" y="167" font-family="Inter, Arial, sans-serif" font-size="15" font-weight="700" fill="#fff">Run with context</text>
+  </g>
+</svg>

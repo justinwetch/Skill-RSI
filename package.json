@@ -12,7 +12,10 @@
     "server": "node src/server.js",
     "dev:ui": "vite --config ui/vite.config.js --host 127.0.0.1",
     "build:ui": "vite build --config ui/vite.config.js",
-    "preview:ui": "vite preview --config ui/vite.config.js --host 127.0.0.1"
+    "preview:ui": "vite preview --config ui/vite.config.js --host 127.0.0.1",
+    "plugin:validate": "node scripts/skill-rsi-plugin-validate.mjs",
+    "plugin:smoke": "node scripts/skill-rsi-plugin-smoke.mjs",
+    "plugin:check": "npm run plugin:validate && npm run plugin:smoke && npm test && npm run build:ui && git diff --check"
   },
   "engines": {
     "node": ">=18"

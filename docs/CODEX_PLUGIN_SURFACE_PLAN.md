@@ -125,23 +125,24 @@ Target structure:
 plugins/skill-rsi/
   .codex-plugin/
     plugin.json
+  assets/
+    icon.svg
+    preview.svg
   skills/
     skill-rsi/
       SKILL.md
-    skill-rsi-maintainer/
-      SKILL.md
   hooks/
-    codex-stop-hook.json
+    codex-stop-hook.example.json
   mcp/
     server.mjs
     ui/
       cockpit.html.js
-      evidence.html.js
-      champion.html.js
   README.md
 ```
 
 The plugin can live in this repository initially. If distribution constraints make a separate repository cleaner later, the implementation should still treat it as a thin wrapper around the core Skill RSI app/CLI/library.
+
+Future-only additions, if they prove useful, include a separate maintainer skill, more granular UI modules, apps connector metadata, and public marketplace packaging. They are not part of the current repo-tracked plugin package.
 
 ## Skill layer
 
@@ -169,10 +170,13 @@ Initial tools:
 | `skill_rsi_doctor` | Report local readiness, API key presence, model defaults, visual runner availability, and plugin/MCP status. |
 | `skill_rsi_open` | Return the cockpit UI where supported and a text fallback everywhere. |
 | `skill_rsi_list_projects` | List projects and concise state. |
-| `skill_rsi_create_project` | Create a scratch or baseline project using the same logic as the UI/CLI. |
-| `skill_rsi_import_baseline` | Import a skill directory, zip, or markdown file into a project. |
+| `skill_rsi_create_project` | Create a scratch or baseline project using the same logic as the UI/CLI. Baseline import is handled through this tool's `baselinePath`. |
 | `skill_rsi_run_next` | Start bounded manual loop execution through existing run machinery. |
+| `skill_rsi_run_with_context` | Consume queued Codex context and start one explicit hook-informed loop. |
 | `skill_rsi_progress` | Read current/latest run progress. |
+| `skill_rsi_get_run_detail` | Return detailed run artifacts, timeline, recommendation, and eval references. |
+| `skill_rsi_get_run_comparison` | Return champion/challenger or Candidate A/B comparison metadata. |
+| `skill_rsi_get_skill_content` | Return selected champion, challenger, or cold-start candidate package files. |
 | `skill_rsi_get_next_loop_plan` | Return the current next loop plan and where it came from. |
 | `skill_rsi_get_evidence` | Return compact run evidence and prompt-level detail. |
 | `skill_rsi_get_champion` | Return current champion metadata and selected file content. |
@@ -384,7 +388,7 @@ Goal: a user can use the common Skill RSI flow from inside a host that supports 
 
 Goal: core local-app inspection parity inside native MCP-UI without embedding the local HTTP app.
 
-### Phase 5: Hook-informed and hook-autorun UX
+### Phase 5: Manual hook-informed runs
 
 - Surface pending Codex context in the MCP-UI console.
 - Allow an explicit manual "run one loop with queued context" action.
@@ -394,10 +398,10 @@ Goal: Codex activity can naturally feed RSI without making hooks opaque executio
 
 ### Phase 6: Distribution polish
 
-- Validate plugin install/update flow.
-- Prepare screenshots and docs.
-- Track OpenAI plugin publishing/discovery changes.
-- Split plugin to its own repo only if distribution requires it.
+- Add static plugin assets and clearer plugin metadata.
+- Add repo scripts for plugin validation and MCP tool-surface smoke checks.
+- Document local install, update, troubleshooting, fallback behavior, and release checks.
+- Keep public marketplace publishing, personal marketplace mutation, and repo splitting out of scope until distribution requirements demand them.
 
 Goal: a clean install path for users outside this development checkout.
 

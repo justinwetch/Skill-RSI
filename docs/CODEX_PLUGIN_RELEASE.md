@@ -1,0 +1,117 @@
+# Codex Plugin Release Checklist
+
+This checklist is for repo-local Skill RSI Codex Plugin releases. It does not publish to a public marketplace, mutate personal marketplace files, or split the plugin out of this repository.
+
+## Release Target
+
+The plugin lives at `plugins/skill-rsi` and provides:
+
+- the Skill RSI operator skill
+- a local MCP server
+- native MCP-UI resources with text fallback
+- static plugin assets
+- a Codex Stop hook example that queues context only
+
+The local app remains the full evidence console. The CLI remains the automation and scripting surface. The plugin is the Codex-native control and inspection surface.
+
+## Preflight
+
+From the repository root:
+
+```bash
+npm run plugin:validate
+npm run plugin:smoke
+npm test
+npm run build:ui
+git diff --check
+```
+
+Or run the combined check:
+
+```bash
+npm run plugin:check
+```
+
+Expected results:
+
+- plugin validation passes
+- MCP smoke reports the expected tool count
+- repo tests pass
+- UI build passes
+- no whitespace errors are reported
+
+## Local Install Smoke
+
+Install from the repository root:
+
+```bash
+codex plugins install ./plugins/skill-rsi
+```
+
+Then verify in Codex:
+
+- the Skill RSI operator skill is discoverable
+- asking "Open Skill RSI" can call `skill_rsi_open`
+- `skill_rsi_open` returns readable fallback text
+- hosts with MCP Apps/UI support render the embedded console
+- the console can list projects and show no-project state without errors
+
+If the installed plugin cannot resolve the repository, set:
+
+```bash
+SKILL_RSI_ROOT="/absolute/path/to/Skill RSI"
+```
+
+If validation cannot find the Codex plugin validator, set:
+
+```bash
+SKILL_RSI_PLUGIN_VALIDATOR="/absolute/path/to/validate_plugin.py"
+```
+
+## Hook Example Smoke
+
+Review `plugins/skill-rsi/hooks/codex-stop-hook.example.json` before sharing it.
+
+Confirm that:
+
+- `SKILL_RSI_PROJECT` is explicit
+- the command points at `scripts/codex-skill-rsi-hook.mjs`
+- the hook queues context only
+- docs do not imply hooks run RSI loops or spend model budget
+
+Queued context can be consumed by scheduled/CLI runs or by the explicit `skill_rsi_run_with_context` MCP action.
+
+## Documentation Checks
+
+Before release, scan for stale claims:
+
+```bash
+rg -n "\\[TODO:|automatic hook-triggered|human approval|Visual only|two challengers" README.md docs plugins/skill-rsi
+```
+
+Acceptable references should be historical, explicitly future-scoped, or absent. Current docs should say:
+
+- no public marketplace publishing is included
+- no personal marketplace mutation is performed
+- MCP-UI host support varies and text fallback is always available
+- hooks queue context only
+- model-backed runs are explicit and bounded
+
+## Asset Checks
+
+Static assets live under `plugins/skill-rsi/assets/`.
+
+Keep them:
+
+- repo-tracked
+- free of secrets and local paths
+- useful for plugin docs or future marketplace presentation
+- validator-compatible with the manifest asset fields that reference them
+
+## Not In This Release Path
+
+- public marketplace publication
+- personal marketplace file edits
+- automatic hook-triggered RSI loops
+- a separate plugin repository
+- a maintainer-only plugin skill

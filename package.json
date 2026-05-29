@@ -18,6 +18,7 @@
     "node": ">=18"
   },
   "dependencies": {
+    "@mcp-ui/server": "^6.1.0",
     "@modelcontextprotocol/sdk": "^1.29.0",
     "@vitejs/plugin-react": "^6.0.2",
     "lucide-react": "^1.16.0",

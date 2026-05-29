@@ -6,11 +6,13 @@ import path from 'node:path';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import {
+  buildCockpitState,
   createSkillRsiMcpServer,
   createSkillRsiServices,
   createSkillRsiToolHandlers,
   resolveRepoRoot,
 } from '../plugins/skill-rsi/mcp/server.mjs';
+import { renderCockpitHtml } from '../plugins/skill-rsi/mcp/ui/cockpit.html.js';
 
 const execFileAsync = promisify(execFile);
 const repoRoot = path.resolve('.');
@@ -30,10 +32,27 @@ test('Skill RSI plugin validates and registers expected MCP tools', async () => 
     'skill_rsi_get_champion',
     'skill_rsi_get_next_loop_plan',
     'skill_rsi_list_projects',
+    'skill_rsi_open',
     'skill_rsi_progress',
     'skill_rsi_record_context',
     'skill_rsi_run_next',
   ].sort());
+});
+
+test('skill_rsi_open returns fallback content and an MCP-UI cockpit resource', async () => {
+  const { server } = await createSkillRsiMcpServer({
+    services: stubServices(),
+  });
+  const result = await server._registeredTools.skill_rsi_open.handler({});
+  assert.equal(result.structuredContent.kind, 'skill-rsi-cockpit');
+  assert.equal(result.structuredContent.status, 'empty');
+  assert.match(result.content[0].text, /No Skill RSI projects yet/);
+  assert.equal(result.content[1].type, 'resource');
+  assert.match(result.content[1].resource.uri, /^ui:\/\/skill-rsi\/cockpit\/home/);
+  assert.match(result.content[1].resource.mimeType, /text\/html/);
+  assert.match(result.content[1].resource.text, /Create or import/);
+  assert.match(result.content[1].resource.text, /skill_rsi_create_project/);
+  assert.ok(!result.content[1].resource.text.includes(process.env.OPENAI_API_KEY || 'sk-'));
 });
 
 test('MCP handlers create, inspect, run, queue context, and export projects', async () => {
@@ -65,6 +84,15 @@ test('MCP handlers create, inspect, run, queue context, and export projects', as
   assert.equal(created.project.config.eval.outputType, 'code');
   assert.equal(created.project.config.models.agent, 'gpt-5.5');
   assert.equal(created.project.state.currentChampion.candidateId, 'baseline');
+
+  const cockpit = await handlers.skill_rsi_open({ projectName: 'MCP Project' });
+  assert.equal(cockpit.status, 'manual');
+  assert.equal(cockpit.selectedProject.projectId, 'mcp-project');
+  assert.equal(cockpit.champion.available, true);
+  assert.equal(cockpit.runAction.targetLoops, 4);
+  assert.equal(cockpit.runAction.params.loops, 4);
+  assert.equal(cockpit.actions.runTargetBatch.toolName, 'skill_rsi_run_next');
+  assert.equal(cockpit.actions.exportChampion.toolName, 'skill_rsi_export_champion');
 
   const projects = await handlers.skill_rsi_list_projects();
   assert.equal(projects.projects.length, 1);
@@ -116,6 +144,43 @@ test('MCP handlers create, inspect, run, queue context, and export projects', as
   assert.match(await fs.readFile(path.join(exportDir, 'SKILL.md'), 'utf8'), /^---/);
 });
 
+test('cockpit state and HTML handle empty, missing, and project states', async () => {
+  const empty = await buildCockpitState({ services: stubServices() });
+  assert.equal(empty.status, 'empty');
+  assert.equal(empty.selectedProject, null);
+  assert.equal(empty.actions.createProject.toolName, 'skill_rsi_create_project');
+  assert.equal(empty.capabilities.mcpUi, true);
+  const emptyHtml = renderCockpitHtml(empty);
+  assert.match(emptyHtml, /No Skill RSI projects yet/);
+  assert.match(emptyHtml, /Create project/);
+  assert.doesNotMatch(emptyHtml, /rawPayloadSha256|OPENAI_API_KEY|sk-test/);
+
+  const missing = await buildCockpitState({
+    services: stubServices(),
+    projectName: 'Missing Project',
+  });
+  assert.equal(missing.status, 'missing');
+  assert.equal(missing.selectedProjectMissing, true);
+  assert.match(renderCockpitHtml(missing), /Project missing/);
+
+  const projectServices = stubServices({
+    projects: [stubProjectSummary({ projectId: 'alpha-project', targetIterations: 5 })],
+    progress: { schemaVersion: 1, projectId: 'alpha-project', runId: 'run-001', status: 'completed', competitionMode: 'champion_challenge' },
+    champion: { available: true, packageType: 'directory', hash: 'abc123', validation: { valid: true }, files: [{ path: 'SKILL.md', text: '# Skill' }] },
+  });
+  const projectState = await buildCockpitState({ services: projectServices });
+  assert.equal(projectState.selectedProject.projectId, 'alpha-project');
+  assert.equal(projectState.runAction.targetLoops, 5);
+  assert.equal(projectState.runAction.label, 'Run target batch (5 loops)');
+  assert.equal(projectState.actions.refresh.toolName, 'skill_rsi_open');
+  assert.equal(projectState.actions.runTargetBatch.params.loops, 5);
+  const projectHtml = renderCockpitHtml(projectState);
+  assert.match(projectHtml, /Run target batch \(5 loops\)/);
+  assert.match(projectHtml, /Latest evidence/);
+  assert.match(projectHtml, /Automation and context/);
+  assert.match(projectHtml, /Detailed prompt evidence and screenshot inspection stay in the local app/);
+});
+
 test('MCP helpers resolve repo root and surface missing project errors clearly', async () => {
   assert.equal(await resolveRepoRoot({ env: { SKILL_RSI_ROOT: repoRoot }, startDir: '/tmp' }), repoRoot);
 
@@ -129,7 +194,11 @@ test('MCP helpers resolve repo root and surface missing project errors clearly',
   );
 });
 
-function stubServices() {
+function stubServices({
+  projects = [],
+  progress = { schemaVersion: 1, status: 'none' },
+  champion = { available: false, files: [] },
+} = {}) {
   return {
     cwd: repoRoot,
     env: {},
@@ -143,11 +212,39 @@ function stubServices() {
     }),
     uiApi: {
       UI_OPENAI_MODELS: ['gpt-5.4-mini', 'gpt-5.5'],
-      readProjectSummaries: async () => [],
+      readProjectSummaries: async () => projects,
       createProjectFromLocalInput: async () => ({ projectId: 'stub' }),
-      readRunProgress: async () => ({ status: 'none' }),
-      readProjectSummary: async () => ({ projectId: 'stub', history: {}, automation: {}, state: {} }),
-      readSkillContent: async () => ({ available: false, files: [] }),
+      readRunProgress: async () => progress,
+      readProjectSummary: async ({ projectName }) => projects.find(project => project.projectId === projectName) || stubProjectSummary({ projectId: projectName }),
+      readSkillContent: async () => champion,
+    },
+  };
+}
+
+function stubProjectSummary({ projectId = 'stub', targetIterations = 3 } = {}) {
+  return {
+    schemaVersion: 1,
+    projectId,
+    goal: 'Improve a stub skill.',
+    state: {
+      runCount: 1,
+      currentChampion: { candidateId: 'baseline', runId: 'baseline-upload' },
+      runPolicy: { triggerMode: 'manual', targetIterations },
+    },
+    config: {
+      eval: { outputType: 'text' },
+      models: { agent: 'gpt-5.4-mini', generation: 'gpt-5.4-mini', judge: 'gpt-5.4-mini' },
+    },
+    history: {
+      recentTrajectory: [{ runId: 'run-001', decision: 'promote' }],
+      nextLoopPremise: { sourceRunId: 'run-001', notes: ['Try next: tighten trigger boundaries'] },
+    },
+    promptBank: { stablePromptCount: 6, provisionalPromptCount: 1 },
+    automation: {
+      status: 'manual',
+      hooks: {
+        inbox: { count: 0, latest: null },
+      },
     },
   };
 }

@@ -5,7 +5,9 @@ import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
+import { createUIResource } from '@mcp-ui/server';
 import { z } from 'zod';
+import { renderCockpitHtml } from './ui/cockpit.html.js';
 
 const DEFAULT_MODEL = 'gpt-5.4-mini';
 const SUPPORTED_OUTPUT_TYPES = ['text', 'code', 'code_visual'];
@@ -106,6 +108,19 @@ function toolResult(data, summary = null) {
   };
 }
 
+function uiToolResult(data, uiResource, summary = null) {
+  return {
+    content: [
+      {
+        type: 'text',
+        text: summary ? `${summary}\n\n${JSON.stringify(data, null, 2)}` : JSON.stringify(data, null, 2),
+      },
+      uiResource,
+    ],
+    structuredContent: data,
+  };
+}
+
 function safeExportPath(rootDir, filePath) {
   const destination = path.resolve(rootDir, filePath);
   const root = path.resolve(rootDir);
@@ -134,6 +149,13 @@ async function exportSkillFiles(skill, outDir) {
 
 export function createSkillRsiToolHandlers(services) {
   return {
+    async skill_rsi_open(args = {}) {
+      return buildCockpitState({
+        services,
+        projectName: args.projectName || null,
+      });
+    },
+
     async skill_rsi_doctor() {
       const visualRunner = await services.checkVisualRunnerAvailability();
       return {
@@ -297,6 +319,187 @@ export function createSkillRsiToolHandlers(services) {
   };
 }
 
+function slugifyProjectName(value) {
+  const slug = String(value || '')
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '');
+  return slug || null;
+}
+
+export async function buildCockpitState({ services, projectName = null }) {
+  const projects = await services.uiApi.readProjectSummaries({ cwd: services.cwd });
+  const requestedProjectId = slugifyProjectName(projectName);
+  const selectedProject = requestedProjectId
+    ? projects.find(project => project.projectId === requestedProjectId) || null
+    : projects[0] || null;
+  const selectedProjectMissing = Boolean(requestedProjectId && !selectedProject);
+  const supportedModels = services.uiApi.UI_OPENAI_MODELS || SUPPORTED_MODELS;
+
+  if (!selectedProject) {
+    return {
+      schemaVersion: 1,
+      kind: 'skill-rsi-cockpit',
+      status: selectedProjectMissing ? 'missing' : 'empty',
+      repoRoot: services.cwd,
+      requestedProjectId,
+      selectedProjectMissing,
+      projects,
+      selectedProject: null,
+      progress: null,
+      champion: { available: false },
+      nextLoopPremise: null,
+      latestEvidence: null,
+      automation: null,
+      runAction: null,
+      supportedOutputTypes: SUPPORTED_OUTPUT_TYPES,
+      supportedModels,
+      actions: buildCockpitActions({ project: null, targetLoops: 3 }),
+      capabilities: buildCockpitCapabilities(),
+    };
+  }
+
+  const [summary, progress, champion] = await Promise.all([
+    services.uiApi.readProjectSummary({ cwd: services.cwd, projectName: selectedProject.projectId }),
+    services.uiApi.readRunProgress({ cwd: services.cwd, projectName: selectedProject.projectId }),
+    services.uiApi.readSkillContent({ cwd: services.cwd, projectName: selectedProject.projectId, source: 'champion' }),
+  ]);
+  const targetLoops = positiveInteger(summary.state?.runPolicy?.targetIterations, 1);
+  const status = progress?.status === 'running'
+    ? 'running'
+    : summary.automation?.status || (progress?.status === 'completed' ? 'completed' : 'manual');
+
+  return {
+    schemaVersion: 1,
+    kind: 'skill-rsi-cockpit',
+    status,
+    repoRoot: services.cwd,
+    requestedProjectId,
+    selectedProjectMissing: false,
+    projects,
+    selectedProject: summary,
+    progress,
+    champion: {
+      available: champion.available,
+      packageType: champion.packageType || null,
+      hash: champion.hash || null,
+      validation: champion.validation || null,
+      fileCount: champion.files?.length || 0,
+    },
+    nextLoopPremise: summary.history?.nextLoopPremise || null,
+    latestEvidence: {
+      latestTrajectory: summary.history?.recentTrajectory?.at?.(-1) || null,
+      promptBank: summary.promptBank || null,
+    },
+    automation: summary.automation || null,
+    runAction: {
+      label: `Run target batch (${targetLoops} ${targetLoops === 1 ? 'loop' : 'loops'})`,
+      targetLoops,
+      startsModelBackedWork: true,
+      toolName: 'skill_rsi_run_next',
+      params: {
+        projectName: summary.projectId,
+        loops: targetLoops,
+        mode: 'agentic',
+        evalMode: 'real',
+      },
+    },
+    supportedOutputTypes: SUPPORTED_OUTPUT_TYPES,
+    supportedModels,
+    actions: buildCockpitActions({ project: summary, targetLoops }),
+    capabilities: buildCockpitCapabilities(),
+  };
+}
+
+function buildCockpitCapabilities() {
+  return {
+    mcpTools: true,
+    mcpUi: true,
+    uiActions: true,
+    detailedEvidencePanels: false,
+    visualScreenshotPanels: false,
+    hookAutorun: false,
+  };
+}
+
+function buildCockpitActions({ project, targetLoops }) {
+  const projectName = project?.projectId || null;
+  return {
+    refresh: {
+      toolName: 'skill_rsi_open',
+      params: projectName ? { projectName } : {},
+    },
+    createProject: {
+      toolName: 'skill_rsi_create_project',
+    },
+    runTargetBatch: {
+      toolName: 'skill_rsi_run_next',
+      enabled: Boolean(projectName),
+      params: projectName ? {
+        projectName,
+        loops: targetLoops,
+        mode: 'agentic',
+        evalMode: 'real',
+      } : null,
+    },
+    exportChampion: {
+      toolName: 'skill_rsi_export_champion',
+      enabled: Boolean(project?.state?.currentChampion),
+    },
+    recordContext: {
+      toolName: 'skill_rsi_record_context',
+      enabled: Boolean(projectName),
+    },
+  };
+}
+
+function renderCockpitFallback(state) {
+  if (!state.selectedProject) {
+    return [
+      'Skill RSI Cockpit',
+      state.selectedProjectMissing
+        ? `Requested project not found: ${state.requestedProjectId}`
+        : 'No Skill RSI projects yet.',
+      'Use the cockpit UI where supported, or call skill_rsi_create_project to create a project.',
+    ].join('\n');
+  }
+  const lines = [
+    'Skill RSI Cockpit',
+    `Project: ${state.selectedProject.projectId}`,
+    `Status: ${state.status}`,
+    `Champion: ${state.champion.available ? 'available' : 'none'}`,
+    `Run action: ${state.runAction.label}`,
+    `Next loop plan: ${state.nextLoopPremise?.notes?.join(' | ') || 'none yet'}`,
+    `Queued Codex context: ${state.automation?.hooks?.inbox?.count || 0}`,
+    'If this host does not render MCP-UI, call the listed MCP tools directly.',
+  ];
+  return lines.join('\n');
+}
+
+function createCockpitResource(state) {
+  return createUIResource({
+    uri: `ui://skill-rsi/cockpit/${state.selectedProject?.projectId || state.requestedProjectId || 'home'}`,
+    content: {
+      type: 'rawHtml',
+      htmlString: renderCockpitHtml(state),
+    },
+    encoding: 'text',
+    uiMetadata: {
+      'preferred-frame-size': ['100%', '760px'],
+      'initial-render-data': {
+        projectId: state.selectedProject?.projectId || null,
+        status: state.status,
+      },
+    },
+    adapters: {
+      mcpApps: {
+        enabled: true,
+      },
+    },
+  });
+}
+
 function registerTool(server, handlers, name, config, handler) {
   server.registerTool(name, config, async args => {
     const data = await handler(args || {});
@@ -314,6 +517,17 @@ export async function createSkillRsiMcpServer({ services = null } = {}) {
   const server = new McpServer({
     name: 'skill-rsi',
     version: '0.1.0',
+  });
+
+  server.registerTool('skill_rsi_open', {
+    title: 'Open Skill RSI',
+    description: 'Open the guided Skill RSI MCP-UI cockpit where supported and return a text fallback everywhere.',
+    inputSchema: {
+      projectName: z.string().optional(),
+    },
+  }, async args => {
+    const data = await handlers.skill_rsi_open(args || {});
+    return uiToolResult(data, createCockpitResource(data), renderCockpitFallback(data));
   });
 
   registerTool(server, handlers, 'skill_rsi_doctor', {
@@ -421,4 +635,3 @@ if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.me
     process.exit(1);
   });
 }
-

@@ -27,7 +27,7 @@ Use the existing surfaces:
 - Local app: best for project setup, watching live runs, reviewing evidence, viewing visual screenshots, and inspecting skill packages.
 - CLI: best for reproducible local operation, project creation, baseline import, progress checks, scheduling, hooks, and export.
 - MCP tools: best for structured Codex operation of common project actions without shell-command guessing.
-- MCP-UI console: best for guided embedded project setup, current state, history, detailed run evidence, visual screenshots, skill package inspection, target-batch runs, context queueing, and champion export when host support is available.
+- MCP-UI console: best for guided embedded project setup, current state, history, detailed run evidence, visual screenshots, skill package inspection, target-batch runs, explicit hook-informed runs, context queueing, and champion export when host support is available.
 - Documentation: use `docs/HOW_IT_WORKS.md`, `docs/SCHEDULING.md`, `docs/CODEX_HOOKS.md`, and `docs/CODEX_PLUGIN_SURFACE_PLAN.md` as source-of-truth context.
 
 Prefer MCP tools for supported project operations. Prefer exact Skill RSI CLI commands over invented workflows when no MCP tool covers the task. If you are uncertain whether a command exists, inspect `node src/cli.js --help` before suggesting it.
@@ -51,6 +51,7 @@ When available, prefer these tools for supported actions:
 - `skill_rsi_list_projects`: list local projects.
 - `skill_rsi_create_project`: create a scratch or baseline project.
 - `skill_rsi_run_next`: start bounded manual loop execution.
+- `skill_rsi_run_with_context`: consume queued Codex context and start one explicit hook-informed loop.
 - `skill_rsi_progress`: inspect run progress.
 - `skill_rsi_get_run_detail`: read detailed run artifacts.
 - `skill_rsi_get_run_comparison`: read run comparison metadata.
@@ -61,7 +62,7 @@ When available, prefer these tools for supported actions:
 - `skill_rsi_export_champion`: export the champion package.
 - `skill_rsi_record_context`: queue explicit context without running a loop.
 
-Tell the user before using `skill_rsi_run_next` or the console's run action, because either can start model-backed work depending on mode and eval settings.
+Tell the user before using `skill_rsi_run_next`, `skill_rsi_run_with_context`, or the console's run action, because these can start model-backed work depending on mode and eval settings. Do not describe hook autorun as available; Codex hooks queue context only unless the user explicitly invokes a normal Skill RSI runner.
 
 ## Useful CLI Shapes
 

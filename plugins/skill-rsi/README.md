@@ -42,7 +42,7 @@ node plugins/skill-rsi/mcp/server.mjs
 
 The server exposes tools for project listing, creation, progress, next-loop plans, champion reads, champion export, explicit context queueing, and bounded manual loop execution.
 
-Use `skill_rsi_open` to open the native console. It returns a text fallback in every host and an embedded MCP-UI resource in hosts that support MCP Apps/UI rendering. The console can create/import projects, show current state, inspect history, read prompt-level evidence, view rendered screenshots, inspect skill packages, run the target loop batch, queue visible context, and export the champion through MCP tool calls.
+Use `skill_rsi_open` to open the native console. It returns a text fallback in every host and an embedded MCP-UI resource in hosts that support MCP Apps/UI rendering. The console can create/import projects, show current state, inspect history, read prompt-level evidence, view rendered screenshots, inspect skill packages, run the target loop batch, run one explicit loop with queued Codex context, queue visible context, and export the champion through MCP tool calls.
 
 If the plugin is installed outside the repository layout, set `SKILL_RSI_ROOT` to the Skill RSI repository path so the MCP server can find the app services:
 
@@ -62,7 +62,7 @@ python3 /Users/justinwetch/.codex/skills/.system/plugin-creator/scripts/validate
 
 `hooks/codex-stop-hook.example.json` shows how to wire a Codex `Stop` hook to Skill RSI context capture.
 
-Keep `SKILL_RSI_PROJECT` explicit. The hook records sanitized context into the project's hook queue. It does not run an RSI loop directly and does not spend model budget.
+Keep `SKILL_RSI_PROJECT` explicit. The hook records sanitized context into the project's hook queue. It does not run an RSI loop directly and does not spend model budget. Queued context can later be consumed by the scheduler/CLI or by the explicit `skill_rsi_run_with_context` MCP action.
 
 See `../../docs/CODEX_HOOKS.md` for the full hook model.
 

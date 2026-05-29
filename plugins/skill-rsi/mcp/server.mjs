@@ -64,6 +64,13 @@ export async function createSkillRsiServices({ repoRoot = null, env = process.en
     runProject: runLoop.runProject,
     checkVisualRunnerAvailability: visualRunner.checkVisualRunnerAvailability,
     recordHookEvent: hooks.recordHookEvent,
+    claimPendingHookEvents: hooks.claimPendingHookEvents,
+    hasProjectRunLock: hooks.hasProjectRunLock,
+    markHookEventsProcessed: hooks.markHookEventsProcessed,
+    markHookEventsSkipped: hooks.markHookEventsSkipped,
+    markHookEventsFailed: hooks.markHookEventsFailed,
+    requeueHookEvents: hooks.requeueHookEvents,
+    summarizeHookEvents: hooks.summarizeHookEvents,
     readJson: store.readJson,
     pathExists: store.pathExists,
     writeJson: store.writeJson,
@@ -243,6 +250,10 @@ export function createSkillRsiToolHandlers(services) {
         runCount: result.state.runCount,
         champion: result.state.currentChampion || null,
       };
+    },
+
+    async skill_rsi_run_with_context(args) {
+      return runWithQueuedContext({ services, args });
     },
 
     async skill_rsi_progress(args) {
@@ -431,6 +442,7 @@ export async function buildConsoleState({
       skillCompare: null,
       automation: null,
       runAction: null,
+      contextRunAction: null,
       supportedOutputTypes: SUPPORTED_OUTPUT_TYPES,
       supportedModels,
       actions: buildCockpitActions({ project: null, targetLoops: 3 }),
@@ -444,6 +456,10 @@ export async function buildConsoleState({
     services.uiApi.readSkillContent({ cwd: services.cwd, projectName: selectedProject.projectId, source: 'champion' }),
   ]);
   const targetLoops = positiveInteger(summary.state?.runPolicy?.targetIterations, 1);
+  const queuedHookCount = summary.automation?.hooks?.inbox?.count || 0;
+  const contextRunEligible = queuedHookCount > 0
+    && !summary.automation?.locked
+    && summary.automation?.status !== 'max_runs';
   const status = progress?.status === 'running'
     ? 'running'
     : summary.automation?.status || (progress?.status === 'completed' ? 'completed' : 'manual');
@@ -524,6 +540,26 @@ export async function buildConsoleState({
         evalMode: 'real',
       },
     },
+    contextRunAction: {
+      label: 'Run one loop with queued Codex context',
+      queuedHookCount,
+      enabled: contextRunEligible,
+      startsModelBackedWork: queuedHookCount > 0,
+      disabledReason: queuedHookCount === 0
+        ? 'no queued Codex context'
+        : summary.automation?.locked
+          ? 'project is already running'
+          : summary.automation?.status === 'max_runs'
+            ? 'project is at run ceiling'
+            : null,
+      toolName: 'skill_rsi_run_with_context',
+      params: {
+        projectName: summary.projectId,
+        loops: 1,
+        mode: 'agentic',
+        evalMode: 'real',
+      },
+    },
     supportedOutputTypes: SUPPORTED_OUTPUT_TYPES,
     supportedModels,
     actions: buildCockpitActions({ project: summary, targetLoops }),
@@ -580,6 +616,16 @@ function buildCockpitActions({ project, targetLoops }) {
         evalMode: 'real',
       } : null,
     },
+    runWithContext: {
+      toolName: 'skill_rsi_run_with_context',
+      enabled: Boolean(projectName),
+      params: projectName ? {
+        projectName,
+        loops: 1,
+        mode: 'agentic',
+        evalMode: 'real',
+      } : null,
+    },
     exportChampion: {
       toolName: 'skill_rsi_export_champion',
       enabled: Boolean(project?.state?.currentChampion),
@@ -589,6 +635,141 @@ function buildCockpitActions({ project, targetLoops }) {
       enabled: Boolean(projectName),
     },
   };
+}
+
+async function runWithQueuedContext({ services, args }) {
+  const projectName = args.projectName;
+  if (await services.hasProjectRunLock({ cwd: services.cwd, projectName })) {
+    const error = new Error(`Project is already running; pending Codex context remains queued for ${projectName}.`);
+    error.statusCode = 409;
+    throw error;
+  }
+
+  const claimedHookEvents = await services.claimPendingHookEvents({ cwd: services.cwd, projectName });
+  const hookContext = services.summarizeHookEvents(claimedHookEvents);
+  if (!claimedHookEvents.length) {
+    return {
+      schemaVersion: 1,
+      action: 'no_context_queued',
+      projectName,
+      consumedHookEvents: 0,
+      hookContext: null,
+      startsModelBackedWork: false,
+    };
+  }
+
+  if (await services.hasProjectRunLock({ cwd: services.cwd, projectName })) {
+    await services.requeueHookEvents({
+      cwd: services.cwd,
+      projectName,
+      events: claimedHookEvents,
+      reason: 'Project became locked after hook events were claimed',
+    });
+    return {
+      schemaVersion: 1,
+      action: 'context_requeued_lock_race',
+      projectName,
+      consumedHookEvents: 0,
+      requeuedHookEvents: claimedHookEvents.length,
+      hookContext,
+      startsModelBackedWork: false,
+    };
+  }
+
+  const maxRuns = nonNegativeIntegerOrNull(args.maxRuns);
+  if (maxRuns === 0) {
+    await services.markHookEventsSkipped({
+      cwd: services.cwd,
+      projectName,
+      events: claimedHookEvents,
+      reason: 'max-runs 0 requested',
+    });
+    return {
+      schemaVersion: 1,
+      action: 'context_skipped',
+      projectName,
+      consumedHookEvents: claimedHookEvents.length,
+      hookContext,
+      completedRunCount: 0,
+      stopReason: 'max-runs 0 requested',
+      startsModelBackedWork: false,
+    };
+  }
+
+  const mode = normalizeRunMode(args.mode || 'agentic');
+  const evalMode = normalizeEvalMode(args.evalMode || 'real');
+  const model = args.model || null;
+  const loops = Math.min(positiveInteger(args.loops, 1), 1);
+  let result;
+  try {
+    result = await services.runProject({
+      cwd: services.cwd,
+      projectName,
+      goal: args.goal || `Improve the ${projectName} Agent Skill.`,
+      loops,
+      mode,
+      maxRuns,
+      evalMode,
+      generationModel: args.generationModel || model || null,
+      judgeModel: args.judgeModel || model || null,
+      agentModel: args.agentModel || model || null,
+      triggerMode: 'hook',
+      hookContext,
+      apiKeys: {
+        anthropic: args.anthropicKey || null,
+        openai: args.openaiKey || null,
+        gemini: args.geminiKey || null,
+      },
+    });
+    if (result.completedRuns.length > 0) {
+      await services.markHookEventsProcessed({ cwd: services.cwd, projectName, events: claimedHookEvents });
+    } else {
+      await services.markHookEventsSkipped({
+        cwd: services.cwd,
+        projectName,
+        events: claimedHookEvents,
+        reason: result.stopReason || 'no runs completed',
+      });
+    }
+  } catch (error) {
+    if (isProjectLockedError(error)) {
+      await services.requeueHookEvents({ cwd: services.cwd, projectName, events: claimedHookEvents, reason: error.message });
+      return {
+        schemaVersion: 1,
+        action: 'context_requeued_lock_race',
+        projectName,
+        consumedHookEvents: 0,
+        requeuedHookEvents: claimedHookEvents.length,
+        hookContext,
+        startsModelBackedWork: false,
+      };
+    }
+    await services.markHookEventsFailed({ cwd: services.cwd, projectName, events: claimedHookEvents, error });
+    throw error;
+  }
+
+  return {
+    schemaVersion: 1,
+    action: result.completedRuns.length > 0 ? 'context_run_completed' : 'context_skipped',
+    projectName,
+    projectId: result.projectId,
+    consumedHookEvents: claimedHookEvents.length,
+    hookContext,
+    startsModelBackedWork: mode === 'agentic' || evalMode === 'real',
+    completedRunCount: result.completedRuns.length,
+    completedRuns: result.completedRuns.map(run => ({
+      runId: run.runId,
+      runNumber: run.runNumber,
+      decision: run.recommendation?.decision || null,
+    })),
+    stopReason: result.stopReason || null,
+    runCount: result.state.runCount,
+    champion: result.state.currentChampion || null,
+  };
+}
+
+function isProjectLockedError(error) {
+  return typeof error?.message === 'string' && error.message.startsWith('Project is already locked:');
 }
 
 export async function buildEvidenceState({ services, projectName, runId = null, detail = null, comparison = null }) {
@@ -811,6 +992,26 @@ export async function createSkillRsiMcpServer({ services = null } = {}) {
       geminiKey: z.string().optional(),
     },
   }, handlers.skill_rsi_run_next);
+
+  registerTool(server, handlers, 'skill_rsi_run_with_context', {
+    title: 'Run With Queued Codex Context',
+    description: 'Claim queued Codex context and start one bounded hook-informed Skill RSI loop through normal lock, budget, and run recording.',
+    inputSchema: {
+      projectName: z.string().min(1),
+      loops: z.number().int().positive().default(1),
+      mode: z.enum(['stub', 'mock', 'agentic']).default('agentic'),
+      evalMode: z.enum(['mock', 'real']).default('real'),
+      goal: z.string().optional(),
+      maxRuns: z.number().int().nonnegative().optional(),
+      model: z.string().optional(),
+      generationModel: z.string().optional(),
+      judgeModel: z.string().optional(),
+      agentModel: z.string().optional(),
+      openaiKey: z.string().optional(),
+      anthropicKey: z.string().optional(),
+      geminiKey: z.string().optional(),
+    },
+  }, handlers.skill_rsi_run_with_context);
 
   registerTool(server, handlers, 'skill_rsi_progress', {
     title: 'Skill RSI Progress',

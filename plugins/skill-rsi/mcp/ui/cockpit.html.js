@@ -2,6 +2,7 @@ const TOOL_NAMES = {
   open: 'skill_rsi_open',
   createProject: 'skill_rsi_create_project',
   runNext: 'skill_rsi_run_next',
+  runWithContext: 'skill_rsi_run_with_context',
   exportChampion: 'skill_rsi_export_champion',
   recordContext: 'skill_rsi_record_context',
   getEvidence: 'skill_rsi_get_evidence',
@@ -435,9 +436,27 @@ export function renderCockpitHtml(state) {
       const inbox = automation.hooks?.inbox || {};
       const files = inbox.latest?.changedFiles || [];
       return '<h2>Automation and context</h2>' + row('State', statusLabel(automation.status || state.status)) + row('Queued context', inbox.count || 0) +
-        (files.length ? '<p class="muted">Latest files: ' + files.map(esc).join(', ') + '</p>' : '<p class="muted">No queued Codex context.</p>') +
-        '<div class="actions"><button class="secondary" onclick="recordContext()">Record visible context</button></div>' +
+        hookContextDetailHtml(inbox) +
+        '<div class="actions">' +
+        '<button ' + (state.contextRunAction?.enabled ? '' : 'disabled') + ' onclick="postTool(tools.runWithContext, { projectName: \\'' + esc(state.selectedProject?.projectId || '') + '\\', loops: 1, mode: \\'agentic\\', evalMode: \\'real\\' })">' + esc(state.contextRunAction?.label || 'Run one loop with queued Codex context') + '</button>' +
+        '<button class="secondary" onclick="recordContext()">Record visible context</button>' +
+        '</div>' +
+        (state.contextRunAction?.disabledReason ? '<p class="muted">' + esc(state.contextRunAction.disabledReason) + '</p>' : '<p class="muted">This starts one model-backed loop and consumes the queued context as the next run premise.</p>') +
         '<h3>Schedule command</h3><pre>' + esc(automation.commands?.cron || '') + '</pre><h3>Codex hook command</h3><pre>' + esc(automation.commands?.codexHook || '') + '</pre>';
+    }
+    function hookContextDetailHtml(inbox) {
+      const latest = inbox.latest || null;
+      if (!latest) return '<p class="muted">No queued Codex context.</p>';
+      const files = latest.changedFiles || [];
+      return '<div class="panel" style="margin:10px 0; background: var(--panel-2)">' +
+        '<h3>Waiting Codex context</h3>' +
+        row('Latest event', latest.eventName || 'Codex event') +
+        row('Received', formatTime(latest.receivedAt)) +
+        (latest.reason ? row('Reason', latest.reason) : '') +
+        (latest.focusParameterIds?.length ? row('Focus', latest.focusParameterIds.join(', ')) : '') +
+        (latest.parameterIds?.length ? row('Parameters', latest.parameterIds.join(', ')) : '') +
+        (files.length ? '<p class="muted">Changed files: ' + files.map(file => '<code>' + esc(file) + '</code>').join(' ') + (latest.changedFileCount > files.length ? ' +' + esc(latest.changedFileCount - files.length) + ' more' : '') + '</p>' : '<p class="muted">No changed files reported.</p>') +
+      '</div>';
     }
     function exportHtml() {
       const projectId = state.selectedProject?.projectId || '';

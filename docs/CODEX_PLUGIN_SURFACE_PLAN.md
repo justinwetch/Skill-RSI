@@ -386,9 +386,9 @@ Goal: core local-app inspection parity inside native MCP-UI without embedding th
 
 ### Phase 5: Hook-informed and hook-autorun UX
 
-- Surface pending Codex context in the cockpit.
-- Allow manual "run with queued context."
-- Add explicit hook-autorun configuration only if it can use normal Skill RSI budget/lock/run machinery.
+- Surface pending Codex context in the MCP-UI console.
+- Allow an explicit manual "run one loop with queued context" action.
+- Keep hook autorun as future work unless it can use normal Skill RSI budget/lock/run machinery.
 
 Goal: Codex activity can naturally feed RSI without making hooks opaque execution hosts.
 

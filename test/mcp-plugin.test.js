@@ -41,6 +41,7 @@ test('Skill RSI plugin validates and registers expected MCP tools', async () => 
     'skill_rsi_progress',
     'skill_rsi_record_context',
     'skill_rsi_run_next',
+    'skill_rsi_run_with_context',
   ].sort());
 });
 
@@ -124,6 +125,42 @@ test('MCP handlers create, inspect, run, queue context, and export projects', as
   assert.equal(summaryWithContext.automation.hooks.inbox.count, 1);
   assert.deepEqual(summaryWithContext.automation.hooks.inbox.latest.changedFiles, ['SKILL.md', 'references/notes.md']);
 
+  const contextRun = await handlers.skill_rsi_run_with_context({
+    projectName: 'MCP Project',
+    loops: 1,
+    mode: 'mock',
+    evalMode: 'mock',
+  });
+  assert.equal(contextRun.action, 'context_run_completed');
+  assert.equal(contextRun.consumedHookEvents, 1);
+  assert.equal(contextRun.hookContext.eventCount, 1);
+  assert.deepEqual(contextRun.hookContext.changedFiles, ['SKILL.md', 'references/notes.md']);
+  assert.equal(contextRun.completedRunCount, 1);
+  assert.equal(contextRun.startsModelBackedWork, false);
+
+  const summaryAfterContextRun = await handlers.skill_rsi_get_next_loop_plan({ projectName: 'MCP Project' });
+  assert.equal(summaryAfterContextRun.automation.hooks.inbox.count, 0);
+  assert.equal(summaryAfterContextRun.automation.hooks.processed.count, 1);
+
+  await handlers.skill_rsi_record_context({
+    projectName: 'MCP Project',
+    eventName: 'CodexStop',
+    reason: 'Budget capped context.',
+    changedFiles: ['budget.md'],
+  });
+  const skippedContextRun = await handlers.skill_rsi_run_with_context({
+    projectName: 'MCP Project',
+    mode: 'mock',
+    evalMode: 'mock',
+    maxRuns: 0,
+  });
+  assert.equal(skippedContextRun.action, 'context_skipped');
+  assert.equal(skippedContextRun.consumedHookEvents, 1);
+  assert.equal(skippedContextRun.completedRunCount, 0);
+
+  const summaryAfterSkip = await handlers.skill_rsi_get_next_loop_plan({ projectName: 'MCP Project' });
+  assert.equal(summaryAfterSkip.automation.hooks.skipped.count, 1);
+
   const run = await handlers.skill_rsi_run_next({
     projectName: 'MCP Project',
     loops: 1,
@@ -132,12 +169,12 @@ test('MCP handlers create, inspect, run, queue context, and export projects', as
   });
   assert.equal(run.action, 'run_completed');
   assert.equal(run.completedRunCount, 1);
-  assert.equal(run.runCount, 1);
+  assert.equal(run.runCount, 2);
   assert.equal(run.startsModelBackedWork, false);
 
   const progressAfterRun = await handlers.skill_rsi_progress({ projectName: 'MCP Project' });
   assert.equal(progressAfterRun.status, 'completed');
-  assert.equal(progressAfterRun.runNumber, 1);
+  assert.equal(progressAfterRun.runNumber, 2);
 
   const exportDir = path.join(cwd, 'exported-champion');
   const exported = await handlers.skill_rsi_export_champion({
@@ -179,10 +216,13 @@ test('cockpit state and HTML handle empty, missing, and project states', async (
   assert.equal(projectState.runAction.label, 'Run target batch (5 loops)');
   assert.equal(projectState.actions.refresh.toolName, 'skill_rsi_open');
   assert.equal(projectState.actions.runTargetBatch.params.loops, 5);
+  assert.equal(projectState.contextRunAction.label, 'Run one loop with queued Codex context');
+  assert.equal(projectState.actions.runWithContext.toolName, 'skill_rsi_run_with_context');
   const projectHtml = renderCockpitHtml(projectState);
   assert.match(projectHtml, /Run target batch \(5 loops\)/);
   assert.match(projectHtml, /Latest evidence/);
   assert.match(projectHtml, /Automation and context/);
+  assert.match(projectHtml, /skill_rsi_run_with_context/);
   assert.match(projectHtml, /Detailed Data/);
 });
 

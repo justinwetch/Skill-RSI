@@ -1,6 +1,6 @@
 # Codex Hooks
 
-Skill RSI treats Codex hooks as deterministic event capture, not as a place to run model-backed improvement loops. The hook entrypoint records Codex stdin JSON into a project queue. A later manual run, cron invocation, or LaunchAgent invocation decides whether a Skill RSI loop should run.
+Skill RSI treats Codex hooks as deterministic event capture, not as a place to run model-backed improvement loops. The hook entrypoint records Codex stdin JSON into a project queue. A later manual run, MCP console action, cron invocation, or LaunchAgent invocation decides whether a Skill RSI loop should run.
 
 Official references:
 
@@ -91,7 +91,7 @@ node src/cli.js continuous ux-design --consume-hooks ...
 | `processing -> inbox` | A stale processing event was reclaimed after 30 minutes while the project was unlocked. |
 | `processing -> inbox` | A newly claimed event was requeued because another run already held `run.lock`. |
 
-Manual and scheduled invocations claim all current `inbox` events as one hook-signal batch. `--max-new-runs 1` caps a scheduler tick to one new RSI loop; it does not create one loop per hook event.
+Manual, MCP console, and scheduled invocations claim all current `inbox` events as one hook-signal batch. The MCP console's "Run one loop with queued Codex context" action starts at most one loop. `--max-new-runs 1` caps a scheduler tick to one new RSI loop; it does not create one loop per hook event.
 
 Reliability behavior:
 

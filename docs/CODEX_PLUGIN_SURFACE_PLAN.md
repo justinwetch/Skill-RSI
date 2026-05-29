@@ -318,15 +318,15 @@ The planner should receive this as hook context and decide whether it changes th
 
 ## Visual evidence
 
-For code + visuals projects, MCP-UI can show compact screenshot thumbnails and result summaries. The local app remains the richer screenshot viewer.
+For code + visuals projects, MCP-UI can show screenshot thumbnails, render status, prompt-level summaries, and full-size embedded image inspection. The local app remains useful for longer evidence sessions, but ordinary screenshot inspection should not require leaving the plugin console.
 
 MCP-UI visual evidence should include:
 
 - Winner.
 - Render status.
 - Viewport labels.
-- Small screenshot previews where host/resource support allows.
-- Link or action to open the full app for detailed image inspection.
+- Screenshot previews where host/resource support allows.
+- Full-size embedded image viewing when screenshots can be safely read from `.skill-rsi` artifacts.
 
 Do not make MCP-UI the only way to inspect visual evidence.
 
@@ -375,14 +375,14 @@ Goal: Codex can operate Skill RSI through tools instead of brittle command sugge
 
 Goal: a user can use the common Skill RSI flow from inside a host that supports MCP-UI.
 
-### Phase 4: Evidence and visual panels
+### Phase 4: Native evidence console
 
-- Add focused evidence views reachable from the cockpit.
-- Show prompt-level summaries.
-- Show screenshot thumbnails for code + visuals.
-- Link to the local app for full inspection.
+- Extend `skill_rsi_open` into view-aware console navigation.
+- Add history, detailed evidence, skill package, and automation views.
+- Show prompt-level scores, judge reasoning, outputs, and visual screenshots.
+- Add read tools for run detail, run comparison, skill content, and evidence fallback.
 
-Goal: enough embedded evidence to trust the latest run without duplicating the full app.
+Goal: core local-app inspection parity inside native MCP-UI without embedding the local HTTP app.
 
 ### Phase 5: Hook-informed and hook-autorun UX
 

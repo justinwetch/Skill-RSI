@@ -20,14 +20,14 @@ Do not describe human approval as part of the default RSI loop. The user sets go
 
 ## Current Surfaces
 
-This plugin provides a Skill RSI operator skill, a local MCP control plane, and a guided MCP-UI cockpit through `skill_rsi_open` where the host supports MCP Apps/UI rendering.
+This plugin provides a Skill RSI operator skill, a local MCP control plane, and a native MCP-UI console through `skill_rsi_open` where the host supports MCP Apps/UI rendering.
 
 Use the existing surfaces:
 
 - Local app: best for project setup, watching live runs, reviewing evidence, viewing visual screenshots, and inspecting skill packages.
 - CLI: best for reproducible local operation, project creation, baseline import, progress checks, scheduling, hooks, and export.
 - MCP tools: best for structured Codex operation of common project actions without shell-command guessing.
-- MCP-UI cockpit: best for guided embedded project setup, current state, next loop plan, target-batch runs, context queueing, and champion export when host support is available.
+- MCP-UI console: best for guided embedded project setup, current state, history, detailed run evidence, visual screenshots, skill package inspection, target-batch runs, context queueing, and champion export when host support is available.
 - Documentation: use `docs/HOW_IT_WORKS.md`, `docs/SCHEDULING.md`, `docs/CODEX_HOOKS.md`, and `docs/CODEX_PLUGIN_SURFACE_PLAN.md` as source-of-truth context.
 
 Prefer MCP tools for supported project operations. Prefer exact Skill RSI CLI commands over invented workflows when no MCP tool covers the task. If you are uncertain whether a command exists, inspect `node src/cli.js --help` before suggesting it.
@@ -38,7 +38,7 @@ Prefer MCP tools for supported project operations. Prefer exact Skill RSI CLI co
 - Do not run full RSI loops from a Codex hook process.
 - Treat hooks as context capture unless the project later implements explicit hook-autorun through normal Skill RSI queue, lock, budget, and run-recording machinery.
 - Keep `SKILL_RSI_PROJECT` explicit in hook setup; never infer the project from the current working directory.
-- Do not claim apps connector, plugin autorun, detailed embedded evidence panels, or full MCP-UI visual screenshot inspection exist until the repository actually implements them.
+- Do not claim apps connector or plugin autorun exist until the repository actually implements them.
 - Do not invent project state. Use the app, CLI, or project files to inspect current truth.
 - Preserve Skill RSI terminology: champion, challenger, cold-start duel, next loop plan, prompt bank, ontology, deconstruction, promotion gate.
 
@@ -47,17 +47,21 @@ Prefer MCP tools for supported project operations. Prefer exact Skill RSI CLI co
 When available, prefer these tools for supported actions:
 
 - `skill_rsi_doctor`: inspect local readiness without exposing secrets.
-- `skill_rsi_open`: open the guided cockpit or return a text fallback.
+- `skill_rsi_open`: open the native console or return a text fallback.
 - `skill_rsi_list_projects`: list local projects.
 - `skill_rsi_create_project`: create a scratch or baseline project.
 - `skill_rsi_run_next`: start bounded manual loop execution.
 - `skill_rsi_progress`: inspect run progress.
+- `skill_rsi_get_run_detail`: read detailed run artifacts.
+- `skill_rsi_get_run_comparison`: read run comparison metadata.
+- `skill_rsi_get_skill_content`: read selected package files.
+- `skill_rsi_get_evidence`: read prompt-level evaluation evidence.
 - `skill_rsi_get_next_loop_plan`: read the current next-loop premise.
 - `skill_rsi_get_champion`: read champion metadata and `SKILL.md`.
 - `skill_rsi_export_champion`: export the champion package.
 - `skill_rsi_record_context`: queue explicit context without running a loop.
 
-Tell the user before using `skill_rsi_run_next` or the cockpit's run action, because either can start model-backed work depending on mode and eval settings.
+Tell the user before using `skill_rsi_run_next` or the console's run action, because either can start model-backed work depending on mode and eval settings.
 
 ## Useful CLI Shapes
 

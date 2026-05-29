@@ -8,13 +8,12 @@ Current plugin shell includes:
 - One Skill RSI operator skill for Codex.
 - A Codex `Stop` hook example for queueing project context.
 - A local stdio MCP server with structured Skill RSI control tools.
-- A guided MCP-UI cockpit through `skill_rsi_open` for hosts that render MCP Apps/UI resources.
+- A native MCP-UI console through `skill_rsi_open` for hosts that render MCP Apps/UI resources.
 
 This plugin does not yet include:
 
 - Apps connector metadata.
 - Automatic hook-triggered RSI execution.
-- Detailed embedded evidence panels or full visual screenshot inspection.
 - Personal marketplace mutation.
 
 ## Install Locally
@@ -43,7 +42,7 @@ node plugins/skill-rsi/mcp/server.mjs
 
 The server exposes tools for project listing, creation, progress, next-loop plans, champion reads, champion export, explicit context queueing, and bounded manual loop execution.
 
-Use `skill_rsi_open` to open the guided cockpit. It returns a text fallback in every host and an embedded MCP-UI resource in hosts that support MCP Apps/UI rendering. The cockpit can create/import projects, show current state, run the target loop batch, queue visible context, and export the champion through MCP tool calls.
+Use `skill_rsi_open` to open the native console. It returns a text fallback in every host and an embedded MCP-UI resource in hosts that support MCP Apps/UI rendering. The console can create/import projects, show current state, inspect history, read prompt-level evidence, view rendered screenshots, inspect skill packages, run the target loop batch, queue visible context, and export the champion through MCP tool calls.
 
 If the plugin is installed outside the repository layout, set `SKILL_RSI_ROOT` to the Skill RSI repository path so the MCP server can find the app services:
 

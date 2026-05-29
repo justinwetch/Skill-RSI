@@ -6,6 +6,7 @@ import path from 'node:path';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import {
+  buildEvidenceState,
   buildCockpitState,
   createSkillRsiMcpServer,
   createSkillRsiServices,
@@ -30,7 +31,11 @@ test('Skill RSI plugin validates and registers expected MCP tools', async () => 
     'skill_rsi_doctor',
     'skill_rsi_export_champion',
     'skill_rsi_get_champion',
+    'skill_rsi_get_evidence',
     'skill_rsi_get_next_loop_plan',
+    'skill_rsi_get_run_comparison',
+    'skill_rsi_get_run_detail',
+    'skill_rsi_get_skill_content',
     'skill_rsi_list_projects',
     'skill_rsi_open',
     'skill_rsi_progress',
@@ -178,7 +183,46 @@ test('cockpit state and HTML handle empty, missing, and project states', async (
   assert.match(projectHtml, /Run target batch \(5 loops\)/);
   assert.match(projectHtml, /Latest evidence/);
   assert.match(projectHtml, /Automation and context/);
-  assert.match(projectHtml, /Detailed prompt evidence and screenshot inspection stay in the local app/);
+  assert.match(projectHtml, /Detailed Data/);
+});
+
+test('evidence state embeds only safe Skill RSI screenshot artifacts', async () => {
+  const cwd = await fs.mkdtemp(path.join(os.tmpdir(), 'skill-rsi-mcp-evidence-'));
+  const artifactDir = path.join(cwd, '.skill-rsi', 'projects', 'visual-project', 'runs', 'run-001', 'eval', 'visual');
+  const safeShot = path.join(artifactDir, 'shot.png');
+  const unsafeShot = path.join(cwd, 'outside.png');
+  await fs.mkdir(artifactDir, { recursive: true });
+  await fs.writeFile(safeShot, Buffer.from('safe png bytes'));
+  await fs.writeFile(unsafeShot, Buffer.from('unsafe png bytes'));
+
+  const runDetail = stubRunDetailWithVisuals({ projectId: 'visual-project', runId: 'run-001', safeShot, unsafeShot });
+  const services = stubServices({
+    cwd,
+    projects: [stubProjectSummary({ projectId: 'visual-project' })],
+    runDetail,
+    runComparison: stubRunComparison({ projectId: 'visual-project', runId: 'run-001' }),
+  });
+  const handlers = createSkillRsiToolHandlers(services);
+  const evidence = await handlers.skill_rsi_get_evidence({ projectName: 'visual-project', runId: 'run-001' });
+  const visual = evidence.evaluations[0].visual;
+
+  assert.equal(visual.skillA.screenshots[0].embeddedImage.available, true);
+  assert.match(visual.skillA.screenshots[0].embeddedImage.dataUrl, /^data:image\/png;base64,/);
+  assert.equal(visual.skillB.screenshots[0].embeddedImage.available, false);
+  assert.equal(visual.skillB.screenshots[0].embeddedImage.reason, 'outside-artifact-root');
+
+  const html = renderCockpitHtml(await buildCockpitState({
+    services,
+    projectName: 'visual-project',
+    view: 'evidence',
+    runId: 'run-001',
+  }));
+  assert.match(html, /Detailed Data/);
+  assert.match(html, /data:image\/png;base64/);
+  assert.match(html, /outside-artifact-root/);
+
+  const directEvidence = await buildEvidenceState({ services, projectName: 'visual-project', runId: 'run-001' });
+  assert.equal(directEvidence.available, true);
 });
 
 test('MCP helpers resolve repo root and surface missing project errors clearly', async () => {
@@ -195,12 +239,15 @@ test('MCP helpers resolve repo root and surface missing project errors clearly',
 });
 
 function stubServices({
+  cwd = repoRoot,
   projects = [],
   progress = { schemaVersion: 1, status: 'none' },
   champion = { available: false, files: [] },
+  runDetail = null,
+  runComparison = null,
 } = {}) {
   return {
-    cwd: repoRoot,
+    cwd,
     env: {},
     checkVisualRunnerAvailability: async () => ({ available: false, error: 'not checked' }),
     recordHookEvent: async () => '/tmp/hook.json',
@@ -216,9 +263,84 @@ function stubServices({
       createProjectFromLocalInput: async () => ({ projectId: 'stub' }),
       readRunProgress: async () => progress,
       readProjectSummary: async ({ projectName }) => projects.find(project => project.projectId === projectName) || stubProjectSummary({ projectId: projectName }),
+      readRunDetail: async ({ projectName, runId = null }) => runDetail || stubRunDetail({ projectId: projectName, runId: runId || 'run-001' }),
+      readRunComparison: async ({ projectName, runId = null }) => runComparison || stubRunComparison({ projectId: projectName, runId: runId || 'run-001' }),
       readSkillContent: async () => champion,
     },
   };
+}
+
+function stubRunDetail({ projectId = 'stub', runId = 'run-001' } = {}) {
+  return {
+    schemaVersion: 1,
+    projectId,
+    runId,
+    run: { runId, runNumber: 1, status: 'completed' },
+    experimentPlan: { competitionMode: 'champion_challenge', experimentQuestion: 'Does the challenger improve trigger clarity?' },
+    evals: {
+      candidateDuel: null,
+      challenge: {
+        stats: { winner: 'skillA', scoreDelta: 2, skillAWins: 1, skillBWins: 0, ties: 0 },
+        criteria: [{ id: 'clarity', name: 'Clarity' }],
+        evaluations: [{
+          id: 'p1',
+          prompt: { text: 'Task: Improve a skill trigger.' },
+          judge: {
+            winner: 'skillA',
+            scoreA: 5,
+            scoreB: 3,
+            reasoning: 'The challenger is clearer.',
+            breakdown: { skillA: { clarity: 5 }, skillB: { clarity: 3 } },
+          },
+          results: {
+            a: { sourceSkill: 'skillA', content: 'Challenger output' },
+            b: { sourceSkill: 'skillB', content: 'Champion output' },
+          },
+        }],
+      },
+    },
+    recommendation: { decision: 'promote', confidence: 'high', reasoning: 'Promote challenger.' },
+    timeline: [{ timestamp: '2026-05-29T00:00:00.000Z', event: 'run.completed' }],
+  };
+}
+
+function stubRunComparison({ projectId = 'stub', runId = 'run-001' } = {}) {
+  return {
+    schemaVersion: 1,
+    projectId,
+    runId,
+    competitionMode: 'champion_challenge',
+    experimentQuestion: 'Does the challenger improve trigger clarity?',
+    focusParameterIds: ['p01-trigger'],
+    sides: {
+      champion: { available: true, strategy: 'Current champion', changedParameterIds: [] },
+      challenger: { available: true, strategy: 'Tighter trigger', changedParameterIds: ['p01-trigger'] },
+    },
+    evalSummary: {
+      challenge: { winner: 'skillA', scoreDelta: 2, wins: { skillA: 1, skillB: 0, ties: 0 } },
+    },
+  };
+}
+
+function stubRunDetailWithVisuals({ projectId, runId, safeShot, unsafeShot }) {
+  const detail = stubRunDetail({ projectId, runId });
+  detail.evals.challenge.evaluations[0].visual = {
+    skillA: {
+      status: 'complete',
+      screenshots: [{ viewport: 'desktop', width: 1440, height: 1000, path: safeShot, blank: false }],
+      blankScreenDetected: false,
+      error: null,
+    },
+    skillB: {
+      status: 'complete',
+      screenshots: [{ viewport: 'desktop', width: 1440, height: 1000, path: unsafeShot, blank: false }],
+      blankScreenDetected: false,
+      error: null,
+    },
+  };
+  detail.evals.challenge.evaluations[0].results.a.visual = detail.evals.challenge.evaluations[0].visual.skillA;
+  detail.evals.challenge.evaluations[0].results.b.visual = detail.evals.challenge.evaluations[0].visual.skillB;
+  return detail;
 }
 
 function stubProjectSummary({ projectId = 'stub', targetIterations = 3 } = {}) {

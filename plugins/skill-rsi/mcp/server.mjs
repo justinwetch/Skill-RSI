@@ -46,21 +46,26 @@ export async function createSkillRsiServices({ repoRoot = null, env = process.en
     visualRunner,
     hooks,
     store,
+    paths,
   ] = await Promise.all([
     importLib(cwd, 'src/lib/ui-api.js'),
     importLib(cwd, 'src/lib/run-loop.js'),
     importLib(cwd, 'src/lib/visual-runner.js'),
     importLib(cwd, 'src/lib/hooks.js'),
     importLib(cwd, 'src/lib/store.js'),
+    importLib(cwd, 'src/lib/paths.js'),
   ]);
 
   return {
     cwd,
     env,
     uiApi,
+    paths,
     runProject: runLoop.runProject,
     checkVisualRunnerAvailability: visualRunner.checkVisualRunnerAvailability,
     recordHookEvent: hooks.recordHookEvent,
+    readJson: store.readJson,
+    pathExists: store.pathExists,
     writeJson: store.writeJson,
   };
 }
@@ -153,6 +158,10 @@ export function createSkillRsiToolHandlers(services) {
       return buildCockpitState({
         services,
         projectName: args.projectName || null,
+        view: args.view || 'overview',
+        runId: args.runId || null,
+        skillSource: args.skillSource || null,
+        filePath: args.filePath || null,
       });
     },
 
@@ -243,6 +252,39 @@ export function createSkillRsiToolHandlers(services) {
       });
     },
 
+    async skill_rsi_get_run_detail(args) {
+      return services.uiApi.readRunDetail({
+        cwd: services.cwd,
+        projectName: args.projectName,
+        runId: args.runId || null,
+      });
+    },
+
+    async skill_rsi_get_run_comparison(args) {
+      return services.uiApi.readRunComparison({
+        cwd: services.cwd,
+        projectName: args.projectName,
+        runId: args.runId || null,
+      });
+    },
+
+    async skill_rsi_get_skill_content(args) {
+      return services.uiApi.readSkillContent({
+        cwd: services.cwd,
+        projectName: args.projectName,
+        source: args.source || 'champion',
+        runId: args.runId || null,
+      });
+    },
+
+    async skill_rsi_get_evidence(args) {
+      return buildEvidenceState({
+        services,
+        projectName: args.projectName,
+        runId: args.runId || null,
+      });
+    },
+
     async skill_rsi_get_next_loop_plan(args) {
       const summary = await services.uiApi.readProjectSummary({
         cwd: services.cwd,
@@ -328,7 +370,36 @@ function slugifyProjectName(value) {
   return slug || null;
 }
 
-export async function buildCockpitState({ services, projectName = null }) {
+export async function buildCockpitState({
+  services,
+  projectName = null,
+  view = 'overview',
+  runId = null,
+  skillSource = null,
+  filePath = null,
+}) {
+  return buildConsoleState({ services, projectName, view, runId, skillSource, filePath });
+}
+
+function normalizeView(view) {
+  return ['overview', 'history', 'evidence', 'skill', 'automation'].includes(view) ? view : 'overview';
+}
+
+function normalizeSkillSource(source, competitionMode) {
+  const allowed = competitionMode === 'cold_start_duel'
+    ? ['champion', 'candidate-a', 'candidate-b']
+    : ['champion', 'challenger'];
+  return allowed.includes(source) ? source : 'champion';
+}
+
+export async function buildConsoleState({
+  services,
+  projectName = null,
+  view = 'overview',
+  runId = null,
+  skillSource = null,
+  filePath = null,
+}) {
   const projects = await services.uiApi.readProjectSummaries({ cwd: services.cwd });
   const requestedProjectId = slugifyProjectName(projectName);
   const selectedProject = requestedProjectId
@@ -336,12 +407,14 @@ export async function buildCockpitState({ services, projectName = null }) {
     : projects[0] || null;
   const selectedProjectMissing = Boolean(requestedProjectId && !selectedProject);
   const supportedModels = services.uiApi.UI_OPENAI_MODELS || SUPPORTED_MODELS;
+  const selectedView = normalizeView(view);
 
   if (!selectedProject) {
     return {
       schemaVersion: 1,
       kind: 'skill-rsi-cockpit',
       status: selectedProjectMissing ? 'missing' : 'empty',
+      view: selectedView,
       repoRoot: services.cwd,
       requestedProjectId,
       selectedProjectMissing,
@@ -351,6 +424,11 @@ export async function buildCockpitState({ services, projectName = null }) {
       champion: { available: false },
       nextLoopPremise: null,
       latestEvidence: null,
+      runDetail: null,
+      comparison: null,
+      evidence: null,
+      skill: null,
+      skillCompare: null,
       automation: null,
       runAction: null,
       supportedOutputTypes: SUPPORTED_OUTPUT_TYPES,
@@ -369,11 +447,44 @@ export async function buildCockpitState({ services, projectName = null }) {
   const status = progress?.status === 'running'
     ? 'running'
     : summary.automation?.status || (progress?.status === 'completed' ? 'completed' : 'manual');
+  const latestRunId = runId || summary.state?.lastRunId || progress?.runId || null;
+  const [runDetail, comparison] = latestRunId ? await Promise.all([
+    services.uiApi.readRunDetail({ cwd: services.cwd, projectName: selectedProject.projectId, runId: latestRunId }).catch(error => ({ error: { message: error.message } })),
+    services.uiApi.readRunComparison({ cwd: services.cwd, projectName: selectedProject.projectId, runId: latestRunId }).catch(error => ({ error: { message: error.message } })),
+  ]) : [null, null];
+  const evidence = latestRunId && !runDetail?.error
+    ? await buildEvidenceState({
+      services,
+      projectName: selectedProject.projectId,
+      runId: latestRunId,
+      detail: runDetail,
+      comparison,
+    }).catch(error => ({ error: { message: error.message } }))
+    : null;
+  const competitionMode = comparison?.competitionMode || runDetail?.experimentPlan?.competitionMode || 'cold_start_duel';
+  const selectedSkillSource = normalizeSkillSource(skillSource, competitionMode);
+  const skill = selectedView === 'skill'
+    ? await services.uiApi.readSkillContent({
+      cwd: services.cwd,
+      projectName: selectedProject.projectId,
+      source: selectedSkillSource,
+      runId: latestRunId,
+    }).catch(error => ({ error: { message: error.message }, available: false, files: [] }))
+    : null;
+  const skillCompare = selectedView === 'skill' && latestRunId
+    ? await buildSkillCompareState({
+      services,
+      projectName: selectedProject.projectId,
+      runId: latestRunId,
+      competitionMode,
+    }).catch(error => ({ error: { message: error.message } }))
+    : null;
 
   return {
     schemaVersion: 1,
     kind: 'skill-rsi-cockpit',
     status,
+    view: selectedView,
     repoRoot: services.cwd,
     requestedProjectId,
     selectedProjectMissing: false,
@@ -392,6 +503,14 @@ export async function buildCockpitState({ services, projectName = null }) {
       latestTrajectory: summary.history?.recentTrajectory?.at?.(-1) || null,
       promptBank: summary.promptBank || null,
     },
+    selectedRunId: latestRunId,
+    selectedSkillSource,
+    selectedFilePath: filePath || null,
+    runDetail,
+    comparison,
+    evidence,
+    skill,
+    skillCompare,
     automation: summary.automation || null,
     runAction: {
       label: `Run target batch (${targetLoops} ${targetLoops === 1 ? 'loop' : 'loops'})`,
@@ -412,13 +531,31 @@ export async function buildCockpitState({ services, projectName = null }) {
   };
 }
 
+async function buildSkillCompareState({ services, projectName, runId, competitionMode }) {
+  const sources = competitionMode === 'cold_start_duel'
+    ? { aSource: 'candidate-a', bSource: 'candidate-b', aLabel: 'Candidate A', bLabel: 'Candidate B' }
+    : { aSource: 'champion', bSource: 'challenger', aLabel: 'Champion', bLabel: 'Challenger' };
+  const [a, b] = await Promise.all([
+    services.uiApi.readSkillContent({ cwd: services.cwd, projectName, source: sources.aSource, runId }),
+    services.uiApi.readSkillContent({ cwd: services.cwd, projectName, source: sources.bSource, runId }),
+  ]);
+  return {
+    schemaVersion: 1,
+    runId,
+    competitionMode,
+    ...sources,
+    a,
+    b,
+  };
+}
+
 function buildCockpitCapabilities() {
   return {
     mcpTools: true,
     mcpUi: true,
     uiActions: true,
-    detailedEvidencePanels: false,
-    visualScreenshotPanels: false,
+    detailedEvidencePanels: true,
+    visualScreenshotPanels: true,
     hookAutorun: false,
   };
 }
@@ -454,6 +591,103 @@ function buildCockpitActions({ project, targetLoops }) {
   };
 }
 
+export async function buildEvidenceState({ services, projectName, runId = null, detail = null, comparison = null }) {
+  const resolvedDetail = detail || await services.uiApi.readRunDetail({
+    cwd: services.cwd,
+    projectName,
+    runId,
+  });
+  const resolvedComparison = comparison || await services.uiApi.readRunComparison({
+    cwd: services.cwd,
+    projectName,
+    runId,
+  });
+  const competitionMode = resolvedComparison?.competitionMode || resolvedDetail?.experimentPlan?.competitionMode || 'cold_start_duel';
+  const evalRun = competitionMode === 'cold_start_duel'
+    ? resolvedDetail.evals?.candidateDuel
+    : resolvedDetail.evals?.challenge;
+  const labels = competitionMode === 'cold_start_duel'
+    ? { a: 'Candidate A', b: 'Candidate B', sourceA: 'candidate-a', sourceB: 'candidate-b' }
+    : { a: 'Challenger', b: 'Champion', sourceA: 'challenger', sourceB: 'champion' };
+  const criteria = (evalRun?.criteria || []).filter(criterion => !String(criterion.id || '').startsWith('parameter_'));
+  const evaluations = [];
+  for (const evaluation of evalRun?.evaluations || []) {
+    evaluations.push(await embedEvaluationVisuals({
+      services,
+      evaluation,
+    }));
+  }
+  return {
+    schemaVersion: 1,
+    projectId: resolvedDetail.projectId,
+    runId: resolvedDetail.runId,
+    competitionMode,
+    experimentQuestion: resolvedComparison?.experimentQuestion || resolvedDetail.experimentPlan?.experimentQuestion || null,
+    focusParameterIds: resolvedComparison?.focusParameterIds || resolvedDetail.experimentPlan?.focusParameterIds || [],
+    labels,
+    stats: evalRun?.stats || null,
+    criteria,
+    evaluations,
+    recommendation: resolvedDetail.recommendation || null,
+    sides: resolvedComparison?.sides || null,
+    available: Boolean(evalRun),
+  };
+}
+
+async function embedEvaluationVisuals({ services, evaluation }) {
+  const copy = JSON.parse(JSON.stringify(evaluation));
+  const visualEntries = [
+    copy.visual?.skillA,
+    copy.visual?.skillB,
+    ...Object.values(copy.results || {}).map(result => result?.visual),
+  ].filter(Boolean);
+  for (const visual of visualEntries) {
+    await embedScreenshots({ services, visual });
+  }
+  return copy;
+}
+
+async function embedScreenshots({ services, visual }) {
+  for (const screenshot of visual.screenshots || []) {
+    screenshot.embeddedImage = await safeImageDataUrl({ services, filePath: screenshot.path });
+  }
+}
+
+async function safeImageDataUrl({ services, filePath }) {
+  if (!filePath) return { available: false, reason: 'missing-path' };
+  const allowedExtensions = new Map([
+    ['.png', 'image/png'],
+    ['.jpg', 'image/jpeg'],
+    ['.jpeg', 'image/jpeg'],
+    ['.webp', 'image/webp'],
+  ]);
+  const extension = path.extname(filePath).toLowerCase();
+  const mimeType = allowedExtensions.get(extension);
+  if (!mimeType) return { available: false, reason: 'unsupported-image-type' };
+  try {
+    const artifactRoot = path.join(services.cwd, '.skill-rsi');
+    const [realArtifactPath, realArtifactRoot] = await Promise.all([
+      fs.realpath(path.resolve(filePath)),
+      fs.realpath(artifactRoot),
+    ]);
+    if (!realArtifactPath.startsWith(`${realArtifactRoot}${path.sep}`)) {
+      return { available: false, reason: 'outside-artifact-root' };
+    }
+    const stat = await fs.stat(realArtifactPath);
+    if (!stat.isFile()) return { available: false, reason: 'not-a-file' };
+    if (stat.size > 5 * 1024 * 1024) return { available: false, reason: 'image-too-large', size: stat.size };
+    const bytes = await fs.readFile(realArtifactPath);
+    return {
+      available: true,
+      mimeType,
+      size: stat.size,
+      dataUrl: `data:${mimeType};base64,${bytes.toString('base64')}`,
+    };
+  } catch (error) {
+    return { available: false, reason: error.code === 'ENOENT' ? 'missing-file' : 'read-failed' };
+  }
+}
+
 function renderCockpitFallback(state) {
   if (!state.selectedProject) {
     return [
@@ -479,7 +713,7 @@ function renderCockpitFallback(state) {
 
 function createCockpitResource(state) {
   return createUIResource({
-    uri: `ui://skill-rsi/cockpit/${state.selectedProject?.projectId || state.requestedProjectId || 'home'}`,
+    uri: `ui://skill-rsi/cockpit/${state.selectedProject?.projectId || state.requestedProjectId || 'home'}/${state.view || 'overview'}/${state.selectedRunId || 'latest'}`,
     content: {
       type: 'rawHtml',
       htmlString: renderCockpitHtml(state),
@@ -524,6 +758,10 @@ export async function createSkillRsiMcpServer({ services = null } = {}) {
     description: 'Open the guided Skill RSI MCP-UI cockpit where supported and return a text fallback everywhere.',
     inputSchema: {
       projectName: z.string().optional(),
+      view: z.enum(['overview', 'history', 'evidence', 'skill', 'automation']).optional(),
+      runId: z.string().optional(),
+      skillSource: z.enum(['champion', 'challenger', 'candidate-a', 'candidate-b']).optional(),
+      filePath: z.string().optional(),
     },
   }, async args => {
     const data = await handlers.skill_rsi_open(args || {});
@@ -581,6 +819,43 @@ export async function createSkillRsiMcpServer({ services = null } = {}) {
       projectName: z.string().min(1),
     },
   }, handlers.skill_rsi_progress);
+
+  registerTool(server, handlers, 'skill_rsi_get_run_detail', {
+    title: 'Get Run Detail',
+    description: 'Read detailed run artifacts, timeline, recommendation, and eval references for a project run.',
+    inputSchema: {
+      projectName: z.string().min(1),
+      runId: z.string().optional(),
+    },
+  }, handlers.skill_rsi_get_run_detail);
+
+  registerTool(server, handlers, 'skill_rsi_get_run_comparison', {
+    title: 'Get Run Comparison',
+    description: 'Read champion/challenger or Candidate A/B comparison metadata for a project run.',
+    inputSchema: {
+      projectName: z.string().min(1),
+      runId: z.string().optional(),
+    },
+  }, handlers.skill_rsi_get_run_comparison);
+
+  registerTool(server, handlers, 'skill_rsi_get_skill_content', {
+    title: 'Get Skill Content',
+    description: 'Read selected champion, challenger, or cold-start candidate package files.',
+    inputSchema: {
+      projectName: z.string().min(1),
+      source: z.enum(['champion', 'challenger', 'candidate-a', 'candidate-b']).default('champion'),
+      runId: z.string().optional(),
+    },
+  }, handlers.skill_rsi_get_skill_content);
+
+  registerTool(server, handlers, 'skill_rsi_get_evidence', {
+    title: 'Get Run Evidence',
+    description: 'Read prompt-level evaluation evidence, judge reasoning, outputs, and visual artifact metadata for a run.',
+    inputSchema: {
+      projectName: z.string().min(1),
+      runId: z.string().optional(),
+    },
+  }, handlers.skill_rsi_get_evidence);
 
   registerTool(server, handlers, 'skill_rsi_get_next_loop_plan', {
     title: 'Get Next Loop Plan',

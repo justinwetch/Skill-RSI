@@ -18,7 +18,7 @@ Relevant platform references:
 - [MCP-UI Protocol Details](https://mcpui.dev/guide/protocol-details)
 - [MCP-UI Supported Hosts](https://mcpui.dev/guide/supported-hosts)
 
-Important constraint: MCP tools are broadly useful in Codex. MCP-UI rendering is host-dependent. The plugin surface must degrade cleanly to text/tool output if a host does not render MCP Apps UI resources.
+Important constraint: MCP tools are broadly useful in Codex. MCP-UI rendering is host-dependent and, in Codex desktop today, not robust enough to be the default Skill RSI UI. The plugin should default to opening the local web app in the Codex sidebar, while MCP-UI remains an optional embedded cockpit for hosts that render MCP Apps UI resources reliably.
 
 ## Product thesis
 
@@ -29,7 +29,8 @@ That makes Codex Plugins a natural surface for Skill RSI:
 - A plugin can distribute Skill RSI's Codex-facing instructions and tools.
 - MCP tools can let Codex operate Skill RSI without fragile shell-command prompting.
 - Hooks can queue Codex session context into Skill RSI projects.
-- MCP-UI can provide a compact embedded cockpit for project creation, loop control, progress, evidence, and champion export.
+- The local web app can provide the default guided cockpit inside Codex's browser/sidebar.
+- MCP-UI can provide an optional compact embedded cockpit for project creation, loop control, progress, evidence, and champion export where host support is reliable.
 
 The goal is not to make users memorize tool names. The goal is:
 
@@ -73,7 +74,7 @@ Improve my frontend design skill.
 Use this skill as a baseline and run three improvement loops.
 ```
 
-Codex should then open or drive a guided Skill RSI cockpit.
+Codex should then open the local Skill RSI web app in the sidebar, or drive a guided Skill RSI cockpit where the host reliably supports MCP-UI.
 
 The cockpit is state-driven. It shows the next valid action based on the project state:
 
@@ -81,7 +82,7 @@ The cockpit is state-driven. It shows the next valid action based on the project
 | --- | --- |
 | No projects | Create or import first skill. |
 | Draft project | Confirm goal, output type, model, and loop count. |
-| No champion | Run first loop to create version 1. |
+| No champion | Start an iteration to create version 1. |
 | Champion exists | Show next loop plan and run controls. |
 | Hook context queued | Show pending Codex context and offer to run with it. |
 | Run active | Show live stage, timeline, and current output. |
@@ -168,12 +169,14 @@ Initial tools:
 | Tool | Purpose |
 | --- | --- |
 | `skill_rsi_doctor` | Report local readiness, API key presence, model defaults, visual runner availability, and plugin/MCP status. |
-| `skill_rsi_open` | Return the cockpit UI where supported and a text fallback everywhere. |
-| `skill_rsi_list_projects` | List projects and concise state. |
-| `skill_rsi_create_project` | Create a scratch or baseline project using the same logic as the UI/CLI. Baseline import is handled through this tool's `baselinePath`. |
-| `skill_rsi_run_next` | Start bounded manual loop execution through existing run machinery. |
-| `skill_rsi_run_with_context` | Consume queued Codex context and start one explicit hook-informed loop. |
-| `skill_rsi_progress` | Read current/latest run progress. |
+| `skill_rsi_open` | Return the local app launch URL and server readiness without reading project state. |
+| `skill_rsi_cockpit` | Return the optional MCP-UI cockpit for explicit existing-project inspection. |
+| `skill_rsi_list_projects` | List projects and concise state only after explicit existing-project intent. |
+| `skill_rsi_prepare_project` | Prepare a fresh setup draft and return a `?create=1&draft=<id>` local-app URL. This is the default for plain Codex "improve this skill" requests so setup choices stay visible. |
+| `skill_rsi_create_project` | Create a fresh scratch or baseline project using the same logic as the UI/CLI. Baseline import is handled through this tool's `baselinePath`; collisions use suffixed fresh names. Use only for explicit direct-create requests. |
+| `skill_rsi_run_next` | Start bounded manual loop execution through existing run machinery only after explicit run intent. |
+| `skill_rsi_run_with_context` | Consume queued Codex context and start one explicit hook-informed loop only after explicit run intent. |
+| `skill_rsi_progress` | Read current/latest run progress only after explicit existing-project intent. |
 | `skill_rsi_get_run_detail` | Return detailed run artifacts, timeline, recommendation, and eval references. |
 | `skill_rsi_get_run_comparison` | Return champion/challenger or Candidate A/B comparison metadata. |
 | `skill_rsi_get_skill_content` | Return selected champion, challenger, or cold-start candidate package files. |
@@ -188,6 +191,7 @@ Tool rules:
 - Tools should call existing project creation, run, read, export, hook, and progress services rather than duplicating logic.
 - Every UI-backed tool must also return a useful text fallback.
 - Mutating tools must be explicit about project id, budget, and whether a model-backed run will start.
+- Project-state read tools require explicit existing-project intent; run tools require explicit run intent.
 - Tool outputs should be compact by default and support detail expansion through follow-up calls.
 
 ## MCP-UI layer
@@ -197,7 +201,7 @@ MCP-UI should be one guided cockpit first, not a set of disconnected cards.
 Primary UI-backed tool:
 
 ```text
-skill_rsi_open
+skill_rsi_cockpit
 ```
 
 Primary resource:
@@ -210,7 +214,7 @@ The cockpit should support the happy path end to end:
 
 1. Select existing project or create/import a new one.
 2. Configure goal, output artifact, model, and target loops.
-3. Start the first loop or next loop.
+3. Start the first or next iteration.
 4. Watch current run state.
 5. See champion status.
 6. Read next loop plan.
@@ -241,8 +245,8 @@ Primary state
   Champion vN / no champion / running / failed / at ceiling
 
 Next action
-  Run first loop
-  Run next loop(s)
+  Start iteration
+  Run next iteration(s)
   Continue with queued Codex context
   Export champion
   Open full app
@@ -372,7 +376,7 @@ Goal: Codex can operate Skill RSI through tools instead of brittle command sugge
 
 ### Phase 3: Guided cockpit
 
-- Add `skill_rsi_open`.
+- Add `skill_rsi_open` for local app launch and `skill_rsi_cockpit` for optional MCP-UI.
 - Render one MCP-UI cockpit with text fallback.
 - Support project picker, current state, next action, next loop plan, latest evidence, and champion export.
 - Keep implementation lightweight and mostly server-rendered unless complexity demands a bundled UI.
@@ -381,7 +385,7 @@ Goal: a user can use the common Skill RSI flow from inside a host that supports 
 
 ### Phase 4: Native evidence console
 
-- Extend `skill_rsi_open` into view-aware console navigation.
+- Extend `skill_rsi_cockpit` into view-aware console navigation.
 - Add history, detailed evidence, skill package, and automation views.
 - Show prompt-level scores, judge reasoning, outputs, and visual screenshots.
 - Add read tools for run detail, run comparison, skill content, and evidence fallback.
@@ -424,7 +428,8 @@ Goal: a clean install path for users outside this development checkout.
 
 ### MCP-UI
 
-- `skill_rsi_open` returns useful text fallback.
+- `skill_rsi_open` returns a local app launch URL without reading project state.
+- `skill_rsi_cockpit` returns useful text fallback.
 - UI resource renders in an MCP-UI host.
 - Cockpit state matches project read model.
 - Buttons call MCP tools rather than shell commands.

@@ -1,17 +1,26 @@
 #!/usr/bin/env node
 
 import fs from 'node:fs/promises';
+import http from 'node:http';
+import { createRequire } from 'node:module';
 import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
-import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
-import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
-import { createUIResource } from '@mcp-ui/server';
-import { z } from 'zod';
 import { renderCockpitHtml } from './ui/cockpit.html.js';
 
 const DEFAULT_MODEL = 'gpt-5.4-mini';
 const SUPPORTED_OUTPUT_TYPES = ['text', 'code', 'code_visual'];
 const SUPPORTED_MODELS = ['gpt-5.4-mini', 'gpt-5.5'];
+const COCKPIT_RESOURCE_URI = 'ui://skill-rsi/cockpit.html';
+const MCP_APP_MIME_TYPE = 'text/html;profile=mcp-app';
+const DEFAULT_APP_URL = 'http://127.0.0.1:8765/';
+
+let mcpRuntimeDepsPromise = null;
+let McpServer;
+let StdioServerTransport;
+let createUIResource;
+let registerAppTool;
+let registerAppResource;
+let z;
 
 function currentDirname(importMetaUrl = import.meta.url) {
   return path.dirname(fileURLToPath(importMetaUrl));
@@ -20,6 +29,8 @@ function currentDirname(importMetaUrl = import.meta.url) {
 export async function resolveRepoRoot({ env = process.env, startDir = currentDirname() } = {}) {
   const candidates = [];
   if (env.SKILL_RSI_ROOT) candidates.push(path.resolve(env.SKILL_RSI_ROOT));
+  if (env.PWD) candidates.push(path.resolve(env.PWD));
+  candidates.push(process.cwd());
   candidates.push(path.resolve(startDir, '..', '..', '..'));
 
   for (const candidate of candidates) {
@@ -34,12 +45,38 @@ export async function resolveRepoRoot({ env = process.env, startDir = currentDir
   throw new Error('Could not resolve Skill RSI repo root. Set SKILL_RSI_ROOT to the repository path.');
 }
 
+async function importPackageFromRoot(repoRoot, packageSpecifier) {
+  const requireFromRoot = createRequire(path.join(repoRoot, 'package.json'));
+  return import(pathToFileURL(requireFromRoot.resolve(packageSpecifier)).href);
+}
+
+async function loadMcpRuntimeDeps(repoRoot) {
+  mcpRuntimeDepsPromise ||= (async () => {
+    const [mcp, stdio, ui, apps, zod] = await Promise.all([
+      importPackageFromRoot(repoRoot, '@modelcontextprotocol/sdk/server/mcp.js'),
+      importPackageFromRoot(repoRoot, '@modelcontextprotocol/sdk/server/stdio.js'),
+      importPackageFromRoot(repoRoot, '@mcp-ui/server'),
+      importPackageFromRoot(repoRoot, '@modelcontextprotocol/ext-apps/server'),
+      importPackageFromRoot(repoRoot, 'zod'),
+    ]);
+    McpServer = mcp.McpServer;
+    StdioServerTransport = stdio.StdioServerTransport;
+    createUIResource = ui.createUIResource;
+    registerAppTool = apps.registerAppTool;
+    registerAppResource = apps.registerAppResource;
+    z = zod.z;
+  })();
+  await mcpRuntimeDepsPromise;
+}
+
 async function importLib(repoRoot, relativePath) {
   return import(pathToFileURL(path.join(repoRoot, relativePath)).href);
 }
 
 export async function createSkillRsiServices({ repoRoot = null, env = process.env } = {}) {
   const cwd = repoRoot || await resolveRepoRoot({ env });
+  const { loadDotEnv } = await importLib(cwd, 'src/lib/env.js');
+  await loadDotEnv(cwd);
   const [
     uiApi,
     runLoop,
@@ -123,13 +160,19 @@ function toolResult(data, summary = null) {
 function uiToolResult(data, uiResource, summary = null) {
   return {
     content: [
+      uiResource,
       {
         type: 'text',
         text: summary ? `${summary}\n\n${JSON.stringify(data, null, 2)}` : JSON.stringify(data, null, 2),
       },
-      uiResource,
     ],
     structuredContent: data,
+    _meta: {
+      'ui/resourceUri': COCKPIT_RESOURCE_URI,
+      ui: {
+        resourceUri: COCKPIT_RESOURCE_URI,
+      },
+    },
   };
 }
 
@@ -162,6 +205,16 @@ async function exportSkillFiles(skill, outDir) {
 export function createSkillRsiToolHandlers(services) {
   return {
     async skill_rsi_open(args = {}) {
+      return buildLaunchState({
+        services,
+        projectName: args.projectName || null,
+        create: Boolean(args.create),
+        draftId: args.draftId || null,
+      });
+    },
+
+    async skill_rsi_cockpit(args = {}) {
+      requireExistingProjectIntent(args, 'skill_rsi_cockpit');
       return buildCockpitState({
         services,
         projectName: args.projectName || null,
@@ -187,7 +240,8 @@ export function createSkillRsiToolHandlers(services) {
       };
     },
 
-    async skill_rsi_list_projects() {
+    async skill_rsi_list_projects(args = {}) {
+      requireExistingProjectIntent(args, 'skill_rsi_list_projects');
       return {
         schemaVersion: 1,
         repoRoot: services.cwd,
@@ -196,9 +250,13 @@ export function createSkillRsiToolHandlers(services) {
     },
 
     async skill_rsi_create_project(args) {
+      const resolvedProjectName = await resolveFreshProjectName({
+        services,
+        requestedProjectName: args.projectName,
+      });
       const summary = await services.uiApi.createProjectFromLocalInput({
         cwd: services.cwd,
-        projectName: args.projectName,
+        projectName: resolvedProjectName.projectName,
         goal: args.goal,
         targetIterations: positiveInteger(args.targetIterations, 3),
         triggerMode: args.triggerMode || 'manual',
@@ -209,11 +267,50 @@ export function createSkillRsiToolHandlers(services) {
       return {
         schemaVersion: 1,
         action: 'project_created',
+        requestedProjectName: args.projectName,
+        collisionResolved: resolvedProjectName.collisionResolved,
+        launchUrl: buildLaunchUrl({ projectId: summary.projectId }),
+        nextAction: 'open_local_app',
         project: summary,
       };
     },
 
+    async skill_rsi_prepare_project(args) {
+      const resolvedProjectName = args.projectName
+        ? await resolveFreshProjectName({ services, requestedProjectName: args.projectName })
+        : { projectName: '', collisionResolved: false };
+      const draft = await services.uiApi.createProjectDraftForUi({
+        cwd: services.cwd,
+        projectName: resolvedProjectName.projectName,
+        goal: args.goal || '',
+        targetIterations: positiveInteger(args.targetIterations, 3),
+        triggerMode: args.triggerMode || 'manual',
+        outputType: args.outputType ? normalizeOutputType(args.outputType) : null,
+        model: normalizeModel(args.model || DEFAULT_MODEL),
+        baselinePath: args.baselinePath || null,
+      });
+      const launchUrl = buildLaunchUrl({ create: true, draftId: draft.id });
+      const healthUrl = new URL('/api/capabilities', DEFAULT_APP_URL).toString();
+      return {
+        schemaVersion: 1,
+        action: 'project_setup_prepared',
+        startsModelBackedWork: false,
+        requestedProjectName: args.projectName || null,
+        collisionResolved: resolvedProjectName.collisionResolved,
+        draft,
+        launchUrl,
+        server: await checkLocalAppServer(healthUrl),
+        nextAction: 'open_local_app',
+        browser: {
+          required: true,
+          surface: 'codex-in-app-browser',
+          instruction: `Open ${launchUrl} in the Codex in-app browser/sidebar.`,
+        },
+      };
+    },
+
     async skill_rsi_run_next(args) {
+      requireRunIntent(args, 'skill_rsi_run_next');
       const mode = normalizeRunMode(args.mode || 'agentic');
       const evalMode = normalizeEvalMode(args.evalMode || 'real');
       const model = args.model || null;
@@ -253,10 +350,12 @@ export function createSkillRsiToolHandlers(services) {
     },
 
     async skill_rsi_run_with_context(args) {
+      requireRunIntent(args, 'skill_rsi_run_with_context');
       return runWithQueuedContext({ services, args });
     },
 
     async skill_rsi_progress(args) {
+      requireExistingProjectIntent(args, 'skill_rsi_progress');
       return services.uiApi.readRunProgress({
         cwd: services.cwd,
         projectName: args.projectName,
@@ -264,6 +363,7 @@ export function createSkillRsiToolHandlers(services) {
     },
 
     async skill_rsi_get_run_detail(args) {
+      requireExistingProjectIntent(args, 'skill_rsi_get_run_detail');
       return services.uiApi.readRunDetail({
         cwd: services.cwd,
         projectName: args.projectName,
@@ -272,6 +372,7 @@ export function createSkillRsiToolHandlers(services) {
     },
 
     async skill_rsi_get_run_comparison(args) {
+      requireExistingProjectIntent(args, 'skill_rsi_get_run_comparison');
       return services.uiApi.readRunComparison({
         cwd: services.cwd,
         projectName: args.projectName,
@@ -280,6 +381,7 @@ export function createSkillRsiToolHandlers(services) {
     },
 
     async skill_rsi_get_skill_content(args) {
+      requireExistingProjectIntent(args, 'skill_rsi_get_skill_content');
       return services.uiApi.readSkillContent({
         cwd: services.cwd,
         projectName: args.projectName,
@@ -289,6 +391,7 @@ export function createSkillRsiToolHandlers(services) {
     },
 
     async skill_rsi_get_evidence(args) {
+      requireExistingProjectIntent(args, 'skill_rsi_get_evidence');
       return buildEvidenceState({
         services,
         projectName: args.projectName,
@@ -297,6 +400,7 @@ export function createSkillRsiToolHandlers(services) {
     },
 
     async skill_rsi_get_next_loop_plan(args) {
+      requireExistingProjectIntent(args, 'skill_rsi_get_next_loop_plan');
       const summary = await services.uiApi.readProjectSummary({
         cwd: services.cwd,
         projectName: args.projectName,
@@ -312,6 +416,7 @@ export function createSkillRsiToolHandlers(services) {
     },
 
     async skill_rsi_get_champion(args) {
+      requireExistingProjectIntent(args, 'skill_rsi_get_champion');
       const [summary, skill] = await Promise.all([
         services.uiApi.readProjectSummary({ cwd: services.cwd, projectName: args.projectName }),
         services.uiApi.readSkillContent({ cwd: services.cwd, projectName: args.projectName, source: 'champion' }),
@@ -330,6 +435,7 @@ export function createSkillRsiToolHandlers(services) {
     },
 
     async skill_rsi_export_champion(args) {
+      requireExistingProjectIntent(args, 'skill_rsi_export_champion');
       const skill = await services.uiApi.readSkillContent({
         cwd: services.cwd,
         projectName: args.projectName,
@@ -379,6 +485,105 @@ function slugifyProjectName(value) {
     .replace(/[^a-z0-9]+/g, '-')
     .replace(/^-+|-+$/g, '');
   return slug || null;
+}
+
+async function buildLaunchState({ services, projectName = null, create = false, draftId = null }) {
+  const projectId = slugifyProjectName(projectName);
+  const launchUrl = buildLaunchUrl({ projectId, create, draftId });
+  const healthUrl = new URL('/api/capabilities', DEFAULT_APP_URL).toString();
+  const server = await checkLocalAppServer(healthUrl);
+  return {
+    schemaVersion: 1,
+    action: 'open_local_app',
+    startsModelBackedWork: false,
+    repoRoot: services.cwd,
+    projectId,
+    draftId,
+    launchUrl,
+    server,
+    browser: {
+      required: true,
+      surface: 'codex-in-app-browser',
+      instruction: `Open ${launchUrl} in the Codex in-app browser/sidebar.`,
+    },
+  };
+}
+
+function buildLaunchUrl({ projectId = null, create = false, draftId = null } = {}) {
+  const url = new URL(DEFAULT_APP_URL);
+  if (projectId) url.searchParams.set('project', projectId);
+  if (create) url.searchParams.set('create', '1');
+  if (draftId) url.searchParams.set('draft', draftId);
+  return url.toString();
+}
+
+async function checkLocalAppServer(healthUrl) {
+  try {
+    const status = await httpGetStatus(healthUrl, 700);
+    return {
+      reachable: status >= 200 && status < 500,
+      healthUrl,
+      status,
+      startCommand: null,
+    };
+  } catch (error) {
+    return {
+      reachable: false,
+      healthUrl,
+      status: null,
+      error: error.message,
+      startCommand: 'npm run server',
+    };
+  }
+}
+
+function httpGetStatus(url, timeoutMs) {
+  return new Promise((resolve, reject) => {
+    const request = http.get(url, response => {
+      response.resume();
+      response.on('end', () => resolve(response.statusCode || 0));
+    });
+    request.setTimeout(timeoutMs, () => {
+      request.destroy(new Error(`Timed out checking ${url}`));
+    });
+    request.on('error', reject);
+  });
+}
+
+function requireExistingProjectIntent(args, toolName) {
+  if (args?.existingProjectIntent === true) return;
+  const error = new Error(`${toolName} requires existingProjectIntent: true. For fresh Skill RSI requests, create/import a fresh project and open the local app instead of inspecting existing project state.`);
+  error.statusCode = 400;
+  throw error;
+}
+
+function requireRunIntent(args, toolName) {
+  if (args?.runIntent === true) return;
+  const error = new Error(`${toolName} requires runIntent: true. Plain Skill RSI create/improve requests must open the UI and let the user start loops there.`);
+  error.statusCode = 400;
+  throw error;
+}
+
+async function resolveFreshProjectName({ services, requestedProjectName }) {
+  const baseProjectId = slugifyProjectName(requestedProjectName) || 'skill-rsi-project';
+  if (!services.paths?.getProjectPaths || !services.pathExists) {
+    return { projectName: baseProjectId, collisionResolved: false };
+  }
+
+  for (let index = 0; index < 1000; index += 1) {
+    const projectName = index === 0 ? baseProjectId : `${baseProjectId}-${index + 1}`;
+    const paths = services.paths.getProjectPaths(services.cwd, projectName);
+    const exists = await services.pathExists(paths.projectDir);
+    if (!exists) {
+      return {
+        projectName,
+        projectId: paths.projectId,
+        collisionResolved: index > 0,
+      };
+    }
+  }
+
+  throw new Error(`Could not find an unused project name for ${baseProjectId}`);
 }
 
 export async function buildCockpitState({
@@ -600,8 +805,8 @@ function buildCockpitActions({ project, targetLoops }) {
   const projectName = project?.projectId || null;
   return {
     refresh: {
-      toolName: 'skill_rsi_open',
-      params: projectName ? { projectName } : {},
+      toolName: 'skill_rsi_cockpit',
+      params: projectName ? { projectName, existingProjectIntent: true } : { existingProjectIntent: true },
     },
     createProject: {
       toolName: 'skill_rsi_create_project',
@@ -611,6 +816,7 @@ function buildCockpitActions({ project, targetLoops }) {
       enabled: Boolean(projectName),
       params: projectName ? {
         projectName,
+        runIntent: true,
         loops: targetLoops,
         mode: 'agentic',
         evalMode: 'real',
@@ -621,6 +827,7 @@ function buildCockpitActions({ project, targetLoops }) {
       enabled: Boolean(projectName),
       params: projectName ? {
         projectName,
+        runIntent: true,
         loops: 1,
         mode: 'agentic',
         evalMode: 'real',
@@ -629,6 +836,7 @@ function buildCockpitActions({ project, targetLoops }) {
     exportChampion: {
       toolName: 'skill_rsi_export_champion',
       enabled: Boolean(project?.state?.currentChampion),
+      params: projectName ? { projectName, existingProjectIntent: true } : null,
     },
     recordContext: {
       toolName: 'skill_rsi_record_context',
@@ -894,7 +1102,7 @@ function renderCockpitFallback(state) {
 
 function createCockpitResource(state) {
   return createUIResource({
-    uri: `ui://skill-rsi/cockpit/${state.selectedProject?.projectId || state.requestedProjectId || 'home'}/${state.view || 'overview'}/${state.selectedRunId || 'latest'}`,
+    uri: COCKPIT_RESOURCE_URI,
     content: {
       type: 'rawHtml',
       htmlString: renderCockpitHtml(state),
@@ -915,6 +1123,56 @@ function createCockpitResource(state) {
   });
 }
 
+function createCockpitShellState() {
+  return {
+    schemaVersion: 1,
+    status: 'loading',
+    view: 'overview',
+    requestedProjectId: null,
+    selectedProjectMissing: false,
+    projects: [],
+    selectedProject: null,
+    selectedRunId: null,
+    selectedFilePath: null,
+    champion: { available: false },
+    runAction: { label: 'Waiting for Skill RSI state', startsModelBackedWork: false },
+    automation: { hooks: { inbox: { count: 0 } } },
+    nextLoopPremise: null,
+    supportedModels: SUPPORTED_MODELS,
+    supportedOutputTypes: SUPPORTED_OUTPUT_TYPES,
+    capabilities: {
+      mcpUi: true,
+      visualRunner: false,
+    },
+  };
+}
+
+function registerCockpitResource(server) {
+  registerAppResource(server, 'Skill RSI Console', COCKPIT_RESOURCE_URI, {
+    title: 'Skill RSI Console',
+    description: 'Native embedded console for Skill RSI projects.',
+    mimeType: MCP_APP_MIME_TYPE,
+    _meta: {
+      ui: {
+        prefersBorder: true,
+        csp: {
+          connectDomains: [],
+          resourceDomains: [],
+        },
+      },
+    },
+  }, async () => {
+    const resource = createCockpitResource(createCockpitShellState()).resource;
+    return {
+      contents: [{
+        uri: COCKPIT_RESOURCE_URI,
+        mimeType: resource.mimeType || MCP_APP_MIME_TYPE,
+        text: resource.text,
+      }],
+    };
+  });
+}
+
 function registerTool(server, handlers, name, config, handler) {
   server.registerTool(name, config, async args => {
     const data = await handler(args || {});
@@ -928,24 +1186,43 @@ function registerTool(server, handlers, name, config, handler) {
 
 export async function createSkillRsiMcpServer({ services = null } = {}) {
   const resolvedServices = services || await createSkillRsiServices();
+  await loadMcpRuntimeDeps(resolvedServices.cwd || await resolveRepoRoot());
   const handlers = createSkillRsiToolHandlers(resolvedServices);
   const server = new McpServer({
     name: 'skill-rsi',
     version: '0.1.0',
   });
+  registerCockpitResource(server);
 
-  server.registerTool('skill_rsi_open', {
+  registerTool(server, handlers, 'skill_rsi_open', {
+    title: 'Open Skill RSI Local App',
+    description: 'Return the local Skill RSI web app URL for Codex Browser/sidebar launch. This does not inspect project state or start loops.',
+    inputSchema: {
+      projectName: z.string().optional(),
+      create: z.boolean().default(false),
+      draftId: z.string().optional(),
+    },
+  }, handlers.skill_rsi_open);
+
+  registerAppTool(server, 'skill_rsi_cockpit', {
     title: 'Open Skill RSI',
-    description: 'Open the guided Skill RSI MCP-UI cockpit where supported and return a text fallback everywhere.',
+    description: 'Open the optional guided Skill RSI MCP-UI cockpit for explicit existing-project inspection where supported. Not the default Codex desktop launch path.',
     inputSchema: {
       projectName: z.string().optional(),
       view: z.enum(['overview', 'history', 'evidence', 'skill', 'automation']).optional(),
       runId: z.string().optional(),
       skillSource: z.enum(['champion', 'challenger', 'candidate-a', 'candidate-b']).optional(),
       filePath: z.string().optional(),
+      existingProjectIntent: z.boolean().optional(),
+    },
+    _meta: {
+      ui: {
+        resourceUri: COCKPIT_RESOURCE_URI,
+      },
+      'ui/resourceUri': COCKPIT_RESOURCE_URI,
     },
   }, async args => {
-    const data = await handlers.skill_rsi_open(args || {});
+    const data = await handlers.skill_rsi_cockpit(args || {});
     return uiToolResult(data, createCockpitResource(data), renderCockpitFallback(data));
   });
 
@@ -956,12 +1233,15 @@ export async function createSkillRsiMcpServer({ services = null } = {}) {
 
   registerTool(server, handlers, 'skill_rsi_list_projects', {
     title: 'List Skill RSI Projects',
-    description: 'List local Skill RSI projects and concise state summaries.',
+    description: 'List local Skill RSI projects and concise state summaries. Use only when the user asks for existing projects, history, or project selection; do not use before a fresh "improve this skill" flow.',
+    inputSchema: {
+      existingProjectIntent: z.boolean().optional(),
+    },
   }, handlers.skill_rsi_list_projects);
 
   registerTool(server, handlers, 'skill_rsi_create_project', {
     title: 'Create Skill RSI Project',
-    description: 'Create a scratch or baseline Skill RSI project using the same defaults as the UI and CLI.',
+    description: 'Create a fresh scratch or baseline Skill RSI project using the same defaults as the UI and CLI. If the requested name already exists, the tool creates a suffixed fresh project instead of inspecting or reusing the old one.',
     inputSchema: {
       projectName: z.string().min(1),
       goal: z.string().min(1),
@@ -972,6 +1252,20 @@ export async function createSkillRsiMcpServer({ services = null } = {}) {
       baselinePath: z.string().optional(),
     },
   }, handlers.skill_rsi_create_project);
+
+  registerTool(server, handlers, 'skill_rsi_prepare_project', {
+    title: 'Prepare Skill RSI Project Setup',
+    description: 'Prepare a fresh Skill RSI setup draft and return a create-flow URL. Use this for plain fresh Codex requests so the user can choose output type and model in the UI before project creation.',
+    inputSchema: {
+      projectName: z.string().optional(),
+      goal: z.string().optional(),
+      outputType: z.enum(['text', 'code', 'code_visual']).optional(),
+      model: z.enum(['gpt-5.4-mini', 'gpt-5.5']).default(DEFAULT_MODEL),
+      targetIterations: z.number().int().positive().default(3),
+      triggerMode: z.enum(['manual', 'continuous', 'hook', 'cron']).default('manual'),
+      baselinePath: z.string().optional(),
+    },
+  }, handlers.skill_rsi_prepare_project);
 
   registerTool(server, handlers, 'skill_rsi_run_next', {
     title: 'Run Skill RSI Loop',
@@ -990,6 +1284,7 @@ export async function createSkillRsiMcpServer({ services = null } = {}) {
       openaiKey: z.string().optional(),
       anthropicKey: z.string().optional(),
       geminiKey: z.string().optional(),
+      runIntent: z.boolean().optional(),
     },
   }, handlers.skill_rsi_run_next);
 
@@ -1010,14 +1305,16 @@ export async function createSkillRsiMcpServer({ services = null } = {}) {
       openaiKey: z.string().optional(),
       anthropicKey: z.string().optional(),
       geminiKey: z.string().optional(),
+      runIntent: z.boolean().optional(),
     },
   }, handlers.skill_rsi_run_with_context);
 
   registerTool(server, handlers, 'skill_rsi_progress', {
     title: 'Skill RSI Progress',
-    description: 'Read latest run progress and stage details for a project.',
+    description: 'Read latest run progress and stage details for an explicitly named existing project. Do not use this to resolve a name collision during a fresh project/import flow.',
     inputSchema: {
       projectName: z.string().min(1),
+      existingProjectIntent: z.boolean().optional(),
     },
   }, handlers.skill_rsi_progress);
 
@@ -1027,6 +1324,7 @@ export async function createSkillRsiMcpServer({ services = null } = {}) {
     inputSchema: {
       projectName: z.string().min(1),
       runId: z.string().optional(),
+      existingProjectIntent: z.boolean().optional(),
     },
   }, handlers.skill_rsi_get_run_detail);
 
@@ -1036,6 +1334,7 @@ export async function createSkillRsiMcpServer({ services = null } = {}) {
     inputSchema: {
       projectName: z.string().min(1),
       runId: z.string().optional(),
+      existingProjectIntent: z.boolean().optional(),
     },
   }, handlers.skill_rsi_get_run_comparison);
 
@@ -1046,6 +1345,7 @@ export async function createSkillRsiMcpServer({ services = null } = {}) {
       projectName: z.string().min(1),
       source: z.enum(['champion', 'challenger', 'candidate-a', 'candidate-b']).default('champion'),
       runId: z.string().optional(),
+      existingProjectIntent: z.boolean().optional(),
     },
   }, handlers.skill_rsi_get_skill_content);
 
@@ -1055,6 +1355,7 @@ export async function createSkillRsiMcpServer({ services = null } = {}) {
     inputSchema: {
       projectName: z.string().min(1),
       runId: z.string().optional(),
+      existingProjectIntent: z.boolean().optional(),
     },
   }, handlers.skill_rsi_get_evidence);
 
@@ -1063,6 +1364,7 @@ export async function createSkillRsiMcpServer({ services = null } = {}) {
     description: 'Read the current next-loop premise, automation state, champion, and run policy.',
     inputSchema: {
       projectName: z.string().min(1),
+      existingProjectIntent: z.boolean().optional(),
     },
   }, handlers.skill_rsi_get_next_loop_plan);
 
@@ -1071,6 +1373,7 @@ export async function createSkillRsiMcpServer({ services = null } = {}) {
     description: 'Read current champion metadata and SKILL.md text when available.',
     inputSchema: {
       projectName: z.string().min(1),
+      existingProjectIntent: z.boolean().optional(),
     },
   }, handlers.skill_rsi_get_champion);
 
@@ -1080,6 +1383,7 @@ export async function createSkillRsiMcpServer({ services = null } = {}) {
     inputSchema: {
       projectName: z.string().min(1),
       outDir: z.string().min(1),
+      existingProjectIntent: z.boolean().optional(),
     },
   }, handlers.skill_rsi_export_champion);
 

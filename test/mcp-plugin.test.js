@@ -27,6 +27,7 @@ test('Skill RSI plugin validates and registers expected MCP tools', async () => 
     services: stubServices(),
   });
   assert.deepEqual(Object.keys(server._registeredTools).sort(), [
+    'skill_rsi_cockpit',
     'skill_rsi_create_project',
     'skill_rsi_doctor',
     'skill_rsi_export_champion',
@@ -38,27 +39,115 @@ test('Skill RSI plugin validates and registers expected MCP tools', async () => 
     'skill_rsi_get_skill_content',
     'skill_rsi_list_projects',
     'skill_rsi_open',
+    'skill_rsi_prepare_project',
     'skill_rsi_progress',
     'skill_rsi_record_context',
     'skill_rsi_run_next',
     'skill_rsi_run_with_context',
   ].sort());
+  assert.equal(server._registeredTools.skill_rsi_cockpit._meta.ui.resourceUri, 'ui://skill-rsi/cockpit.html');
+  assert.ok(server._registeredResources['ui://skill-rsi/cockpit.html']);
 });
 
-test('skill_rsi_open returns fallback content and an MCP-UI cockpit resource', async () => {
+test('skill_rsi_open returns only a local app launch URL without reading project state', async () => {
+  const handlers = createSkillRsiToolHandlers({
+    cwd: repoRoot,
+    env: {},
+    uiApi: {
+      readProjectSummaries: async () => { throw new Error('project summaries should not be read'); },
+      readProjectSummary: async () => { throw new Error('project summary should not be read'); },
+      readRunProgress: async () => { throw new Error('progress should not be read'); },
+      readSkillContent: async () => { throw new Error('skill content should not be read'); },
+    },
+  });
+  const result = await handlers.skill_rsi_open({ projectName: 'MCP Project' });
+  assert.equal(result.action, 'open_local_app');
+  assert.equal(result.startsModelBackedWork, false);
+  assert.equal(result.projectId, 'mcp-project');
+  assert.match(result.launchUrl, /http:\/\/127\.0\.0\.1:8765\/\?project=mcp-project/);
+  assert.equal(result.browser.required, true);
+});
+
+test('skill_rsi_cockpit returns fallback content and an MCP-UI cockpit resource', async () => {
   const { server } = await createSkillRsiMcpServer({
     services: stubServices(),
   });
-  const result = await server._registeredTools.skill_rsi_open.handler({});
+  const result = await server._registeredTools.skill_rsi_cockpit.handler({ existingProjectIntent: true });
   assert.equal(result.structuredContent.kind, 'skill-rsi-cockpit');
   assert.equal(result.structuredContent.status, 'empty');
-  assert.match(result.content[0].text, /No Skill RSI projects yet/);
-  assert.equal(result.content[1].type, 'resource');
-  assert.match(result.content[1].resource.uri, /^ui:\/\/skill-rsi\/cockpit\/home/);
-  assert.match(result.content[1].resource.mimeType, /text\/html/);
-  assert.match(result.content[1].resource.text, /Create or import/);
-  assert.match(result.content[1].resource.text, /skill_rsi_create_project/);
-  assert.ok(!result.content[1].resource.text.includes(process.env.OPENAI_API_KEY || 'sk-'));
+  assert.equal(result._meta.ui.resourceUri, 'ui://skill-rsi/cockpit.html');
+  assert.equal(result._meta['ui/resourceUri'], 'ui://skill-rsi/cockpit.html');
+  assert.equal(result.content[0].type, 'resource');
+  assert.equal(result.content[0].resource.uri, 'ui://skill-rsi/cockpit.html');
+  assert.match(result.content[0].resource.mimeType, /text\/html/);
+  assert.match(result.content[0].resource.text, /Create or import/);
+  assert.match(result.content[0].resource.text, /skill_rsi_create_project/);
+  assert.ok(!result.content[0].resource.text.includes(process.env.OPENAI_API_KEY || 'sk-'));
+  assert.match(result.content[1].text, /No Skill RSI projects yet/);
+});
+
+test('skill_rsi_prepare_project returns a setup draft URL without creating a project', async () => {
+  let created = false;
+  const handlers = createSkillRsiToolHandlers({
+    cwd: repoRoot,
+    env: {},
+    uiApi: {
+      createProjectDraftForUi: async ({ projectName, goal, outputType, model, baselinePath }) => ({
+        schemaVersion: 1,
+        id: '11111111-1111-4111-8111-111111111111',
+        mode: baselinePath ? 'existing' : 'scratch',
+        projectName,
+        goal,
+        outputType,
+        model,
+        baseline: baselinePath ? { displayName: 'SKILL.md', skillName: 'frontend-design' } : null,
+      }),
+      createProjectFromLocalInput: async () => {
+        created = true;
+        throw new Error('project should not be created');
+      },
+    },
+  });
+  const prepared = await handlers.skill_rsi_prepare_project({
+    projectName: 'Frontend Design',
+    goal: 'Improve this skill.',
+    outputType: 'code_visual',
+    model: 'gpt-5.5',
+    baselinePath: '/tmp/SKILL.md',
+  });
+  assert.equal(prepared.action, 'project_setup_prepared');
+  assert.equal(prepared.startsModelBackedWork, false);
+  assert.equal(prepared.draft.outputType, 'code_visual');
+  assert.match(prepared.launchUrl, /create=1/);
+  assert.match(prepared.launchUrl, /draft=11111111-1111-4111-8111-111111111111/);
+  assert.equal(created, false);
+});
+
+test('MCP inspection and run tools require explicit intent flags', async () => {
+  const handlers = createSkillRsiToolHandlers(stubServices({
+    projects: [stubProjectSummary({ projectId: 'alpha-project' })],
+  }));
+
+  await assert.rejects(
+    () => handlers.skill_rsi_progress({ projectName: 'alpha-project' }),
+    /existingProjectIntent: true/,
+  );
+  await assert.rejects(
+    () => handlers.skill_rsi_list_projects({}),
+    /existingProjectIntent: true/,
+  );
+  await assert.rejects(
+    () => handlers.skill_rsi_get_champion({ projectName: 'alpha-project' }),
+    /existingProjectIntent: true/,
+  );
+  await assert.rejects(
+    () => handlers.skill_rsi_run_next({ projectName: 'alpha-project', mode: 'mock', evalMode: 'mock' }),
+    /runIntent: true/,
+  );
+  await assert.rejects(
+    () => handlers.skill_rsi_run_with_context({ projectName: 'alpha-project', mode: 'mock', evalMode: 'mock' }),
+    /runIntent: true/,
+  );
 });
 
 test('MCP handlers create, inspect, run, queue context, and export projects', async () => {
@@ -91,7 +180,24 @@ test('MCP handlers create, inspect, run, queue context, and export projects', as
   assert.equal(created.project.config.models.agent, 'gpt-5.5');
   assert.equal(created.project.state.currentChampion.candidateId, 'baseline');
 
-  const cockpit = await handlers.skill_rsi_open({ projectName: 'MCP Project' });
+  const collisionCreated = await handlers.skill_rsi_create_project({
+    projectName: 'MCP Project',
+    goal: 'Improve the same baseline as a fresh run.',
+    outputType: 'code',
+    model: 'gpt-5.5',
+    targetIterations: 1,
+    baselinePath: baseline,
+  });
+  assert.equal(collisionCreated.action, 'project_created');
+  assert.equal(collisionCreated.collisionResolved, true);
+  assert.equal(collisionCreated.requestedProjectName, 'MCP Project');
+  assert.equal(collisionCreated.project.projectId, 'mcp-project-2');
+
+  const open = await handlers.skill_rsi_open({ projectName: 'MCP Project' });
+  assert.equal(open.action, 'open_local_app');
+  assert.match(open.launchUrl, /\?project=mcp-project/);
+
+  const cockpit = await handlers.skill_rsi_cockpit({ projectName: 'MCP Project', existingProjectIntent: true });
   assert.equal(cockpit.status, 'manual');
   assert.equal(cockpit.selectedProject.projectId, 'mcp-project');
   assert.equal(cockpit.champion.available, true);
@@ -100,15 +206,16 @@ test('MCP handlers create, inspect, run, queue context, and export projects', as
   assert.equal(cockpit.actions.runTargetBatch.toolName, 'skill_rsi_run_next');
   assert.equal(cockpit.actions.exportChampion.toolName, 'skill_rsi_export_champion');
 
-  const projects = await handlers.skill_rsi_list_projects();
-  assert.equal(projects.projects.length, 1);
+  const projects = await handlers.skill_rsi_list_projects({ existingProjectIntent: true });
+  assert.equal(projects.projects.length, 2);
   assert.equal(projects.projects[0].projectId, 'mcp-project');
+  assert.equal(projects.projects[1].projectId, 'mcp-project-2');
 
-  const champion = await handlers.skill_rsi_get_champion({ projectName: 'MCP Project' });
+  const champion = await handlers.skill_rsi_get_champion({ projectName: 'MCP Project', existingProjectIntent: true });
   assert.equal(champion.available, true);
   assert.match(champion.skillMd, /# mcp-baseline/);
 
-  const progressBeforeRun = await handlers.skill_rsi_progress({ projectName: 'MCP Project' });
+  const progressBeforeRun = await handlers.skill_rsi_progress({ projectName: 'MCP Project', existingProjectIntent: true });
   assert.equal(progressBeforeRun.status, 'none');
 
   const context = await handlers.skill_rsi_record_context({
@@ -121,7 +228,7 @@ test('MCP handlers create, inspect, run, queue context, and export projects', as
   assert.equal(context.action, 'context_queued');
   assert.equal(context.startsModelBackedWork, false);
 
-  const summaryWithContext = await handlers.skill_rsi_get_next_loop_plan({ projectName: 'MCP Project' });
+  const summaryWithContext = await handlers.skill_rsi_get_next_loop_plan({ projectName: 'MCP Project', existingProjectIntent: true });
   assert.equal(summaryWithContext.automation.hooks.inbox.count, 1);
   assert.deepEqual(summaryWithContext.automation.hooks.inbox.latest.changedFiles, ['SKILL.md', 'references/notes.md']);
 
@@ -130,6 +237,7 @@ test('MCP handlers create, inspect, run, queue context, and export projects', as
     loops: 1,
     mode: 'mock',
     evalMode: 'mock',
+    runIntent: true,
   });
   assert.equal(contextRun.action, 'context_run_completed');
   assert.equal(contextRun.consumedHookEvents, 1);
@@ -138,7 +246,7 @@ test('MCP handlers create, inspect, run, queue context, and export projects', as
   assert.equal(contextRun.completedRunCount, 1);
   assert.equal(contextRun.startsModelBackedWork, false);
 
-  const summaryAfterContextRun = await handlers.skill_rsi_get_next_loop_plan({ projectName: 'MCP Project' });
+  const summaryAfterContextRun = await handlers.skill_rsi_get_next_loop_plan({ projectName: 'MCP Project', existingProjectIntent: true });
   assert.equal(summaryAfterContextRun.automation.hooks.inbox.count, 0);
   assert.equal(summaryAfterContextRun.automation.hooks.processed.count, 1);
 
@@ -153,12 +261,13 @@ test('MCP handlers create, inspect, run, queue context, and export projects', as
     mode: 'mock',
     evalMode: 'mock',
     maxRuns: 0,
+    runIntent: true,
   });
   assert.equal(skippedContextRun.action, 'context_skipped');
   assert.equal(skippedContextRun.consumedHookEvents, 1);
   assert.equal(skippedContextRun.completedRunCount, 0);
 
-  const summaryAfterSkip = await handlers.skill_rsi_get_next_loop_plan({ projectName: 'MCP Project' });
+  const summaryAfterSkip = await handlers.skill_rsi_get_next_loop_plan({ projectName: 'MCP Project', existingProjectIntent: true });
   assert.equal(summaryAfterSkip.automation.hooks.skipped.count, 1);
 
   const run = await handlers.skill_rsi_run_next({
@@ -166,13 +275,14 @@ test('MCP handlers create, inspect, run, queue context, and export projects', as
     loops: 1,
     mode: 'mock',
     evalMode: 'mock',
+    runIntent: true,
   });
   assert.equal(run.action, 'run_completed');
   assert.equal(run.completedRunCount, 1);
   assert.equal(run.runCount, 2);
   assert.equal(run.startsModelBackedWork, false);
 
-  const progressAfterRun = await handlers.skill_rsi_progress({ projectName: 'MCP Project' });
+  const progressAfterRun = await handlers.skill_rsi_progress({ projectName: 'MCP Project', existingProjectIntent: true });
   assert.equal(progressAfterRun.status, 'completed');
   assert.equal(progressAfterRun.runNumber, 2);
 
@@ -180,6 +290,7 @@ test('MCP handlers create, inspect, run, queue context, and export projects', as
   const exported = await handlers.skill_rsi_export_champion({
     projectName: 'MCP Project',
     outDir: exportDir,
+    existingProjectIntent: true,
   });
   assert.equal(exported.action, 'champion_exported');
   assert.equal(exported.fileCount, 1);
@@ -214,8 +325,9 @@ test('cockpit state and HTML handle empty, missing, and project states', async (
   assert.equal(projectState.selectedProject.projectId, 'alpha-project');
   assert.equal(projectState.runAction.targetLoops, 5);
   assert.equal(projectState.runAction.label, 'Run target batch (5 loops)');
-  assert.equal(projectState.actions.refresh.toolName, 'skill_rsi_open');
+  assert.equal(projectState.actions.refresh.toolName, 'skill_rsi_cockpit');
   assert.equal(projectState.actions.runTargetBatch.params.loops, 5);
+  assert.equal(projectState.actions.runTargetBatch.params.runIntent, true);
   assert.equal(projectState.contextRunAction.label, 'Run one loop with queued Codex context');
   assert.equal(projectState.actions.runWithContext.toolName, 'skill_rsi_run_with_context');
   const projectHtml = renderCockpitHtml(projectState);
@@ -243,7 +355,7 @@ test('evidence state embeds only safe Skill RSI screenshot artifacts', async () 
     runComparison: stubRunComparison({ projectId: 'visual-project', runId: 'run-001' }),
   });
   const handlers = createSkillRsiToolHandlers(services);
-  const evidence = await handlers.skill_rsi_get_evidence({ projectName: 'visual-project', runId: 'run-001' });
+  const evidence = await handlers.skill_rsi_get_evidence({ projectName: 'visual-project', runId: 'run-001', existingProjectIntent: true });
   const visual = evidence.evaluations[0].visual;
 
   assert.equal(visual.skillA.screenshots[0].embeddedImage.available, true);
@@ -273,7 +385,7 @@ test('MCP helpers resolve repo root and surface missing project errors clearly',
   const handlers = createSkillRsiToolHandlers(services);
 
   await assert.rejects(
-    () => handlers.skill_rsi_get_next_loop_plan({ projectName: 'Missing Project' }),
+    () => handlers.skill_rsi_get_next_loop_plan({ projectName: 'Missing Project', existingProjectIntent: true }),
     /Missing Project|missing-project|not been initialized|no runs/i,
   );
 });
@@ -300,6 +412,7 @@ function stubServices({
     uiApi: {
       UI_OPENAI_MODELS: ['gpt-5.4-mini', 'gpt-5.5'],
       readProjectSummaries: async () => projects,
+      createProjectDraftForUi: async () => ({ id: '11111111-1111-4111-8111-111111111111' }),
       createProjectFromLocalInput: async () => ({ projectId: 'stub' }),
       readRunProgress: async () => progress,
       readProjectSummary: async ({ projectName }) => projects.find(project => project.projectId === projectName) || stubProjectSummary({ projectId: projectName }),

@@ -1,12 +1,13 @@
 import fs from 'node:fs/promises';
 import path from 'node:path';
+import crypto from 'node:crypto';
 import { Buffer } from 'node:buffer';
 import { getProjectPaths, getRunPaths } from './paths.js';
 import { initProject } from './init.js';
 import { loadSkillPackage, materializeSkillPackage } from './skill-package.js';
 import { appendTimeline, readTimeline } from './timeline.js';
 import { ensureDir, hashDirectory, pathExists, readJson, writeJson, writeText } from './store.js';
-import { loadProjectConfig } from './config.js';
+import { loadProjectConfig, normalizeProjectConfig } from './config.js';
 import { normalizeTaskContract, taskContractOutputType } from './task-contracts.js';
 
 const MAX_BASELINE_ZIP_BYTES = 25 * 1024 * 1024;
@@ -82,6 +83,71 @@ export async function createProjectForUi({
   }
 }
 
+export async function createProjectDraftForUi({
+  cwd,
+  projectName = '',
+  goal = '',
+  targetIterations = 3,
+  triggerMode = 'manual',
+  outputType = null,
+  model = 'gpt-5.4-mini',
+  baselinePath = null,
+}) {
+  const now = new Date().toISOString();
+  const baseline = baselinePath ? await summarizeLocalBaselineDraft(baselinePath) : null;
+  const inferredName = baseline?.skillName ? prettifyDraftName(baseline.skillName) : baseline?.displayName || '';
+  const explicitOutputType = UI_OUTPUT_TYPES.includes(outputType);
+  const normalizedOutputType = explicitOutputType
+    ? normalizeUiOutputType(outputType)
+    : inferDraftOutputType({ projectName, goal, baseline });
+  const draft = {
+    schemaVersion: 1,
+    id: crypto.randomUUID(),
+    createdAt: now,
+    mode: baseline ? 'existing' : 'scratch',
+    projectName: String(projectName || '').trim() || inferredName,
+    goal: String(goal || '').trim() || baseline?.description || '',
+    targetIterations: normalizePositiveInteger(targetIterations, 3),
+    triggerMode: ['manual', 'continuous', 'hook', 'cron'].includes(triggerMode) ? triggerMode : 'manual',
+    outputType: normalizedOutputType,
+    outputTypeSource: explicitOutputType ? 'explicit' : 'inferred',
+    model: normalizeUiModel(model),
+    baseline,
+  };
+  await writeJson(projectDraftPath(cwd, draft.id), draft);
+  return sanitizeProjectDraft(draft);
+}
+
+export async function readProjectDraftForUi({ cwd, draftId }) {
+  const draft = await readProjectDraftRecord({ cwd, draftId });
+  return sanitizeProjectDraft(draft);
+}
+
+export async function createProjectFromDraftForUi({
+  cwd,
+  draftId,
+  projectName,
+  goal,
+  targetIterations = 3,
+  triggerMode = 'manual',
+  outputType = 'text',
+  model = 'gpt-5.4-mini',
+}) {
+  const draft = await readProjectDraftRecord({ cwd, draftId });
+  const summary = await createProjectFromLocalInput({
+    cwd,
+    projectName: String(projectName || '').trim() || draft.projectName,
+    goal: String(goal || '').trim() || draft.goal,
+    targetIterations,
+    triggerMode,
+    outputType,
+    model,
+    baselinePath: draft.baseline?.sourcePath || null,
+  });
+  await fs.rm(projectDraftPath(cwd, draft.id), { force: true });
+  return summary;
+}
+
 export async function createProjectFromLocalInput({
   cwd,
   projectName,
@@ -103,9 +169,7 @@ export async function createProjectFromLocalInput({
     throw badRequest('Target iterations must be a positive integer');
   }
   const normalizedTaskContract = normalizeTaskContract(null, outputType);
-  const normalizedOutputType = UI_OUTPUT_TYPES.includes(taskContractOutputType(normalizedTaskContract))
-    ? taskContractOutputType(normalizedTaskContract)
-    : 'text';
+  const normalizedOutputType = normalizeUiOutputType(taskContractOutputType(normalizedTaskContract));
   const normalizedModel = normalizeUiModel(model);
   const paths = getProjectPaths(cwd, projectName);
   if (await pathExists(paths.stateJson)) {
@@ -139,6 +203,115 @@ export async function createProjectFromLocalInput({
 
 function normalizeUiModel(model) {
   return UI_OPENAI_MODELS.includes(model) ? model : 'gpt-5.4-mini';
+}
+
+function normalizeUiOutputType(outputType) {
+  return UI_OUTPUT_TYPES.includes(outputType) ? outputType : 'text';
+}
+
+function inferDraftOutputType({ projectName = '', goal = '', baseline = null }) {
+  const text = [
+    projectName,
+    goal,
+    baseline?.skillName,
+    baseline?.description,
+    baseline?.displayName,
+  ].filter(Boolean).join(' ').toLowerCase();
+
+  if (/\b(frontend|front-end|ui|ux|visual|browser|web app|react|css|html|design system|component|layout|screenshot|rendered|rendering)\b/.test(text)) {
+    return 'code_visual';
+  }
+  if (/\b(code|coding|implementation|implement|refactor|debug|api|cli|script|typescript|javascript|python|swift|sql|repository|repo|test|tests)\b/.test(text)) {
+    return 'code';
+  }
+  return 'text';
+}
+
+function normalizePositiveInteger(value, fallback) {
+  const number = Number.parseInt(value, 10);
+  return Number.isInteger(number) && number > 0 ? number : fallback;
+}
+
+async function summarizeLocalBaselineDraft(sourcePath) {
+  const absolutePath = path.resolve(sourcePath);
+  const skillPackage = await loadSkillPackage(absolutePath);
+  if (!skillPackage.validation.valid) {
+    throw badRequest(`Baseline skill is invalid: ${skillPackage.validation.errors.join('; ')}`);
+  }
+  const entrypoint = skillPackage.files.find(file => file.path === skillPackage.entrypoint && file.kind === 'text');
+  const frontmatter = parseSkillFrontmatter(entrypoint?.content || '');
+  return {
+    sourcePath: absolutePath,
+    displayName: skillPackage.filename || path.basename(absolutePath),
+    packageType: skillPackage.packageType,
+    skillName: frontmatter.name || '',
+    description: frontmatter.description || '',
+    fileCount: skillPackage.files.length,
+    hash: skillPackage.hash,
+  };
+}
+
+function parseSkillFrontmatter(content) {
+  const match = String(content || '').match(/^---\n([\s\S]*?)\n---\n?/);
+  if (!match) return {};
+  const result = {};
+  for (const line of match[1].split('\n')) {
+    const field = line.match(/^([A-Za-z0-9_-]+):\s*(.*)$/);
+    if (!field) continue;
+    result[field[1]] = field[2].replace(/^["']|["']$/g, '').trim();
+  }
+  return result;
+}
+
+function prettifyDraftName(value) {
+  return String(value || '')
+    .replace(/[-_]+/g, ' ')
+    .replace(/\b\w/g, char => char.toUpperCase())
+    .trim();
+}
+
+function projectDraftPath(cwd, draftId) {
+  return path.join(cwd, '.skill-rsi', 'drafts', `${normalizeDraftId(draftId)}.json`);
+}
+
+async function readProjectDraftRecord({ cwd, draftId }) {
+  const draft = await readJson(projectDraftPath(cwd, draftId), null);
+  if (!draft || draft.schemaVersion !== 1) {
+    const error = new Error(`Draft "${draftId}" was not found`);
+    error.statusCode = 404;
+    throw error;
+  }
+  return draft;
+}
+
+function normalizeDraftId(draftId) {
+  const id = String(draftId || '').trim();
+  if (!/^[a-f0-9-]{36}$/i.test(id)) throw badRequest('Draft id is invalid');
+  return id;
+}
+
+function sanitizeProjectDraft(draft) {
+  return {
+    schemaVersion: 1,
+    id: draft.id,
+    mode: draft.mode || 'scratch',
+    projectName: draft.projectName || '',
+    goal: draft.goal || '',
+    targetIterations: draft.targetIterations || 3,
+    triggerMode: draft.triggerMode || 'manual',
+    outputType: normalizeUiOutputType(draft.outputType),
+    outputTypeSource: draft.outputTypeSource || 'explicit',
+    model: normalizeUiModel(draft.model),
+    baseline: draft.baseline ? {
+      displayName: draft.baseline.displayName || 'Baseline skill',
+      packageType: draft.baseline.packageType || null,
+      skillName: draft.baseline.skillName || '',
+      description: draft.baseline.description || '',
+      fileCount: draft.baseline.fileCount || 0,
+      hash: draft.baseline.hash || null,
+    } : null,
+    createdAt: draft.createdAt || null,
+  };
 }
 
 export async function readProjectSummaries({ cwd }) {
@@ -213,6 +386,28 @@ export async function readProjectSummary({ cwd, projectName }) {
       promptBankIndex: paths.promptBankIndex,
     },
   };
+}
+
+export async function updateProjectModelForUi({ cwd, projectName, model }) {
+  const paths = getProjectPaths(cwd, projectName);
+  const normalizedModel = normalizeUiModel(model);
+  const state = await readJson(paths.stateJson, null);
+  if (!state) throw badRequest(`Project "${paths.projectId}" does not exist`);
+  if ((state.runCount || 0) > 0) {
+    throw badRequest('Model can only be changed before the first iteration');
+  }
+  const rawConfig = await readJson(paths.configJson, {});
+  const config = normalizeProjectConfig(rawConfig);
+  await writeJson(paths.configJson, {
+    ...rawConfig,
+    models: {
+      ...config.models,
+      agent: normalizedModel,
+      generation: normalizedModel,
+      judge: normalizedModel,
+    },
+  });
+  return readProjectSummary({ cwd, projectName });
 }
 
 async function readAutomationSummary({ cwd, paths, state, config }) {
@@ -861,6 +1056,46 @@ export async function readSkillContent({ cwd, projectName, source = 'champion', 
       text: file.kind === 'text' ? file.content : null,
     })),
   };
+}
+
+export async function exportChampionForUi({ cwd, projectName, outDir }) {
+  const skill = await readSkillContent({ cwd, projectName, source: 'champion' });
+  if (!skill.available) throw badRequest(`Project "${skill.projectId}" has no champion to export`);
+  const destinationRoot = resolveWorkspaceExportDir(cwd, outDir || path.join('exports', `${skill.projectId}-champion`));
+  await fs.rm(destinationRoot, { recursive: true, force: true });
+  await ensureDir(destinationRoot);
+  for (const file of skill.files) {
+    const destination = safeExportFilePath(destinationRoot, file.path);
+    await writeText(destination, file.text || '');
+  }
+  return {
+    schemaVersion: 1,
+    projectId: skill.projectId,
+    action: 'champion_exported',
+    outDir: destinationRoot,
+    fileCount: skill.files.length,
+  };
+}
+
+function resolveWorkspaceExportDir(cwd, outDir) {
+  const destination = path.resolve(cwd, outDir);
+  const root = path.resolve(cwd);
+  if (destination !== root && !destination.startsWith(`${root}${path.sep}`)) {
+    throw badRequest('Export path must stay inside the Skill RSI workspace');
+  }
+  return destination;
+}
+
+function safeExportFilePath(rootDir, filePath) {
+  const normalized = path.normalize(String(filePath || '')).replace(/^(\.\.(\/|\\|$))+/, '');
+  if (!normalized || path.isAbsolute(normalized) || normalized.startsWith('..')) {
+    throw badRequest(`Refusing to export unsafe file path: ${filePath}`);
+  }
+  const destination = path.resolve(rootDir, normalized);
+  if (!destination.startsWith(`${rootDir}${path.sep}`)) {
+    throw badRequest(`Refusing to export unsafe file path: ${filePath}`);
+  }
+  return destination;
 }
 
 export async function recordHumanDecision({

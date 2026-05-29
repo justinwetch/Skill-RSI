@@ -8,7 +8,10 @@ import { loadDotEnv } from './lib/env.js';
 import { runProject } from './lib/run-loop.js';
 import {
   createProjectForUi,
+  createProjectFromDraftForUi,
   deleteProject,
+  exportChampionForUi,
+  readProjectDraftForUi,
   readProjectSummaries,
   readProjectSummary,
   readRunComparison,
@@ -16,6 +19,7 @@ import {
   readRunProgress,
   readSkillContent,
   recordHumanDecision,
+  updateProjectModelForUi,
   UI_OPENAI_MODELS,
 } from './lib/ui-api.js';
 import {
@@ -90,6 +94,11 @@ async function handleApi(request, response, url) {
     return;
   }
 
+  if (request.method === 'GET' && parts.length === 3 && parts[1] === 'drafts') {
+    writeJson(response, 200, await readProjectDraftForUi({ cwd: repoRoot, draftId: parts[2] }));
+    return;
+  }
+
   if (request.method === 'GET' && parts.length === 2 && parts[1] === 'artifacts') {
     await serveArtifact(response, url.searchParams.get('path') || '');
     return;
@@ -97,17 +106,29 @@ async function handleApi(request, response, url) {
 
   if (request.method === 'POST' && parts.length === 2 && parts[1] === 'projects') {
     const body = await readBody(request);
-    writeJson(response, 201, await createProjectForUi({
-      cwd: repoRoot,
-      projectName: body.projectName || body.name || '',
-      goal: body.goal || '',
-      targetIterations: body.targetIterations || 3,
-      triggerMode: body.triggerMode || 'manual',
-      outputType: body.outputType || 'text',
-      model: body.model || DEFAULT_MODEL,
-      baselineFiles: body.baselineFiles || [],
-      baselineArchive: body.baselineArchive || null,
-    }));
+    const summary = body.draftId
+      ? await createProjectFromDraftForUi({
+        cwd: repoRoot,
+        draftId: body.draftId,
+        projectName: body.projectName || body.name || '',
+        goal: body.goal || '',
+        targetIterations: body.targetIterations || 3,
+        triggerMode: body.triggerMode || 'manual',
+        outputType: body.outputType || 'text',
+        model: body.model || DEFAULT_MODEL,
+      })
+      : await createProjectForUi({
+        cwd: repoRoot,
+        projectName: body.projectName || body.name || '',
+        goal: body.goal || '',
+        targetIterations: body.targetIterations || 3,
+        triggerMode: body.triggerMode || 'manual',
+        outputType: body.outputType || 'text',
+        model: body.model || DEFAULT_MODEL,
+        baselineFiles: body.baselineFiles || [],
+        baselineArchive: body.baselineArchive || null,
+      });
+    writeJson(response, 201, summary);
     return;
   }
 
@@ -119,6 +140,16 @@ async function handleApi(request, response, url) {
 
   if (request.method === 'GET' && parts.length === 4 && parts[3] === 'summary') {
     writeJson(response, 200, await readProjectSummary({ cwd: repoRoot, projectName }));
+    return;
+  }
+
+  if (request.method === 'POST' && parts.length === 4 && parts[3] === 'settings') {
+    const body = await readBody(request);
+    writeJson(response, 200, await updateProjectModelForUi({
+      cwd: repoRoot,
+      projectName,
+      model: body.model || DEFAULT_MODEL,
+    }));
     return;
   }
 
@@ -147,6 +178,16 @@ async function handleApi(request, response, url) {
 
   if (request.method === 'POST' && parts.length === 4 && parts[3] === 'delete') {
     writeJson(response, 200, await deleteProject({ cwd: repoRoot, projectName }));
+    return;
+  }
+
+  if (request.method === 'POST' && parts.length === 4 && parts[3] === 'export') {
+    const body = await readBody(request);
+    writeJson(response, 200, await exportChampionForUi({
+      cwd: repoRoot,
+      projectName,
+      outDir: body.outDir || '',
+    }));
     return;
   }
 

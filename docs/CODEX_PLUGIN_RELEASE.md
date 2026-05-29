@@ -8,11 +8,12 @@ The plugin lives at `plugins/skill-rsi` and provides:
 
 - the Skill RSI operator skill
 - a local MCP server
-- native MCP-UI resources with text fallback
+- a default local web-app launch path for Codex desktop
+- optional MCP-UI resources with text fallback
 - static plugin assets
 - a Codex Stop hook example that queues context only
 
-The local app remains the full evidence console. The CLI remains the automation and scripting surface. The plugin is the Codex-native control and inspection surface.
+The local app remains the full evidence console and the default Codex desktop UI surface. The CLI remains the automation and scripting surface. MCP tools are the Codex-native control plane.
 
 ## Preflight
 
@@ -45,16 +46,16 @@ Expected results:
 Install from the repository root:
 
 ```bash
-codex plugins install ./plugins/skill-rsi
+codex plugin add skill-rsi@skill-rsi-local
 ```
 
 Then verify in Codex:
 
 - the Skill RSI operator skill is discoverable
-- asking "Open Skill RSI" can call `skill_rsi_open`
-- `skill_rsi_open` returns readable fallback text
-- hosts with MCP Apps/UI support render the embedded console
-- the console can list projects and show no-project state without errors
+- asking "Open Skill RSI" opens the local web app in the Codex in-app browser/sidebar
+- `http://127.0.0.1:8765/api/capabilities` reports local readiness when the server is running
+- `skill_rsi_open` returns a focused local app launch URL without reading project state
+- hosts with robust MCP Apps/UI support can render the optional `skill_rsi_cockpit` console
 
 If the installed plugin cannot resolve the repository, set:
 
@@ -94,6 +95,7 @@ Acceptable references should be historical, explicitly future-scoped, or absent.
 - no public marketplace publishing is included
 - no personal marketplace mutation is performed
 - MCP-UI host support varies and text fallback is always available
+- Codex desktop defaults to the local web app rather than MCP-UI
 - hooks queue context only
 - model-backed runs are explicit and bounded
 

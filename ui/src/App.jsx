@@ -4,12 +4,14 @@ import {
   ArrowRight, Play, Trophy, Check, CheckCircle2, ArrowUp, Minus, FileText,
   Loader2, Database, Layout, GitPullRequest, MessageSquare, TrendingUp, Scale,
   Beaker, Swords, Search, Flag, Pencil, Trash2, Upload, Sparkles, Package,
-  X, ExternalLink, Clock, Inbox, AlertTriangle, AlertCircle, Terminal, Copy,
+  X, ExternalLink, Clock, Inbox, AlertTriangle, AlertCircle, Terminal, Copy, Download,
 } from 'lucide-react';
 import {
   createProject, deleteProject, fetchProjects, fetchProjectSummary, fetchRunDetail,
-  fetchComparison, fetchSkill, fetchProgress, fetchCapabilities, artifactUrl, runStep,
+  fetchComparison, fetchSkill, fetchProgress, fetchCapabilities, fetchProjectDraft, artifactUrl, runStep,
+  updateProjectSettings, exportChampion,
 } from './api.js';
+import { resolveInitialRoute } from './routing.js';
 
 const STAGES = [
   {
@@ -135,6 +137,7 @@ export default function App() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
+  const [settingsBusy, setSettingsBusy] = useState(false);
   const [loops, setLoops] = useState(3);
   const [stageIdx, setStageIdx] = useState(0);
   const [elapsed, setElapsed] = useState(0);
@@ -153,6 +156,8 @@ export default function App() {
     baselineFiles: [],
     baselineZip: null,
     baselineMarkdown: null,
+    serverDraftId: null,
+    serverBaseline: null,
   });
   const [openAiKey, setOpenAiKey] = useState(() => localStorage.getItem(OPENAI_KEY_STORAGE_KEY) || '');
   const [capabilities, setCapabilities] = useState(null);
@@ -169,6 +174,7 @@ export default function App() {
   const [skillFrom, setSkillFrom] = useState('home');
   const [lightboxImage, setLightboxImage] = useState(null);
   const timers = useRef([]);
+  const initialRouteHandled = useRef(false);
 
   useEffect(() => {
     document.documentElement.dataset.theme = theme;
@@ -181,9 +187,32 @@ export default function App() {
     setLoading(true); setError('');
     try {
       const data = await fetchProjects();
-      setProjects(data.projects || []);
+      const loadedProjects = data.projects || [];
+      setProjects(loadedProjects);
+      if (!initialRouteHandled.current) {
+        initialRouteHandled.current = true;
+        await applyInitialRoute(loadedProjects);
+      }
     } catch (err) { setError(err.message); }
     finally { setLoading(false); }
+  }
+
+  async function applyInitialRoute(loadedProjects) {
+    const route = resolveInitialRoute(window.location.search, loadedProjects);
+    if (route.view === 'create') {
+      if (route.draftId) {
+        try {
+          const serverDraft = await fetchProjectDraft(route.draftId);
+          setDraft(d => mergeServerDraft(d, serverDraft));
+        } catch (err) {
+          setError(err.message);
+        }
+      }
+      setView('create');
+      if (!route.draftId) setError('');
+      return;
+    }
+    if (route.view === 'project') await openProject(route.projectId);
   }
 
   async function deleteProjects(ids) {
@@ -281,17 +310,37 @@ export default function App() {
     } finally { setBusy(false); setProgress(null); }
   }
 
+  async function handleModelChange(model) {
+    if (!selectedId || settingsBusy) return;
+    setSettingsBusy(true); setError('');
+    try {
+      const updated = await updateProjectSettings(selectedId, { model });
+      setSummary(updated);
+      await loadProjects();
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setSettingsBusy(false);
+    }
+  }
+
+  async function handleExportChampion(outDir) {
+    if (!selectedId) return null;
+    return exportChampion(selectedId, { outDir });
+  }
+
   async function handleCreate(e) {
     e.preventDefault();
     setBusy(true); setError('');
     const fromExisting = draft.mode === 'existing';
     try {
-      if (fromExisting && !draft.baselineZip && !draft.baselineFiles?.length && !draft.baselineMarkdown) {
+      const fromServerDraft = Boolean(fromExisting && draft.serverDraftId && draft.serverBaseline);
+      if (fromExisting && !fromServerDraft && !draft.baselineZip && !draft.baselineFiles?.length && !draft.baselineMarkdown) {
         throw new Error('Choose a baseline skill .zip or folder before starting from an existing skill.');
       }
       // Only carry a baseline when starting from an existing skill.
-      const baselineFiles = fromExisting ? await readDraftBaselineFiles(draft.baselineFiles, draft.baselineMarkdown) : [];
-      const baselineArchive = fromExisting ? await readDraftBaselineZip(draft.baselineZip) : null;
+      const baselineFiles = fromExisting && !fromServerDraft ? await readDraftBaselineFiles(draft.baselineFiles, draft.baselineMarkdown) : [];
+      const baselineArchive = fromExisting && !fromServerDraft ? await readDraftBaselineZip(draft.baselineZip) : null;
 
       // Name/goal are optional in the existing-skill path (auto-filled from SKILL.md). Derive
       // sensible fallbacks so the backend's non-empty validation still passes.
@@ -314,6 +363,7 @@ export default function App() {
             outputType: draft.outputType || 'text',
             taskContract: getDraftTaskContract(draft),
             model: draft.model || 'gpt-5.4-mini',
+            draftId: fromServerDraft ? draft.serverDraftId : null,
             baselineFiles,
             baselineArchive,
           });
@@ -331,6 +381,8 @@ export default function App() {
         baselineFiles: [],
         baselineZip: null,
         baselineMarkdown: null,
+        serverDraftId: null,
+        serverBaseline: null,
       });
       await loadProjects();
       await openProject(created.projectId);
@@ -434,7 +486,9 @@ export default function App() {
           inspectLoading={inspectLoading} inspectRunId={inspectRunId}
           evidenceFrom={evidenceFrom} skillFrom={skillFrom}
           onBack={() => { setView('list'); loadProjects(); }}
-          onStart={handleStart} onViewSkill={viewSkill} onOpenRun={openRun}
+          onStart={handleStart} onModelChange={handleModelChange} settingsBusy={settingsBusy}
+          onViewSkill={viewSkill} onOpenRun={openRun}
+          onExportChampion={handleExportChampion}
           onOpenImage={setLightboxImage}
         />
       )}
@@ -459,6 +513,25 @@ function getDraftTaskContract(draft) {
   };
 }
 
+function mergeServerDraft(current, serverDraft) {
+  if (!serverDraft?.id) return current;
+  return {
+    ...current,
+    mode: serverDraft.mode || current.mode,
+    outputType: serverDraft.outputType || current.outputType,
+    model: serverDraft.model || current.model,
+    name: serverDraft.projectName || current.name,
+    goal: serverDraft.goal || current.goal,
+    targetIterations: serverDraft.targetIterations || current.targetIterations,
+    outputTypeSource: serverDraft.outputTypeSource || null,
+    baselineFiles: [],
+    baselineZip: null,
+    baselineMarkdown: null,
+    serverDraftId: serverDraft.id,
+    serverBaseline: serverDraft.baseline || null,
+  };
+}
+
 // --- baseline SKILL.md auto-fill -------------------------------------------
 // Parse YAML frontmatter for the two fields we care about: name + description.
 function parseSkillFrontmatter(text = '') {
@@ -480,6 +553,8 @@ function prettifySkillName(slug = '') {
 }
 
 function getDraftBaselineDisplayName(draft) {
+  if (draft.serverBaseline?.skillName) return prettifySkillName(draft.serverBaseline.skillName);
+  if (draft.serverBaseline?.displayName) return prettifySkillName(draft.serverBaseline.displayName.replace(/\.(zip|md|markdown|txt)$/i, ''));
   const zipName = (draft.baselineZip?.name || '').replace(/\.zip$/i, '');
   if (zipName) return prettifySkillName(zipName);
   const markdownName = (draft.baselineMarkdown?.name || '').replace(/\.(md|markdown|txt)$/i, '');
@@ -685,7 +760,7 @@ function SkillRow({ project, accent, onOpen, editing, selected, onToggle }) {
         {noRuns ? (
           <>
             <div className="skill-sub">No runs yet</div>
-            {!editing && <div className="skill-sub" style={{ color: 'var(--color-info)' }}>Start first loop</div>}
+            {!editing && <div className="skill-sub" style={{ color: 'var(--color-info)' }}>Start iteration</div>}
           </>
         ) : (
           <>
@@ -722,8 +797,10 @@ function CreateView({
   setOpenAiKey,
 }) {
   const existing = draft.mode === 'existing';
-  const hasBaseline = Boolean(draft.baselineZip || draft.baselineFiles?.length || draft.baselineMarkdown);
-  const setMode = mode => setDraft(d => ({ ...d, mode }));
+  const hasBaseline = Boolean(draft.serverBaseline || draft.baselineZip || draft.baselineFiles?.length || draft.baselineMarkdown);
+  const setMode = mode => setDraft(d => mode === 'scratch'
+    ? ({ ...d, mode, serverDraftId: null, serverBaseline: null, baselineZip: null, baselineFiles: [], baselineMarkdown: null })
+    : ({ ...d, mode }));
   const visualRunner = capabilities?.visualRunner || null;
   const visualUnavailable = visualRunner && !visualRunner.available;
   const serverKeyConfigured = Boolean(capabilities?.openai?.keyConfigured);
@@ -777,6 +854,12 @@ function CreateView({
       <div className="eyebrow">New skill</div>
       <h1>Create a skill to improve</h1>
       <p className="lede">Skill RSI evolves a skill over rounds of automated improvement. First, choose where version 1 comes from.</p>
+      {draft.serverDraftId && (
+        <div className="handoff-banner">
+          <CheckCircle2 size={16} />
+          <span>Codex prepared this setup from your attached skill. Review output type and model before creating the project.</span>
+        </div>
+      )}
 
       <div className="mode-grid">
         <button type="button" className={`mode-card${!existing ? ' active' : ''}`}
@@ -824,6 +907,9 @@ function CreateView({
           </p>
         )}
         <p className="field-hint">This controls the artifact Skill RSI expects candidate skills to produce.</p>
+        {draft.serverDraftId && draft.outputTypeSource === 'inferred' && (
+          <p className="field-hint">Suggested by Codex from the skill/request; change it if needed.</p>
+        )}
       </div>
 
       <div className="field">
@@ -899,28 +985,29 @@ function BaselineDropzone({ draft, setDraft }) {
   const zip = draft.baselineZip;
   const folderCount = draft.baselineFiles?.length || 0;
   const md = draft.baselineMarkdown;
+  const serverBaseline = draft.serverBaseline;
 
   async function chooseZip(file) {
     if (!file) return;
     const fm = await readFrontmatterFromZip(file);
-    setDraft(d => ({ ...d, ...applyBaselineAutofill(d, fm), baselineZip: file, baselineFiles: [], baselineMarkdown: null }));
+    setDraft(d => ({ ...d, ...applyBaselineAutofill(d, fm), baselineZip: file, baselineFiles: [], baselineMarkdown: null, serverDraftId: null, serverBaseline: null }));
     setNote('');
   }
   async function chooseMarkdown(file) {
     if (!file) return;
     const fm = await readFrontmatterFromMarkdown(file);
-    setDraft(d => ({ ...d, ...applyBaselineAutofill(d, fm), baselineMarkdown: file, baselineZip: null, baselineFiles: [] }));
+    setDraft(d => ({ ...d, ...applyBaselineAutofill(d, fm), baselineMarkdown: file, baselineZip: null, baselineFiles: [], serverDraftId: null, serverBaseline: null }));
     setNote('');
   }
   async function chooseFolder(files) {
     const arr = Array.from(files || []);
     if (!arr.length) return;
     const fm = await readFrontmatterFromFiles(arr);
-    setDraft(d => ({ ...d, ...applyBaselineAutofill(d, fm), baselineFiles: arr, baselineZip: null, baselineMarkdown: null }));
+    setDraft(d => ({ ...d, ...applyBaselineAutofill(d, fm), baselineFiles: arr, baselineZip: null, baselineMarkdown: null, serverDraftId: null, serverBaseline: null }));
     setNote('');
   }
   function clearSel() {
-    setDraft(d => ({ ...d, baselineZip: null, baselineFiles: [], baselineMarkdown: null }));
+    setDraft(d => ({ ...d, baselineZip: null, baselineFiles: [], baselineMarkdown: null, serverDraftId: null, serverBaseline: null }));
     setNote('');
   }
   function onDrop(e) {
@@ -932,7 +1019,11 @@ function BaselineDropzone({ draft, setDraft }) {
     else setNote('');
   }
 
-  const selected = zip ? zip.name : md ? md.name : folderCount ? `${folderCount} file${folderCount === 1 ? '' : 's'} selected` : null;
+  const selected = zip ? zip.name
+    : md ? md.name
+      : folderCount ? `${folderCount} file${folderCount === 1 ? '' : 's'} selected`
+        : serverBaseline ? serverBaseline.displayName || serverBaseline.skillName || 'Prepared baseline skill'
+          : null;
 
   return (
     <div className={`dropzone${dragOver ? ' over' : ''}`}
@@ -943,7 +1034,7 @@ function BaselineDropzone({ draft, setDraft }) {
       {selected ? (
         <div className="dz-body">
           <b>{selected}</b>
-          <p>This becomes version 1. <button type="button" className="dz-link" onClick={clearSel}>Choose a different one</button></p>
+          <p>{serverBaseline ? 'Prepared from Codex. ' : ''}This becomes version 1. <button type="button" className="dz-link" onClick={clearSel}>Choose a different one</button></p>
         </div>
       ) : (
         <div className="dz-body">
@@ -985,7 +1076,7 @@ function Project(props) {
     skillSource, skillData, compareData, skillLoading, skillFile, setSkillFile,
     inspectDetail, inspectComparison, inspectLoading, inspectRunId,
     evidenceFrom, skillFrom,
-    onBack, onStart, onViewSkill, onOpenRun, onOpenImage,
+    onBack, onStart, onModelChange, settingsBusy, onViewSkill, onOpenRun, onExportChampion, onOpenImage,
   } = props;
 
   const runs = summary.state.runCount || 0;
@@ -1052,10 +1143,16 @@ function Project(props) {
           ) : (
             <>
               <NextLoopPremise premise={summary.history?.nextLoopPremise} />
-              <RunBar summary={summary} loops={loops} setLoops={setLoops} busy={busy} onStart={onStart} />
+              <RunBar summary={summary} loops={loops} setLoops={setLoops} busy={busy}
+                settingsBusy={settingsBusy} onStart={onStart} onModelChange={onModelChange} />
               {runDetail?.recommendation && (
                 <Verdict summary={summary} runDetail={runDetail} comparison={comparison}
                   busy={busy} onStart={onStart} onEvidence={() => onOpenRun(null, 'home')} />
+              )}
+              {summary.state.currentChampion && (
+                <ProjectActions summary={summary} loops={loops} busy={busy}
+                  onStart={onStart} onViewChampion={() => onViewSkill('champion')}
+                  onExportChampion={onExportChampion} />
               )}
               <div className="grid home">
                 <ChampionCard summary={summary} runDetail={runDetail} comparison={comparison} onViewSkill={onViewSkill} />
@@ -1088,7 +1185,7 @@ function NextLoopPremise({ premise }) {
   );
 }
 
-function RunBar({ summary, loops, setLoops, busy, onStart }) {
+function RunBar({ summary, loops, setLoops, busy, settingsBusy, onStart, onModelChange }) {
   const [automationOpen, setAutomationOpen] = useState(false);
   const policy = summary.state.runPolicy || summary.config?.trigger || {};
   const budget = summary.config?.budget || {};
@@ -1097,9 +1194,10 @@ function RunBar({ summary, loops, setLoops, busy, onStart }) {
   const automation = summary.automation || null;
   const taskContractLabel = formatTaskContract(summary.config?.eval?.taskContract);
   const modelLabel = summary.config?.models?.agent || 'gpt-5.4-mini';
+  const hasRuns = (summary.state.runCount || 0) > 0;
   const automationState = describeAutomation(automation);
   const StatusIcon = automationState.icon;
-  const runDisabled = busy || automation?.locked;
+  const runDisabled = busy || settingsBusy || automation?.locked;
   return (
     <div className="run-bar">
       <div className="run-bar-main">
@@ -1117,9 +1215,25 @@ function RunBar({ summary, loops, setLoops, busy, onStart }) {
           </div>
         </div>
         <button className="btn primary" disabled={runDisabled} onClick={() => onStart(loops)}>
-          {busy || automation?.locked ? <Loader2 size={16} className="spin" /> : <Play size={16} />}
-          {automation?.locked ? 'Running…' : summary.state.runCount > 0 ? 'Run next loop(s)' : 'Start first loop'}
+          {busy || settingsBusy || automation?.locked ? <Loader2 size={16} className="spin" /> : <Play size={16} />}
+          {automation?.locked ? 'Running…' : hasRuns ? 'Run next iteration(s)' : 'Start iteration'}
         </button>
+      </div>
+      <div className="run-settings">
+        <label className="run-setting">
+          <span>Model</span>
+          <select value={modelLabel} disabled={hasRuns || busy || settingsBusy || automation?.locked}
+            onChange={e => onModelChange?.(e.target.value)}>
+            {OPENAI_MODELS.map(model => (
+              <option key={model.id} value={model.id}>{model.label}</option>
+            ))}
+          </select>
+        </label>
+        <span className="run-setting-note">
+          {hasRuns
+            ? 'Model is fixed after iterations exist.'
+            : `${(OPENAI_MODELS.find(model => model.id === modelLabel) || OPENAI_MODELS[0]).note} Used for agent, generation, judge, and scheduler commands.`}
+        </span>
       </div>
       <div className={`automation-line ${automationState.kind}`}>
         <span className="automation-copy">
@@ -1195,7 +1309,7 @@ function AutomationPanel({ automation }) {
         queue · waiting {pending.count || 0} · processing {processing} · processed {processed} · skipped {skipped} · failed {failed.count || 0}
       </div>
       <details className="automation-setup">
-        <summary>Set up or change automatic runs</summary>
+        <summary>Set up scheduled runs</summary>
         <div className="automation-setup-grid">
           <div className="automation-setup-block">
             <div className="automation-setup-title"><Clock size={15} /> On a schedule</div>
@@ -1511,6 +1625,56 @@ function ChevronRightInline() {
   return <ChevronDown size={14} />;
 }
 
+function ProjectActions({ summary, loops, busy, onStart, onViewChampion, onExportChampion }) {
+  const [exportOpen, setExportOpen] = useState(false);
+  const [outDir, setOutDir] = useState(`exports/${summary.projectId}-champion`);
+  const [exportState, setExportState] = useState({ busy: false, message: '', error: '' });
+
+  async function submitExport(e) {
+    e.preventDefault();
+    if (!onExportChampion || exportState.busy) return;
+    setExportState({ busy: true, message: '', error: '' });
+    try {
+      const result = await onExportChampion(outDir);
+      setExportState({
+        busy: false,
+        message: `Exported ${result.fileCount} file${result.fileCount === 1 ? '' : 's'} to ${result.outDir}.`,
+        error: '',
+      });
+    } catch (err) {
+      setExportState({ busy: false, message: '', error: err.message });
+    }
+  }
+
+  return (
+    <div className="next-actions">
+      <div className="next-actions-copy">
+        <span className="card-label">Next actions</span>
+        <p>Leave this champion in place, run another iteration, inspect it, or export the package.</p>
+      </div>
+      <div className="next-action-buttons">
+        <span className="pill">Leave as champion</span>
+        <button className="btn" disabled={busy} onClick={() => onStart(loops)}>
+          {busy ? <Loader2 size={15} className="spin" /> : <RefreshCw size={15} />} Run another iteration
+        </button>
+        <button className="btn" onClick={onViewChampion}><FileText size={15} /> View champion</button>
+        <button className="btn" onClick={() => setExportOpen(!exportOpen)}><Download size={15} /> Export champion</button>
+      </div>
+      {exportOpen && (
+        <form className="export-row" onSubmit={submitExport}>
+          <input value={outDir} onChange={e => setOutDir(e.target.value)}
+            aria-label="Champion export directory" />
+          <button className="btn primary" disabled={exportState.busy}>
+            {exportState.busy ? <Loader2 size={15} className="spin" /> : <Download size={15} />} Export
+          </button>
+          {exportState.message && <span className="export-note success">{exportState.message}</span>}
+          {exportState.error && <span className="export-note error">{exportState.error}</span>}
+        </form>
+      )}
+    </div>
+  );
+}
+
 /* ---------------- champion ---------------- */
 
 function ChampionCard({ summary, runDetail, comparison, onViewSkill }) {
@@ -1520,7 +1684,7 @@ function ChampionCard({ summary, runDetail, comparison, onViewSkill }) {
     return (
       <div className="card">
         <p className="card-label">Current champion</p>
-        <p className="muted">No champion yet. Run your first loop to generate, evaluate, and crown one.</p>
+        <p className="muted">No champion yet. Start an iteration to generate, evaluate, and crown one.</p>
       </div>
     );
   }
@@ -1599,7 +1763,7 @@ function HistoryScreen({ summary, onOpenRun }) {
   const total = summary.history?.trajectoryLength || traj.length;
   const offset = total - traj.length;
   const champ = summary.state.currentChampion;
-  if (traj.length === 0) return <div className="empty">No history yet — run your first loop.</div>;
+  if (traj.length === 0) return <div className="empty">No history yet — start an iteration.</div>;
   const rows = traj.map((item, i) => ({ item, iterNum: offset + i + 1 })).reverse();
   const promotes = traj.filter(t => t.decision === 'promote').length;
   return (

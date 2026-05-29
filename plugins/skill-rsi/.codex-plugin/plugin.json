@@ -1,27 +1,31 @@
 {
   "name": "skill-rsi",
-  "version": "0.1.0",
-  "description": "Create, inspect, and improve Skill RSI projects from Codex.",
+  "version": "0.1.0+codex.20260529231500",
+  "description": "Open the Skill RSI local app and prepare fresh Agent Skill improvement projects from Codex.",
   "author": {
-    "name": "Skill RSI"
+    "name": "Justin Wetch"
   },
   "skills": "./skills/",
   "mcpServers": "./.mcp.json",
   "interface": {
     "displayName": "Skill RSI",
     "shortDescription": "Create and improve Agent Skills with local recursive evaluation loops.",
-    "longDescription": "Skill RSI gives Codex a local control surface for creating, improving, inspecting, scheduling, and exporting Agent Skill projects through research-grounded champion-vs-challenger improvement loops.",
-    "developerName": "Skill RSI",
+    "longDescription": "Skill RSI turns Agent Skill development into a recursive experiment loop: Codex researches the goal, builds or improves a champion skill, tests a focused challenger against it, and repeats with the evidence preserved.",
+    "developerName": "Justin Wetch",
     "category": "Productivity",
     "brandColor": "#18191D",
-    "composerIcon": "./assets/icon.svg",
-    "logo": "./assets/icon.svg",
+    "composerIcon": "./assets/icon.png",
+    "logo": "./assets/icon.png",
     "capabilities": [
       "Agent Skill improvement",
       "SkillEval-style evaluation",
       "Local project operation",
       "Codex hook context capture"
     ],
-    "defaultPrompt": "Open Skill RSI and help me create or improve an Agent Skill."
+    "defaultPrompt": [
+      "Open Skill RSI.",
+      "Create a new Skill RSI project.",
+      "Improve an existing Agent Skill."
+    ]
   }
 }

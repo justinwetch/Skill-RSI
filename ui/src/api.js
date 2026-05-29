@@ -13,8 +13,19 @@ export async function fetchCapabilities() {
   return request('/api/capabilities');
 }
 
+export async function fetchProjectDraft(draftId) {
+  return request(`/api/drafts/${encodeURIComponent(draftId)}`);
+}
+
 export async function fetchProjectSummary(projectId) {
   return request(`/api/projects/${encodeURIComponent(projectId)}/summary`);
+}
+
+export async function updateProjectSettings(projectId, payload = {}) {
+  return request(`/api/projects/${encodeURIComponent(projectId)}/settings`, {
+    method: 'POST',
+    body: JSON.stringify(payload),
+  });
 }
 
 export async function fetchRunDetail(projectId, runId = 'latest') {
@@ -27,6 +38,13 @@ export async function fetchComparison(projectId, runId = 'latest') {
 
 export async function deleteProject(projectId) {
   return request(`/api/projects/${encodeURIComponent(projectId)}/delete`, { method: 'POST' });
+}
+
+export async function exportChampion(projectId, payload = {}) {
+  return request(`/api/projects/${encodeURIComponent(projectId)}/export`, {
+    method: 'POST',
+    body: JSON.stringify(payload),
+  });
 }
 
 export async function fetchProgress(projectId) {

@@ -196,6 +196,12 @@ input, textarea, select { font-family: inherit; }
 .run-bar .copy { display: flex; flex-direction: column; align-items: flex-start; gap: 5px; font-size: 15px; color: var(--color-text-secondary); }
 .run-bar .subtle { font-size: 12px; color: var(--color-text-muted); }
 .num { width: 64px; text-align: center; border: 1px solid var(--color-border); background: var(--color-bg-secondary); color: var(--color-text-primary); border-radius: var(--radius-md); padding: 8px 6px; font-size: 14px; }
+.run-settings { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; font-size: 13px; color: var(--color-text-secondary); }
+.run-setting { display: inline-flex; align-items: center; gap: 8px; }
+.run-setting span { color: var(--color-text-muted); font-size: 12px; }
+.run-setting select { border: 1px solid var(--color-border); background: var(--color-bg-secondary); color: var(--color-text-primary); border-radius: var(--radius-md); padding: 7px 28px 7px 10px; font-size: 13px; }
+.run-setting select:disabled { opacity: 0.7; }
+.run-setting-note { color: var(--color-text-muted); font-size: 12px; line-height: 1.4; }
 input:focus, textarea:focus, select:focus, .num:focus { outline: none; border-color: var(--color-accent); box-shadow: 0 0 0 3px var(--color-accent-subtle); }
 .automation-line { display: flex; align-items: center; justify-content: space-between; gap: 12px; border-top: 1px solid var(--color-border); padding-top: 12px; font-size: 13px; color: var(--color-text-secondary); }
 .automation-copy { display: inline-flex; align-items: center; gap: 8px; min-width: 0; }
@@ -254,6 +260,15 @@ input:focus, textarea:focus, select:focus, .num:focus { outline: none; border-co
 .next-steps { display: grid; gap: 6px; margin-top: 10px; font-size: 13px; }
 .next-steps div { display: flex; gap: 8px; }
 .next-steps b { color: var(--color-text-primary); font-weight: 500; min-width: 74px; }
+.next-actions { border: 1px solid var(--color-border); background: var(--color-bg-secondary); border-radius: var(--radius-lg); padding: 15px 16px; margin: 0 0 20px; display: grid; gap: 12px; }
+.next-actions-copy p { margin: 4px 0 0; color: var(--color-text-secondary); font-size: 13px; line-height: 1.5; }
+.next-action-buttons { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.export-row { display: grid; grid-template-columns: minmax(180px, 1fr) auto; gap: 8px; align-items: center; }
+.export-row input { min-width: 0; border: 1px solid var(--color-border); background: var(--color-bg-tertiary); color: var(--color-text-primary); border-radius: var(--radius-md); padding: 9px 11px; font-size: 13px; }
+.export-note { grid-column: 1 / -1; font-size: 12px; line-height: 1.45; }
+.export-note.success { color: var(--color-success); }
+.export-note.error { color: var(--color-error); }
+@media (max-width: 640px) { .export-row { grid-template-columns: 1fr; } }
 
 /* ===== champion / kv ===== */
 .kv { display: grid; grid-template-columns: auto 1fr; gap: 9px 16px; font-size: 14px; margin: 0; }
@@ -476,6 +491,8 @@ input:focus, textarea:focus, select:focus, .num:focus { outline: none; border-co
 .eyebrow { font-size: 12px; text-transform: uppercase; letter-spacing: 0.06em; color: var(--color-text-muted); margin-bottom: 8px; }
 .create h1 { font-size: 2rem; margin: 0 0 8px; font-weight: 600; }
 .create p.lede { color: var(--color-text-secondary); margin: 0 0 24px; }
+.handoff-banner { display: flex; align-items: flex-start; gap: 9px; border: 1px solid var(--color-info); background: var(--color-info-subtle); color: var(--color-text-primary); border-radius: var(--radius-md); padding: 11px 13px; margin: -8px 0 22px; font-size: 13px; line-height: 1.5; }
+.handoff-banner svg { flex-shrink: 0; margin-top: 2px; color: var(--color-info); }
 .field { display: block; margin-bottom: 18px; }
 .field > span { display: block; font-size: 14px; color: var(--color-text-secondary); margin-bottom: 7px; }
 .field input, .field textarea, .field select { width: 100%; border: 1px solid var(--color-border); background: var(--color-bg-tertiary); color: var(--color-text-primary); border-radius: var(--radius-md); padding: 10px 13px; font-size: 15px; }

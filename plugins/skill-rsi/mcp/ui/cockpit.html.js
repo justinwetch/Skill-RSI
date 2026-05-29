@@ -1,5 +1,5 @@
 const TOOL_NAMES = {
-  open: 'skill_rsi_open',
+  open: 'skill_rsi_cockpit',
   createProject: 'skill_rsi_create_project',
   runNext: 'skill_rsi_run_next',
   runWithContext: 'skill_rsi_run_with_context',
@@ -144,7 +144,7 @@ export function renderCockpitHtml(state) {
     </div>
   </div>
   <script>
-    const state = ${dataJson};
+    let state = ${dataJson};
     const tools = ${JSON.stringify(TOOL_NAMES)};
     const $ = (id) => document.getElementById(id);
     let evidenceTab = 'summary';
@@ -168,15 +168,36 @@ export function renderCockpitHtml(state) {
     }
     function navParams(view, extra = {}) {
       const projectName = state.selectedProject?.projectId || state.requestedProjectId || undefined;
-      return Object.assign({ projectName, view }, extra);
+      return Object.assign({ projectName, view, existingProjectIntent: true }, extra);
     }
     function openView(view, extra = {}) { postTool(tools.open, navParams(view, extra)); }
+    function stateFromToolOutput(toolOutput) {
+      if (!toolOutput) return null;
+      if (toolOutput.structuredContent?.schemaVersion === 1) return toolOutput.structuredContent;
+      if (toolOutput.schemaVersion === 1) return toolOutput;
+      return null;
+    }
+    function applyState(nextState) {
+      if (!nextState) return;
+      state = nextState;
+      evidenceTab = 'summary';
+      openPrompt = null;
+      skillFilePath = state.selectedFilePath || null;
+      shell();
+    }
     window.addEventListener('message', (event) => {
+      if (event.data?.type === 'ui-lifecycle-iframe-render-data') {
+        const nextState = stateFromToolOutput(event.data?.payload?.renderData?.toolOutput);
+        if (nextState) applyState(nextState);
+        return;
+      }
       const payload = event.data?.payload;
       if (event.data?.type === 'ui-message-response' && payload) {
         $('messages').textContent = payload.error ? 'Tool call failed: ' + JSON.stringify(payload.error) : 'Tool call completed. Reopen or refresh the console to see updated state.';
       }
     });
+    window.parent.postMessage({ type: 'ui-lifecycle-iframe-ready' }, '*');
+    window.parent.postMessage({ type: 'ui-request-render-data', messageId: 'skill-rsi-render-' + Date.now() }, '*');
     document.addEventListener('keydown', event => { if (event.key === 'Escape') closeLightbox(); });
 
     function renderNav() {
@@ -207,7 +228,7 @@ export function renderCockpitHtml(state) {
       const projects = state.projects || [];
       if (!projects.length) return '';
       return '<div class="project-list">' + projects.map(project =>
-        '<button class="project-button" onclick="postTool(tools.open, { projectName: \\'' + esc(project.projectId) + '\\' })"><strong>' + esc(project.projectId) + '</strong><br><span class="muted">' + esc(project.goal || 'No goal') + '</span></button>'
+        '<button class="project-button" onclick="postTool(tools.open, { projectName: \\'' + esc(project.projectId) + '\\', existingProjectIntent: true })"><strong>' + esc(project.projectId) + '</strong><br><span class="muted">' + esc(project.goal || 'No goal') + '</span></button>'
       ).join('') + '</div>';
     }
     function createFormHtml() {
@@ -244,8 +265,8 @@ export function renderCockpitHtml(state) {
       const selected = state.selectedProject?.projectId || '';
       const projects = state.projects || [];
       return '<h2>Projects</h2><div class="project-list">' + projects.map(project =>
-        '<button class="project-button" aria-current="' + (project.projectId === selected) + '" onclick="postTool(tools.open, { projectName: \\'' + esc(project.projectId) + '\\' })"><strong>' + esc(project.projectId) + '</strong><br><span class="muted">' + esc(project.goal || 'No goal') + '</span></button>'
-      ).join('') + '</div><div class="actions"><button class="secondary" onclick="postTool(tools.open, { projectName: \\'' + esc(selected) + '\\' })">Refresh</button></div>';
+        '<button class="project-button" aria-current="' + (project.projectId === selected) + '" onclick="postTool(tools.open, { projectName: \\'' + esc(project.projectId) + '\\', existingProjectIntent: true })"><strong>' + esc(project.projectId) + '</strong><br><span class="muted">' + esc(project.goal || 'No goal') + '</span></button>'
+      ).join('') + '</div><div class="actions"><button class="secondary" onclick="postTool(tools.open, { projectName: \\'' + esc(selected) + '\\', existingProjectIntent: true })">Refresh</button></div>';
     }
     function stateHtml() {
       const selected = state.selectedProject;
@@ -253,7 +274,7 @@ export function renderCockpitHtml(state) {
       return '<h2>Current state</h2>' +
         row('Project', selected.projectId) + row('Champion', state.champion?.available ? 'Champion available' : 'No champion yet') +
         row('Runs', selected.state?.runCount || 0) + row('Output', selected.config?.eval?.outputType || 'text') +
-        '<div class="actions"><button onclick="postTool(tools.runNext, { projectName: \\'' + esc(selected.projectId) + '\\', loops: ' + Number(target) + ', mode: \\'agentic\\', evalMode: \\'real\\' })">' + esc(state.runAction?.label || 'Run target batch') + '</button></div>' +
+        '<div class="actions"><button onclick="postTool(tools.runNext, { projectName: \\'' + esc(selected.projectId) + '\\', loops: ' + Number(target) + ', mode: \\'agentic\\', evalMode: \\'real\\', runIntent: true })">' + esc(state.runAction?.label || 'Run target batch') + '</button></div>' +
         '<p class="muted">This can start model-backed work and may spend API budget.</p>';
     }
     function nextPlanHtml() {
@@ -438,7 +459,7 @@ export function renderCockpitHtml(state) {
       return '<h2>Automation and context</h2>' + row('State', statusLabel(automation.status || state.status)) + row('Queued context', inbox.count || 0) +
         hookContextDetailHtml(inbox) +
         '<div class="actions">' +
-        '<button ' + (state.contextRunAction?.enabled ? '' : 'disabled') + ' onclick="postTool(tools.runWithContext, { projectName: \\'' + esc(state.selectedProject?.projectId || '') + '\\', loops: 1, mode: \\'agentic\\', evalMode: \\'real\\' })">' + esc(state.contextRunAction?.label || 'Run one loop with queued Codex context') + '</button>' +
+        '<button ' + (state.contextRunAction?.enabled ? '' : 'disabled') + ' onclick="postTool(tools.runWithContext, { projectName: \\'' + esc(state.selectedProject?.projectId || '') + '\\', loops: 1, mode: \\'agentic\\', evalMode: \\'real\\', runIntent: true })">' + esc(state.contextRunAction?.label || 'Run one loop with queued Codex context') + '</button>' +
         '<button class="secondary" onclick="recordContext()">Record visible context</button>' +
         '</div>' +
         (state.contextRunAction?.disabledReason ? '<p class="muted">' + esc(state.contextRunAction.disabledReason) + '</p>' : '<p class="muted">This starts one model-backed loop and consumes the queued context as the next run premise.</p>') +
@@ -460,7 +481,7 @@ export function renderCockpitHtml(state) {
     }
     function exportHtml() {
       const projectId = state.selectedProject?.projectId || '';
-      return '<h2>Champion export</h2><p class="muted">Export the current champion package to a local directory.</p><label>Output directory<input id="export-dir" placeholder="/absolute/path/to/exported-skill"></label><div class="actions"><button ' + (state.champion?.available ? '' : 'disabled') + ' onclick="postTool(tools.exportChampion, { projectName: \\'' + esc(projectId) + '\\', outDir: document.getElementById(\\'export-dir\\').value })">Export champion</button></div>';
+      return '<h2>Champion export</h2><p class="muted">Export the current champion package to a local directory.</p><label>Output directory<input id="export-dir" placeholder="/absolute/path/to/exported-skill"></label><div class="actions"><button ' + (state.champion?.available ? '' : 'disabled') + ' onclick="postTool(tools.exportChampion, { projectName: \\'' + esc(projectId) + '\\', outDir: document.getElementById(\\'export-dir\\').value, existingProjectIntent: true })">Export champion</button></div>';
     }
     function recordContext() {
       if (!state.selectedProject) return;

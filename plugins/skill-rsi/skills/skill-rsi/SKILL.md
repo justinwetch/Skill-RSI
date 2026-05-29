@@ -1,6 +1,6 @@
 ---
 name: skill-rsi
-description: Use when the user wants to create, improve, evaluate, inspect, run, schedule, automate, or export Skill RSI projects or Agent Skill improvement loops. Prefer Skill RSI's existing UI and CLI surfaces until MCP tools are available.
+description: Use when the user wants to create, improve, evaluate, inspect, run, schedule, automate, or export Skill RSI projects or Agent Skill improvement loops. In Codex desktop, every Skill RSI invocation must open the local Skill RSI web app/sidebar first.
 ---
 
 # Skill RSI Operator
@@ -20,17 +20,46 @@ Do not describe human approval as part of the default RSI loop. The user sets go
 
 ## Current Surfaces
 
-This plugin provides a Skill RSI operator skill, a local MCP control plane, and a native MCP-UI console through `skill_rsi_open` where the host supports MCP Apps/UI rendering.
+This plugin provides a Skill RSI operator skill, the local Skill RSI web app, a local MCP control plane, and an optional MCP-UI cockpit through `skill_rsi_cockpit` where the host robustly supports MCP Apps/UI rendering. In Codex desktop, the local web app in the in-app browser/sidebar is the product surface.
 
 Use the existing surfaces:
 
-- Local app: best for project setup, watching live runs, reviewing evidence, viewing visual screenshots, and inspecting skill packages.
-- CLI: best for reproducible local operation, project creation, baseline import, progress checks, scheduling, hooks, and export.
-- MCP tools: best for structured Codex operation of common project actions without shell-command guessing.
-- MCP-UI console: best for guided embedded project setup, current state, history, detailed run evidence, visual screenshots, skill package inspection, target-batch runs, explicit hook-informed runs, context queueing, and champion export when host support is available.
+- Local app: default Codex surface for every Skill RSI request in Codex desktop, and best for project setup, watching live runs, reviewing evidence, viewing visual screenshots, and inspecting skill packages.
+- `skill_rsi_open`: returns the local app URL for Browser/sidebar launch. It does not inspect projects or start loops.
+- MCP tools: prepare state for the local app or perform explicit follow-up actions only after the user asks.
+- MCP-UI cockpit: optional explicit existing-project inspection fallback. Do not use it as the default Codex desktop launch path.
+- CLI: best for reproducible local operation, scheduling, hooks, and export when a MCP tool does not cover the task.
 - Documentation: use `docs/HOW_IT_WORKS.md`, `docs/SCHEDULING.md`, `docs/CODEX_HOOKS.md`, and `docs/CODEX_PLUGIN_SURFACE_PLAN.md` as source-of-truth context.
 
-Prefer MCP tools for supported project operations. Prefer exact Skill RSI CLI commands over invented workflows when no MCP tool covers the task. If you are uncertain whether a command exists, inspect `node src/cli.js --help` before suggesting it.
+## App-First Invariant
+
+If the user's request invokes Skill RSI in Codex desktop, the first visible outcome must be the local web app in the Codex sidebar. This applies to creating projects, improving a baseline skill, inspecting evidence, viewing history, scheduling, hook setup, exporting champions, or starting a guided project flow.
+
+The chat should not become the primary Skill RSI control surface. Use chat only to resolve missing required inputs, report failures, or state the one action just taken.
+
+Use this sequence for every Skill RSI request:
+
+1. If a fresh project/import is needed, call `skill_rsi_prepare_project` with any known name, goal, baseline path, model, and output type. This prepares the create screen; it does not create a project.
+2. Call `skill_rsi_open` with the existing project ID or with `create: true` and the prepared draft ID.
+3. If `skill_rsi_open` reports the server is not reachable, start `npm run server` from the Skill RSI repository root, then call `skill_rsi_open` again.
+4. Use the Browser plugin to show the returned `launchUrl` in the Codex in-app browser/sidebar.
+5. Reply with one terse line such as `Opened Skill RSI setup.`
+
+After opening the app, stop. Do not summarize project choices, conduct a parameter interview, recommend a run, inspect progress, create the project, or inspect old projects unless the user explicitly asks.
+
+Use `skill_rsi_create_project` only when the user explicitly provides or requests the setup choices in chat and asks Codex to create the project directly. Plain "improve this skill" requests should land on the prefilled setup screen so the user can choose output artifact type, model, and other irreversible setup choices in the UI.
+
+Use `skill_rsi_cockpit` only when the user specifically asks for the MCP console/cockpit or the local web app cannot be opened. It requires explicit existing-project intent.
+
+## Fresh-Run Default
+
+Default to a new Skill RSI run/project flow when the user says "improve this skill", "use Skill RSI on this", "run Skill RSI", or otherwise invokes Skill RSI without naming an existing project or past run.
+
+Do not inspect, summarize, or select from past Skill RSI projects before starting that fresh flow unless the user explicitly asks for prior results, history, evidence, an existing champion, a named project, or a specific run. Existing projects are relevant only when the user refers to them.
+
+When a target skill path or package is clear, treat it as a new baseline input. Prepare a fresh setup draft for the local app, then open the app. If a generated project name would collide with an existing project, use a fresh suffixed project name such as `<base>-2` for the draft; do not inspect the old project and do not turn the interaction into a review of old projects.
+
+Name collisions are not a reason to inspect past projects. For fresh flows, use a new project name instead.
 
 ## Operating Rules
 
@@ -42,27 +71,47 @@ Prefer MCP tools for supported project operations. Prefer exact Skill RSI CLI co
 - Do not invent project state. Use the app, CLI, or project files to inspect current truth.
 - Preserve Skill RSI terminology: champion, challenger, cold-start duel, next loop plan, prompt bank, ontology, deconstruction, promotion gate.
 
-## MCP Tool Preference
+## No Manual Skill Editing
 
-When available, prefer these tools for supported actions:
+When this Skill RSI plugin is invoked, never substitute normal Codex file editing for Skill RSI improvement.
 
-- `skill_rsi_doctor`: inspect local readiness without exposing secrets.
-- `skill_rsi_open`: open the native console or return a text fallback.
-- `skill_rsi_list_projects`: list local projects.
-- `skill_rsi_create_project`: create a scratch or baseline project.
-- `skill_rsi_run_next`: start bounded manual loop execution.
-- `skill_rsi_run_with_context`: consume queued Codex context and start one explicit hook-informed loop.
-- `skill_rsi_progress`: inspect run progress.
-- `skill_rsi_get_run_detail`: read detailed run artifacts.
-- `skill_rsi_get_run_comparison`: read run comparison metadata.
-- `skill_rsi_get_skill_content`: read selected package files.
-- `skill_rsi_get_evidence`: read prompt-level evaluation evidence.
-- `skill_rsi_get_next_loop_plan`: read the current next-loop premise.
-- `skill_rsi_get_champion`: read champion metadata and `SKILL.md`.
-- `skill_rsi_export_champion`: export the champion package.
-- `skill_rsi_record_context`: queue explicit context without running a loop.
+If the user says "improve this skill", "improve a skill", references a `SKILL.md`, attaches a skill package, or asks to make an Agent Skill better in a Skill RSI context:
 
-Tell the user before using `skill_rsi_run_next`, `skill_rsi_run_with_context`, or the console's run action, because these can start model-backed work depending on mode and eval settings. Do not describe hook autorun as available; Codex hooks queue context only unless the user explicitly invokes a normal Skill RSI runner.
+- Treat the referenced skill as a Skill RSI baseline/input, not as a file to patch by hand.
+- Do not manually rewrite, patch, copy over, or create a replacement `SKILL.md` for the target skill.
+- Do not edit adjacent skill files, project files, or package contents to "fold in" ideas from Skill RSI evidence.
+- Do not use `apply_patch`, shell writes, file copies, or editor actions to modify the target skill package.
+- Do not inspect other local skills and synthesize a direct manual rewrite unless the user explicitly stops using Skill RSI and asks for ordinary file editing.
+- For plain "improve this skill" requests, prepare a fresh Skill RSI setup draft with that skill as the baseline and open the setup screen.
+- Inspect or export an existing champion only when the user explicitly asks for prior project data or export.
+
+Allowed actions in Skill RSI mode are limited to:
+
+- opening the local Skill RSI web app,
+- preparing or creating/importing Skill RSI projects,
+- inspecting project state, progress, history, evidence, champions, challengers, and next-loop plans only after explicit existing-project intent,
+- running explicit bounded Skill RSI loops only after explicit run intent,
+- queueing or consuming hook/context through Skill RSI machinery,
+- exporting a promoted champion package through Skill RSI.
+
+Only export a champion to a user-specified destination when the user asks for export. Exporting is not the same as silently overwriting the original baseline skill.
+
+## Model-Budget Language
+
+Do not invent "budget approval" gates for ordinary Skill RSI operations.
+
+Opening the app, checking readiness, listing projects, creating a project, importing a baseline, inspecting evidence, reading a champion, queueing context, or exporting a champion does not require model-budget approval.
+
+Starting a real/agentic improvement loop can spend API budget. If the user explicitly asks to run a bounded loop, proceed and state that it is starting model-backed work. If the user only asks to inspect, open, create/import, or prepare a project, do not ask for run approval and do not start a loop.
+
+## MCP Tool Boundaries
+
+- `skill_rsi_open` is always safe: it returns a local app URL and server readiness only.
+- `skill_rsi_prepare_project` is the default fresh-flow tool. It writes a setup draft and returns a `?create=1&draft=<id>` URL so the user can confirm output type and model before project creation.
+- `skill_rsi_create_project` creates immediately. Use it only when the user explicitly asks Codex to create the project directly after setup choices are clear; it is fresh by default and auto-suffixes name collisions.
+- `skill_rsi_list_projects`, `skill_rsi_progress`, `skill_rsi_get_*`, `skill_rsi_export_champion`, and `skill_rsi_cockpit` are follow-up inspection/export tools. Use them only when the user explicitly asks for existing project data, and pass `existingProjectIntent: true`.
+- `skill_rsi_run_next` and `skill_rsi_run_with_context` start bounded run machinery. Use them only when the user explicitly asks Codex to run, and pass `runIntent: true`.
+- Do not describe hook autorun as available; Codex hooks queue context only unless the user explicitly invokes a normal Skill RSI runner.
 
 ## Useful CLI Shapes
 
@@ -84,8 +133,11 @@ For Codex hook context capture, prefer the example in `plugins/skill-rsi/hooks/c
 
 When helping a user operate Skill RSI:
 
-1. Identify the project state first.
-2. Recommend the next valid action.
-3. Use existing app/CLI/docs behavior.
-4. State when an action will spend model budget.
-5. Keep implementation details concise unless the user asks for a deeper audit.
+1. For any Skill RSI request in Codex desktop, open the local web app in the in-app browser/sidebar first.
+2. If the user did not explicitly ask for prior project data, assume a fresh Skill RSI run/project flow.
+3. If a target skill is referenced, keep it as a Skill RSI baseline/input and never hand-edit it.
+4. Do not recommend a next action after launch unless the user asks.
+5. Use existing app/CLI/docs behavior.
+6. State when an action will start model-backed work, but do not ask for budget approval for non-run operations.
+7. Keep implementation details concise unless the user asks for a deeper audit.
+8. Prefer a one-line handoff after opening the app, such as `Opened Skill RSI for <project>.`

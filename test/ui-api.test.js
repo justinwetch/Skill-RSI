@@ -6,13 +6,18 @@ import path from 'node:path';
 import { Buffer } from 'node:buffer';
 import { runProject } from '../src/lib/run-loop.js';
 import {
+  createProjectDraftForUi,
+  createProjectFromDraftForUi,
   createProjectForUi,
+  exportChampionForUi,
+  readProjectDraftForUi,
   readProjectSummaries,
   readProjectSummary,
   readRunComparison,
   readRunDetail,
   readRunProgress,
   recordHumanDecision,
+  updateProjectModelForUi,
 } from '../src/lib/ui-api.js';
 import { recordHookEvent } from '../src/lib/hooks.js';
 
@@ -235,6 +240,161 @@ test('ui api stores the selected project model across all model roles', async ()
   });
 
   assert.equal(fallback.config.models.agent, 'gpt-5.4-mini');
+});
+
+test('ui api updates project model before the first iteration only', async () => {
+  const cwd = await fs.mkdtemp(path.join(os.tmpdir(), 'skill-rsi-ui-api-update-model-'));
+
+  const created = await createProjectForUi({
+    cwd,
+    projectName: 'Model Update Project',
+    goal: 'Change model before running.',
+  });
+  assert.match(created.automation.commands.cron, /--agent-model gpt-5\.4-mini/);
+
+  const updated = await updateProjectModelForUi({
+    cwd,
+    projectName: 'Model Update Project',
+    model: 'gpt-5.5',
+  });
+  assert.equal(updated.config.models.agent, 'gpt-5.5');
+  assert.equal(updated.config.models.generation, 'gpt-5.5');
+  assert.equal(updated.config.models.judge, 'gpt-5.5');
+  assert.match(updated.automation.commands.cron, /--agent-model gpt-5\.5/);
+
+  await runProject({
+    cwd,
+    projectName: 'Model Update Project',
+    goal: 'Change model before running.',
+    loops: 1,
+    mode: 'mock',
+  });
+
+  await assert.rejects(
+    () => updateProjectModelForUi({
+      cwd,
+      projectName: 'Model Update Project',
+      model: 'gpt-5.4-mini',
+    }),
+    /before the first iteration/
+  );
+});
+
+test('ui api prepares setup drafts and creates baseline projects only after confirmation', async () => {
+  const cwd = await fs.mkdtemp(path.join(os.tmpdir(), 'skill-rsi-ui-api-draft-'));
+  const baselinePath = path.join(cwd, 'SKILL.md');
+  await fs.writeFile(baselinePath, `---
+name: frontend-design
+description: Use when improving browser-rendered frontend implementation skills.
+---
+
+# Frontend Design
+`);
+
+  const draft = await createProjectDraftForUi({
+    cwd,
+    projectName: '',
+    goal: '',
+    outputType: 'code_visual',
+    model: 'gpt-5.5',
+    baselinePath,
+  });
+
+  assert.equal(draft.mode, 'existing');
+  assert.equal(draft.projectName, 'Frontend Design');
+  assert.equal(draft.goal, 'Use when improving browser-rendered frontend implementation skills.');
+  assert.equal(draft.outputType, 'code_visual');
+  assert.equal(draft.outputTypeSource, 'explicit');
+  assert.equal(draft.model, 'gpt-5.5');
+  assert.equal(draft.baseline.skillName, 'frontend-design');
+  assert.equal(draft.baseline.sourcePath, undefined);
+  assert.equal((await readProjectSummaries({ cwd })).length, 0);
+
+  const loaded = await readProjectDraftForUi({ cwd, draftId: draft.id });
+  assert.equal(loaded.id, draft.id);
+
+  const created = await createProjectFromDraftForUi({
+    cwd,
+    draftId: draft.id,
+    projectName: 'Frontend Visual Skill',
+    goal: 'Improve visual frontend implementation.',
+    outputType: 'code_visual',
+    model: 'gpt-5.5',
+  });
+  assert.equal(created.projectId, 'frontend-visual-skill');
+  assert.equal(created.config.eval.outputType, 'code_visual');
+  assert.equal(created.config.models.agent, 'gpt-5.5');
+  assert.equal(created.state.currentChampion.candidateId, 'baseline');
+  await assert.rejects(
+    () => readProjectDraftForUi({ cwd, draftId: draft.id }),
+    /was not found/,
+  );
+});
+
+test('ui api infers setup draft output type when Codex does not provide one', async () => {
+  const cwd = await fs.mkdtemp(path.join(os.tmpdir(), 'skill-rsi-ui-api-draft-infer-'));
+  const baselinePath = path.join(cwd, 'SKILL.md');
+  await fs.writeFile(baselinePath, `---
+name: frontend-design
+description: Use when improving browser-rendered React UI and visual layout implementation.
+---
+
+# Frontend Design
+`);
+
+  const visualDraft = await createProjectDraftForUi({
+    cwd,
+    projectName: 'Frontend Design',
+    goal: '',
+    baselinePath,
+  });
+  assert.equal(visualDraft.outputType, 'code_visual');
+  assert.equal(visualDraft.outputTypeSource, 'inferred');
+
+  const codeDraft = await createProjectDraftForUi({
+    cwd,
+    projectName: 'CLI Refactor',
+    goal: 'Improve code implementation and tests.',
+  });
+  assert.equal(codeDraft.outputType, 'code');
+  assert.equal(codeDraft.outputTypeSource, 'inferred');
+});
+
+test('ui api exports champion packages inside the workspace', async () => {
+  const cwd = await fs.mkdtemp(path.join(os.tmpdir(), 'skill-rsi-ui-api-export-'));
+  await createProjectForUi({
+    cwd,
+    projectName: 'Export Project',
+    goal: 'Export the champion.',
+    baselineFiles: [{
+      path: 'SKILL.md',
+      content: `---
+name: export-project
+description: Use when testing champion export.
+---
+
+# Export Project
+`,
+    }],
+  });
+
+  const exported = await exportChampionForUi({
+    cwd,
+    projectName: 'Export Project',
+    outDir: 'exports/export-project-champion',
+  });
+  assert.equal(exported.action, 'champion_exported');
+  assert.equal(exported.fileCount, 1);
+  assert.match(await fs.readFile(path.join(exported.outDir, 'SKILL.md'), 'utf8'), /# Export Project/);
+
+  await assert.rejects(
+    () => exportChampionForUi({
+      cwd,
+      projectName: 'Export Project',
+      outDir: '../outside',
+    }),
+    /inside the Skill RSI workspace/,
+  );
 });
 
 test('ui api derives task contracts from UI output type defaults', async () => {

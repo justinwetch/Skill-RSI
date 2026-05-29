@@ -166,12 +166,12 @@ Model choice is fixed at project creation for cleaner run history. API keys are 
 
 ## Codex Plugin
 
-Skill RSI also ships a repo-tracked Codex Plugin at [plugins/skill-rsi](plugins/skill-rsi). The plugin gives Codex an operator skill, a local MCP control plane, and a native MCP-UI console through `skill_rsi_open` where the host supports MCP Apps/UI resources.
+Skill RSI also ships a repo-tracked Codex Plugin at [plugins/skill-rsi](plugins/skill-rsi). The plugin teaches Codex to open the local Skill RSI web app in the Codex sidebar, use the MCP control plane for structured operations, and fall back to CLI commands when needed.
 
 Install it locally from the repository root:
 
 ```bash
-codex plugins install ./plugins/skill-rsi
+codex plugin add skill-rsi@skill-rsi-local
 ```
 
 Validate and smoke-check the plugin:
@@ -181,9 +181,9 @@ npm run plugin:validate
 npm run plugin:smoke
 ```
 
-The plugin is a Codex-native control and inspection surface. It can create or import projects, run bounded loops, inspect history/evidence/skills, export champions, and explicitly consume queued Codex context. The local app remains the full evidence console, and the CLI remains the best surface for reproducible automation.
+The plugin is a Codex-native operator surface. By default, it opens the local web app at `http://127.0.0.1:8765/` because that remains the most reliable guided console in Codex desktop. MCP tools can prepare fresh setup drafts, create or import projects when explicitly requested, return focused launch URLs, inspect existing projects only when explicitly requested, run bounded loops only when explicitly requested, export champions, and explicitly consume queued Codex context. The CLI remains the best surface for reproducible automation.
 
-MCP-UI support is host-dependent. `skill_rsi_open` always returns a readable text fallback, and hosts with MCP Apps/UI rendering also receive the embedded console. Codex hooks only queue context; they do not run RSI loops or spend model budget by themselves.
+MCP-UI support is host-dependent and is not the default Codex desktop path. `skill_rsi_open` returns the local app launch URL only; `skill_rsi_cockpit` is the optional embedded console for hosts with robust MCP Apps/UI rendering. Codex hooks only queue context; they do not run RSI loops or spend model budget by themselves.
 
 For install/update details and troubleshooting, see [plugins/skill-rsi/README.md](plugins/skill-rsi/README.md). For the plugin release checklist, see [docs/CODEX_PLUGIN_RELEASE.md](docs/CODEX_PLUGIN_RELEASE.md).
 

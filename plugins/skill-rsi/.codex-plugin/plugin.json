@@ -1,0 +1,24 @@
+{
+  "name": "skill-rsi",
+  "version": "0.1.0",
+  "description": "Operate Skill RSI projects from Codex.",
+  "author": {
+    "name": "Skill RSI"
+  },
+  "skills": "./skills/",
+  "mcpServers": "./.mcp.json",
+  "interface": {
+    "displayName": "Skill RSI",
+    "shortDescription": "Create and improve Agent Skills with recursive evaluation loops.",
+    "longDescription": "Skill RSI helps Codex create, improve, inspect, schedule, and export Agent Skill projects through a local recursive self-improvement workflow.",
+    "developerName": "Skill RSI",
+    "category": "Productivity",
+    "capabilities": [
+      "Agent Skill improvement",
+      "SkillEval-style evaluation",
+      "Local project operation",
+      "Codex hook context capture"
+    ],
+    "defaultPrompt": "Open Skill RSI and help me create or improve an Agent Skill."
+  }
+}

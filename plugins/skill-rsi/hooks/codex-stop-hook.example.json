@@ -1,0 +1,14 @@
+{
+  "hooks": {
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "SKILL_RSI_PROJECT=your-project node \"/absolute/path/to/Skill RSI/scripts/codex-skill-rsi-hook.mjs\""
+          }
+        ]
+      }
+    ]
+  }
+}

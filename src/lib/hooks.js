@@ -26,7 +26,6 @@ export function normalizeHookEvent({ cwd, projectName, payload, eventPath = null
     schemaVersion: 1,
     id: createHookId(receivedAt),
     receivedAt,
-    cwd,
     projectName,
     projectId: paths.projectId,
     eventName: normalizeEventName(payload),
@@ -97,6 +96,11 @@ export async function claimPendingHookEvents({
   return events;
 }
 
+export async function hasProjectRunLock({ cwd, projectName }) {
+  const paths = getProjectPaths(cwd, projectName);
+  return isProjectLocked(paths.projectDir);
+}
+
 export async function markHookEventsProcessed({ cwd, projectName, events }) {
   await moveHookEvents({ cwd, projectName, events, status: 'processed' });
 }
@@ -117,24 +121,32 @@ export function summarizeHookEvents(events) {
   if (!events.length) return null;
   const changedFiles = [...new Set(events.flatMap(event => normalizeChangedFiles(event)))].sort();
   const eventNames = [...new Set(events.map(event => event.eventName).filter(Boolean))].sort();
+  const transcriptPaths = uniqueStrings(events.map(event => event.transcriptPath));
+  const sourceEventPaths = uniqueStrings(events.map(event => event.sourceEventPath));
+  const focusParameterIds = uniqueStrings(events.flatMap(event => normalizeArray(event.payload?.focusParameterIds || event.focusParameterIds)));
+  const parameterIds = uniqueStrings(events.flatMap(event => normalizeArray(event.payload?.parameterIds || event.parameterIds)));
+  const reasons = uniqueStrings(events.map(event => event.payload?.reason || event.reason));
+  const reason = reasons.slice(0, 4).join(' | ') || null;
   return {
     id: events.map(event => event.id).filter(Boolean).join('+') || null,
     source: 'hook-inbox',
     eventName: eventNames.join(', ') || 'hook-inbox',
+    eventCount: events.length,
     changedFiles,
     receivedAt: events[events.length - 1]?.receivedAt || null,
-    events: events.map(event => ({
-      id: event.id || null,
-      path: event.path || null,
-      eventName: event.eventName || null,
-      changedFiles: normalizeChangedFiles(event),
-      transcriptPath: event.transcriptPath || null,
-    })),
+    transcriptPaths,
+    sourceEventPaths,
+    reason,
     payload: {
       source: 'hook-inbox',
       eventNames,
       changedFiles,
       hookEventCount: events.length,
+      transcriptPaths,
+      sourceEventPaths,
+      focusParameterIds,
+      parameterIds,
+      reason,
     },
   };
 }
@@ -273,7 +285,6 @@ function sanitizeHookPayload(payload, { changedFiles }) {
     eventName: normalizeEventName(payload),
     turnId: payload?.turn_id || payload?.turnId || null,
     permissionMode: payload?.permission_mode || payload?.permissionMode || null,
-    cwd: payload?.cwd || null,
     changedFiles,
     reason: payload?.reason || null,
     focusParameterIds: normalizeArray(payload?.focusParameterIds),
@@ -294,6 +305,10 @@ function removeNullish(value) {
     if (Array.isArray(item) && item.length === 0) return false;
     return true;
   }));
+}
+
+function uniqueStrings(values) {
+  return [...new Set(values.map(value => value ? String(value).trim() : '').filter(Boolean))].sort();
 }
 
 function hashJson(value) {

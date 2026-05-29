@@ -8,6 +8,7 @@ import { runHeadlessEval } from './lib/evaluator.js';
 import { writeAgentContractArtifact, writeRealAgentContractArtifact } from './lib/agent-contracts.js';
 import {
   claimPendingHookEvents,
+  hasProjectRunLock,
   markHookEventsFailed,
   markHookEventsProcessed,
   markHookEventsSkipped,
@@ -351,9 +352,23 @@ async function main() {
     const state = await readJson(paths.stateJson, { runCount: 0 });
     const remaining = Math.max(0, maxRuns - state.runCount);
     const loops = maxNewRuns ? Math.min(remaining, maxNewRuns) : remaining;
+    if (options['consume-hooks'] && await hasProjectRunLock({ cwd: process.cwd(), projectName })) {
+      console.log(`Project is already locked; pending hook event(s) remain queued for ${projectName}.`);
+      return;
+    }
     const claimedHookEvents = options['consume-hooks']
       ? await claimPendingHookEvents({ cwd: process.cwd(), projectName })
       : [];
+    if (claimedHookEvents.length && await hasProjectRunLock({ cwd: process.cwd(), projectName })) {
+      await requeueHookEvents({
+        cwd: process.cwd(),
+        projectName,
+        events: claimedHookEvents,
+        reason: 'Project became locked after hook events were claimed',
+      });
+      console.log(`Requeued ${claimedHookEvents.length} pending hook event(s); project is already locked.`);
+      return;
+    }
     if (remaining === 0) {
       if (claimedHookEvents.length) {
         await markHookEventsSkipped({

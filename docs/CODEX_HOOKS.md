@@ -15,13 +15,14 @@ Official references:
 - Hook payloads are sanitized to a small allowlisted event shape.
 - Raw payloads are not retained; Skill RSI stores only a SHA-256 hash for debugging.
 - `transcriptPath` is retained as an opaque audit reference, not parsed as a stable API.
+- `sourceEventPath` may be retained for manually recorded event files; workspace `cwd` is not retained in queue payloads.
 - The hook script never runs `continuous`, `run`, `agent`, or any other model-backed command.
 
 ## Local Hook
 
 Prefer a `Stop` hook for v1. It captures the final state of a Codex turn without firing repeatedly during every command or file edit.
 
-Set the project name explicitly so the hook does not infer it from the repository folder name:
+Set the project name explicitly. The Codex adapter fails closed when `SKILL_RSI_PROJECT` is missing, so hook events are never silently queued to a project inferred from the repository folder name:
 
 ```json
 {
@@ -40,7 +41,7 @@ Set the project name explicitly so the hook does not infer it from the repositor
 }
 ```
 
-The script reads the Codex hook payload from stdin, adds changed files from the payload or local git diff when available, sanitizes it, and writes one JSON file to:
+The Codex adapter reads the Codex hook payload from stdin, adds changed files from the payload or local git diff when available, sanitizes it, and writes one JSON file to:
 
 ```text
 .skill-rsi/projects/<project>/hooks/inbox/

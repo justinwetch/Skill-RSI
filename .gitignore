@@ -6,3 +6,4 @@ ui/dist/
 !.env.example
 .gh-config/
 .DS_Store
+.claude/

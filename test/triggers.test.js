@@ -5,7 +5,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { execFile, spawn } from 'node:child_process';
 import { promisify } from 'node:util';
-import { claimPendingHookEvents } from '../src/lib/hooks.js';
+import { claimPendingHookEvents, summarizeHookEvents } from '../src/lib/hooks.js';
 
 const execFileAsync = promisify(execFile);
 const CLI = path.resolve('src/cli.js');
@@ -410,6 +410,7 @@ test('hook-record queues stdin event without triggering a run', async () => {
   ], JSON.stringify({
     hook_event_name: 'Stop',
     changedFiles: ['SKILL.md'],
+    cwd,
     transcript_path: '/tmp/codex-transcript.jsonl',
     last_assistant_message: 'Do not persist this conversational output.',
   }), { cwd });
@@ -420,6 +421,8 @@ test('hook-record queues stdin event without triggering a run', async () => {
   const event = JSON.parse(await fs.readFile(path.join(inboxDir, eventFile), 'utf8'));
   assert.equal(event.eventName, 'Stop');
   assert.equal(event.transcriptPath, '/tmp/codex-transcript.jsonl');
+  assert.equal(event.cwd, undefined);
+  assert.equal(event.payload.cwd, undefined);
   assert.deepEqual(event.changedFiles, ['SKILL.md']);
   assert.equal(event.payload.last_assistant_message, undefined);
   assert.equal(event.payload.hookEventName, 'Stop');
@@ -553,7 +556,7 @@ test('claimPendingHookEvents leaves stale processing events alone while project 
   assert.equal(event.queueStatus, 'processing');
 });
 
-test('continuous --consume-hooks requeues claimed events when project is locked', async () => {
+test('continuous --consume-hooks leaves queued events untouched when project is locked before claim', async () => {
   const cwd = await fs.mkdtemp(path.join(os.tmpdir(), 'skill-rsi-locked-requeue-'));
   await execFileWithInput('node', [
     CLI,
@@ -575,7 +578,7 @@ test('continuous --consume-hooks requeues claimed events when project is locked'
     '1',
     '--consume-hooks',
   ], { cwd });
-  assert.match(locked.stdout, /Requeued 1 pending hook event/);
+  assert.match(locked.stdout, /Project is already locked; pending hook event\(s\) remain queued/);
 
   const hooksDir = path.join(projectDir, 'hooks');
   const inbox = await fs.readdir(path.join(hooksDir, 'inbox'));
@@ -584,8 +587,47 @@ test('continuous --consume-hooks requeues claimed events when project is locked'
   assert.deepEqual(await safeReadDir(path.join(hooksDir, 'failed')), []);
 
   const event = JSON.parse(await fs.readFile(path.join(hooksDir, 'inbox', inbox[0]), 'utf8'));
-  assert.equal(event.queueStatus, 'queued');
-  assert.match(event.queueReason, /Project is already locked/);
+  assert.equal(event.queueStatus, undefined);
+  assert.equal(event.queueReason, undefined);
+});
+
+test('hook summaries stay compact across multiple queued events', () => {
+  const summary = summarizeHookEvents([
+    {
+      id: 'event-a',
+      eventName: 'Stop',
+      changedFiles: ['SKILL.md', 'references/a.md'],
+      transcriptPath: '/tmp/a.jsonl',
+      sourceEventPath: '/tmp/a.json',
+      payload: {
+        changedFiles: ['SKILL.md', 'references/a.md'],
+        focusParameterIds: ['p01'],
+        reason: 'Skill file changed',
+      },
+    },
+    {
+      id: 'event-b',
+      eventName: 'Stop',
+      changedFiles: ['SKILL.md', 'scripts/tool.js'],
+      transcriptPath: '/tmp/b.jsonl',
+      sourceEventPath: '/tmp/b.json',
+      payload: {
+        changedFiles: ['scripts/tool.js'],
+        parameterIds: ['p02'],
+        reason: 'Script changed',
+      },
+    },
+  ]);
+
+  assert.equal(summary.eventCount, 2);
+  assert.deepEqual(summary.changedFiles, ['SKILL.md', 'references/a.md', 'scripts/tool.js']);
+  assert.deepEqual(summary.transcriptPaths, ['/tmp/a.jsonl', '/tmp/b.jsonl']);
+  assert.deepEqual(summary.sourceEventPaths, ['/tmp/a.json', '/tmp/b.json']);
+  assert.deepEqual(summary.payload.focusParameterIds, ['p01']);
+  assert.deepEqual(summary.payload.parameterIds, ['p02']);
+  assert.equal(summary.payload.reason, 'Script changed | Skill file changed');
+  assert.equal(summary.events, undefined);
+  assert.equal(summary.payload.hookEventCount, 2);
 });
 
 test('Codex hook script queues events and cron runner consumes them safely', async () => {
@@ -617,6 +659,26 @@ test('Codex hook script queues events and cron runner consumes them safely', asy
 
   const skippedDir = path.join(cwd, '.skill-rsi', 'projects', 'cron-script-project', 'hooks', 'skipped');
   assert.equal((await fs.readdir(skippedDir)).length, 1);
+});
+
+test('Codex hook script requires explicit Skill RSI project selection', async () => {
+  const cwd = await fs.mkdtemp(path.join(os.tmpdir(), 'skill-rsi-codex-missing-project-'));
+
+  let error = null;
+  try {
+    await execFileWithInput('node', [
+      CODEX_HOOK_SCRIPT,
+    ], JSON.stringify({
+      hook_event_name: 'Stop',
+      changedFiles: ['SKILL.md'],
+    }), { cwd, env: { ...process.env, SKILL_RSI_PROJECT: '' } });
+  } catch (caught) {
+    error = caught;
+  }
+  assert.ok(error);
+  assert.match(error.message, /SKILL_RSI_PROJECT is required/);
+  assert.equal(JSON.parse(error.stdout).continue, true);
+  assert.match(error.stderr, /SKILL_RSI_PROJECT is required/);
 });
 
 function execFileWithInput(command, args, input, options = {}) {

@@ -1,9 +1,0 @@
-{
-  "permissions": {
-    "allow": [
-      "Bash(ls *.md docs/*.md)",
-      "Bash(find . -iname \"*how*it*works*\" -not -path \"*/node_modules/*\")",
-      "WebFetch(domain:www.justinwetch.com)"
-    ]
-  }
-}

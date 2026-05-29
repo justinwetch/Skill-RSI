@@ -9,10 +9,14 @@ const execFileAsync = promisify(execFile);
 
 async function main() {
   const cwd = path.resolve(process.env.SKILL_RSI_CWD || process.cwd());
-  const projectName = process.env.SKILL_RSI_PROJECT
-    || process.env.SKILL_RSI_PROJECT_NAME
-    || path.basename(cwd);
   const payload = await readStdinJson();
+  const projectName = process.env.SKILL_RSI_PROJECT;
+  if (!projectName) {
+    console.error('SKILL_RSI_PROJECT is required for the Codex hook adapter. Set it to the Skill RSI project that should receive queued hook events.');
+    writeStopContinueResponse(payload);
+    process.exitCode = 1;
+    return;
+  }
 
   if (!hasChangedFiles(payload)) {
     const changedFiles = await readGitChangedFiles(cwd);
@@ -30,9 +34,7 @@ async function main() {
   });
 
   console.error(`Queued Skill RSI hook for ${projectName}: ${outputPath}`);
-  if ((payload.hook_event_name || payload.hookEventName) === 'Stop') {
-    process.stdout.write(`${JSON.stringify({ continue: true })}\n`);
-  }
+  writeStopContinueResponse(payload);
 }
 
 async function readStdinJson() {
@@ -47,6 +49,12 @@ function hasChangedFiles(payload) {
   return Array.isArray(payload?.changedFiles)
     || Array.isArray(payload?.changed_files)
     || Array.isArray(payload?.files);
+}
+
+function writeStopContinueResponse(payload) {
+  if ((payload.hook_event_name || payload.hookEventName) === 'Stop') {
+    process.stdout.write(`${JSON.stringify({ continue: true })}\n`);
+  }
 }
 
 async function readGitChangedFiles(cwd) {

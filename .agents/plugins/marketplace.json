@@ -1,0 +1,20 @@
+{
+  "name": "skill-rsi-local",
+  "interface": {
+    "displayName": "Skill RSI Local"
+  },
+  "plugins": [
+    {
+      "name": "skill-rsi",
+      "source": {
+        "source": "local",
+        "path": "./plugins/skill-rsi"
+      },
+      "policy": {
+        "installation": "AVAILABLE",
+        "authentication": "ON_INSTALL"
+      },
+      "category": "Productivity"
+    }
+  ]
+}

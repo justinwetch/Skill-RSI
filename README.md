@@ -26,7 +26,7 @@ Every promotion decision links back to prompt-level evidence: the prompt, judge 
 
 ![Prompt-level evaluation evidence](screenshots/readme-latest-project-20260528-1724/06-evidence-prompt-expanded.png)
 
-Skill RSI also keeps the candidate packages inspectable, so you can see what changed before accepting a new champion.
+Skill RSI also keeps the candidate packages inspectable, so every champion change stays traceable.
 
 ![Candidate skill diff](screenshots/readme-latest-project-20260528-1724/08-candidate-compare.png)
 
@@ -160,6 +160,7 @@ The UI supports:
 - OpenAI model selection at project creation: `gpt-5.4-mini` or `gpt-5.5`
 - browser-local OpenAI API key entry, with `.env` as server fallback
 - live loop progress, next-loop plan, detailed eval data, champion/challenger skill viewing, and visual screenshots when available
+- automation status for manual runs, cron/LaunchAgent setup commands, and queued Codex hook context
 
 Model choice is fixed at project creation for cleaner run history. API keys are not stored in project config; the UI stores pasted keys locally in the browser.
 
@@ -171,19 +172,19 @@ Manual:
 node src/cli.js run ux-design --agentic --real-eval --loops 1
 ```
 
-Continuous:
+Scheduled or continuous:
 
 ```bash
-node src/cli.js continuous ux-design --agentic --real-eval --max-runs 5 --patience 3 --max-inconclusive 2
+node scripts/skill-rsi-cron-runner.mjs ux-design --agentic --real-eval --max-runs 20 --max-new-runs 1 --agent-model gpt-5.4-mini
 ```
 
-Hook-triggered:
+Queue hook context:
 
 ```bash
-node src/cli.js hook ux-design --agentic --real-eval --event hook.json
+node src/cli.js hook-record ux-design --event hook.json
 ```
 
-For cron or macOS LaunchAgent setup, see [docs/SCHEDULING.md](docs/SCHEDULING.md).
+Codex hooks only queue context; the next manual or scheduled run consumes it. For cron or macOS LaunchAgent setup, see [docs/SCHEDULING.md](docs/SCHEDULING.md). For Codex hook setup, see [docs/CODEX_HOOKS.md](docs/CODEX_HOOKS.md).
 
 ## What A Run Produces
 
@@ -243,8 +244,9 @@ node src/cli.js run <project> --stub --loops 3
 node src/cli.js run <project> --agentic --real-eval --loops 1
 node src/cli.js run <project> --agentic --real-eval --loops 1 --model gpt-5.5
 node src/cli.js step <project>
-node src/cli.js continuous <project> --agentic --real-eval --max-runs 5 --patience 3
-node src/cli.js hook <project> --agentic --real-eval --event hook.json
+node src/cli.js continuous <project> --agentic --real-eval --max-runs 20 --max-new-runs 1
+node src/cli.js continuous <project> --agentic --real-eval --max-runs 20 --max-new-runs 1 --consume-hooks
+node src/cli.js hook-record <project> --event hook.json
 
 # Inspection
 node src/cli.js summary <project>

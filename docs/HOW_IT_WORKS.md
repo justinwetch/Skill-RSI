@@ -166,6 +166,8 @@ The UI and CLI run the same underlying loop.
 
 The UI is optimized for watching the process: project setup, live run progress, next loop plan, history, detailed eval data, rendered screenshots, and skill inspection.
 
-The CLI is optimized for reproducible local control: project creation, baseline import, run commands, progress checks, skill export, standalone evaluation, scheduling, and hook-triggered automation.
+The CLI is optimized for reproducible local control: project creation, baseline import, run commands, progress checks, skill export, standalone evaluation, scheduling, and hook-informed automation.
+
+The UI Automation panel reports observed run state, pending Codex hook context, and copyable cron/LaunchAgent and Codex hook commands. It does not install or manage operating-system scheduler jobs. Codex hooks only queue context; a later manual or scheduled run consumes that context and decides whether to spend model budget.
 
 Both surfaces should tell the same story. Skill RSI researches the domain, maps the current artifact, plans one focused experiment, creates a challenger, evaluates it against the champion, and records what the next loop should know.

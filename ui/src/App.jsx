@@ -4,7 +4,7 @@ import {
   ArrowRight, Play, Trophy, Check, CheckCircle2, ArrowUp, Minus, FileText,
   Loader2, Database, Layout, GitPullRequest, MessageSquare, TrendingUp, Scale,
   Beaker, Swords, Search, Flag, Pencil, Trash2, Upload, Sparkles, Package,
-  X, ExternalLink,
+  X, ExternalLink, Clock, Inbox, AlertTriangle, AlertCircle, Terminal, Copy,
 } from 'lucide-react';
 import {
   createProject, deleteProject, fetchProjects, fetchProjectSummary, fetchRunDetail,
@@ -1089,33 +1089,178 @@ function NextLoopPremise({ premise }) {
 }
 
 function RunBar({ summary, loops, setLoops, busy, onStart }) {
+  const [automationOpen, setAutomationOpen] = useState(false);
   const policy = summary.state.runPolicy || summary.config?.trigger || {};
   const budget = summary.config?.budget || {};
   const usage = summary.state.budgetUsage || {};
   const maxRuns = budget.maxRuns;
+  const automation = summary.automation || null;
   const taskContractLabel = formatTaskContract(summary.config?.eval?.taskContract);
   const modelLabel = summary.config?.models?.agent || 'gpt-5.4-mini';
+  const automationState = describeAutomation(automation);
+  const StatusIcon = automationState.icon;
+  const runDisabled = busy || automation?.locked;
   return (
     <div className="run-bar">
-      <div className="copy">
-        <div>
-          Run
-          <input className="num" type="number" min="1" value={loops}
-            onChange={e => setLoops(Math.max(1, Number.parseInt(e.target.value, 10) || 1))} />
-          improvement {loops === 1 ? 'loop' : 'loops'}
+      <div className="run-bar-main">
+        <div className="copy">
+          <div>
+            Run
+            <input className="num" type="number" min="1" value={loops}
+              onChange={e => setLoops(Math.max(1, Number.parseInt(e.target.value, 10) || 1))} />
+            improvement {loops === 1 ? 'loop' : 'loops'}
+          </div>
+          <div className="subtle">
+            {taskContractLabel} · {modelLabel} · target {policy.targetIterations || loops}
+            {maxRuns ? ` · max ${maxRuns} runs` : ''}
+            {usage.estimatedTokens ? ` · ~${formatCompact(usage.estimatedTokens)} tokens used` : ''}
+          </div>
         </div>
-        <div className="subtle">
-          {policy.triggerMode || policy.mode || 'manual'} · {taskContractLabel} · {modelLabel} · target {policy.targetIterations || loops}
-          {maxRuns ? ` · max ${maxRuns} runs` : ''}
-          {usage.estimatedTokens ? ` · ~${formatCompact(usage.estimatedTokens)} tokens used` : ''}
-        </div>
+        <button className="btn primary" disabled={runDisabled} onClick={() => onStart(loops)}>
+          {busy || automation?.locked ? <Loader2 size={16} className="spin" /> : <Play size={16} />}
+          {automation?.locked ? 'Running…' : summary.state.runCount > 0 ? 'Run next loop(s)' : 'Start first loop'}
+        </button>
       </div>
-      <button className="btn primary" disabled={busy} onClick={() => onStart(loops)}>
-        {busy ? <Loader2 size={16} className="spin" /> : <Play size={16} />}
-        {summary.state.runCount > 0 ? 'Run next loop(s)' : 'Start first loop'}
+      <div className={`automation-line ${automationState.kind}`}>
+        <span className="automation-copy">
+          <StatusIcon size={15} />
+          <span>{automationState.text}</span>
+        </span>
+        <button className={`automation-toggle ${automationOpen ? 'open' : ''}`} onClick={() => setAutomationOpen(!automationOpen)}>
+          Automation <ChevronDown size={15} />
+        </button>
+      </div>
+      {automationOpen && <AutomationPanel automation={automation} />}
+    </div>
+  );
+}
+
+function AutomationPanel({ automation }) {
+  const hooks = automation?.hooks || {};
+  const pending = hooks.inbox || { count: 0, latest: null };
+  const failed = hooks.failed || { count: 0, latest: null };
+  const processed = hooks.processed?.count || 0;
+  const skipped = hooks.skipped?.count || 0;
+  const processing = hooks.processing?.count || 0;
+  const latest = pending.latest;
+  const failedLatest = failed.latest;
+  return (
+    <div className="automation-panel">
+      <div className="automation-status-list">
+        <AutomationFact icon={automation?.locked ? Loader2 : Clock} tone={automation?.locked ? 'success' : 'muted'}>
+          {automation?.locked
+            ? 'A loop is running now. Scheduled wake-ups will wait rather than overlap.'
+            : automation?.scheduledObserved
+              ? `Automation has been observed on this project${automation.lastRun?.completedAt ? `; latest run completed ${fmtTime(automation.lastRun.completedAt)}` : ''}.`
+              : 'This project only runs when you press the run button until you install a schedule.'}
+        </AutomationFact>
+        {automation?.status === 'max_runs' && (
+          <AutomationFact icon={AlertTriangle} tone="warning">
+            At the {automation.maxRuns}-run ceiling. Raise the scheduled command’s <code>--max-runs</code> value to keep unattended runs going.
+          </AutomationFact>
+        )}
+        {automation?.status === 'failed' && failed.count > 0 && (
+          <AutomationFact icon={AlertCircle} tone="error">
+            {failed.count} failed automation {failed.count === 1 ? 'event' : 'events'} recorded{failedLatest?.error?.message ? `: ${failedLatest.error.message}` : '.'}
+          </AutomationFact>
+        )}
+        {pending.count > 0 ? (
+          <AutomationFact icon={Inbox} tone="info">
+            {pending.count} Codex {pending.count === 1 ? 'change is' : 'changes are'} waiting. The next manual or scheduled loop will use this context; a queued change is not a run.
+          </AutomationFact>
+        ) : (
+          <AutomationFact icon={Inbox} tone="muted">
+            No Codex hook context is waiting.
+          </AutomationFact>
+        )}
+      </div>
+      {latest && (
+        <div className="hook-context">
+          <div className="hook-context-head">Waiting Codex Context</div>
+          <div className="hook-context-meta">
+            {latest.eventName || 'Codex event'} · received {fmtTime(latest.receivedAt)}
+            {latest.reason ? ` · ${latest.reason}` : ''}
+          </div>
+          {latest.changedFiles?.length ? (
+            <div className="hook-files">
+              {latest.changedFiles.map(file => <code key={file}>{file}</code>)}
+              {latest.changedFileCount > latest.changedFiles.length && <span>+{latest.changedFileCount - latest.changedFiles.length} more</span>}
+            </div>
+          ) : (
+            <div className="hook-context-meta">No changed files were reported for the latest queued event.</div>
+          )}
+        </div>
+      )}
+      <div className="automation-queue">
+        queue · waiting {pending.count || 0} · processing {processing} · processed {processed} · skipped {skipped} · failed {failed.count || 0}
+      </div>
+      <details className="automation-setup">
+        <summary>Set up or change automatic runs</summary>
+        <div className="automation-setup-grid">
+          <div className="automation-setup-block">
+            <div className="automation-setup-title"><Clock size={15} /> On a schedule</div>
+            <p>Install this in cron or a LaunchAgent to wake Skill RSI on your schedule. The cron runner consumes queued Codex context by default.</p>
+            <CommandBlock command={automation?.commands?.cron || ''} />
+          </div>
+          <div className="automation-setup-block">
+            <div className="automation-setup-title"><Terminal size={15} /> From Codex</div>
+            <p>Add this to a Codex Stop hook. It records context only; it never starts RSI or spends model budget.</p>
+            <CommandBlock command={automation?.commands?.codexHook || ''} />
+          </div>
+        </div>
+      </details>
+    </div>
+  );
+}
+
+function AutomationFact({ icon: Icon, tone = 'muted', children }) {
+  return (
+    <div className={`automation-fact ${tone}`}>
+      <Icon size={15} className={Icon === Loader2 ? 'spin' : ''} />
+      <span>{children}</span>
+    </div>
+  );
+}
+
+function CommandBlock({ command }) {
+  const [copied, setCopied] = useState(false);
+  const copyCommand = async () => {
+    try {
+      await navigator.clipboard.writeText(command);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 1200);
+    } catch {
+      setCopied(false);
+    }
+  };
+  return (
+    <div className="command-block">
+      <code>{command}</code>
+      <button className="copy-command" type="button" onClick={copyCommand} aria-label="Copy command">
+        {copied ? <Check size={14} /> : <Copy size={14} />}
       </button>
     </div>
   );
+}
+
+function describeAutomation(automation) {
+  if (!automation) return { kind: 'muted', icon: Play, text: 'Runs only when you press Run.' };
+  const pending = automation.hooks?.inbox?.count || 0;
+  switch (automation.status) {
+    case 'running':
+      return { kind: 'success', icon: Loader2, text: 'A loop is running right now.' };
+    case 'max_runs':
+      return { kind: 'warning', icon: AlertTriangle, text: `Paused at the ${automation.maxRuns}-run ceiling.` };
+    case 'failed':
+      return { kind: 'error', icon: AlertCircle, text: 'Last automation event needs attention.' };
+    case 'hooks_waiting':
+      return { kind: 'info', icon: Inbox, text: `${pending} Codex ${pending === 1 ? 'change is' : 'changes are'} waiting — they’ll shape your next run.` };
+    case 'scheduled':
+      return { kind: 'muted', icon: Clock, text: 'Automation has been observed for this project.' };
+    case 'manual':
+    default:
+      return { kind: 'muted', icon: Play, text: 'Runs only when you press Run.' };
+  }
 }
 
 function formatTaskContract(taskContract) {

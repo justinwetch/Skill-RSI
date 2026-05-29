@@ -162,6 +162,7 @@ export async function readProjectSummary({ cwd, projectName }) {
   const promptBank = await readJson(paths.promptBankIndex, null);
   const config = await loadProjectConfig({ cwd, projectName });
   const humanDecisions = await listHumanDecisions(paths);
+  const automation = await readAutomationSummary({ cwd, paths, state, config });
 
   return {
     schemaVersion: 1,
@@ -204,6 +205,7 @@ export async function readProjectSummary({ cwd, projectName }) {
       criteriaVersionCount: promptBank.criteriaVersions?.length || 0,
     } : null,
     humanDecisionCount: humanDecisions.length,
+    automation,
     artifacts: {
       historyIndex: paths.historyIndex,
       historySummary: paths.historySummary,
@@ -211,6 +213,165 @@ export async function readProjectSummary({ cwd, projectName }) {
       promptBankIndex: paths.promptBankIndex,
     },
   };
+}
+
+async function readAutomationSummary({ cwd, paths, state, config }) {
+  const [locked, hooks, latestRun] = await Promise.all([
+    pathExists(path.join(paths.projectDir, 'run.lock')),
+    summarizeHookQueue(paths),
+    readLatestRunForAutomation(paths, state),
+  ]);
+  const runCount = Number.isInteger(state.runCount) ? state.runCount : 0;
+  const targetIterations = normalizeRunPolicy(state.runPolicy).targetIterations;
+  const maxRuns = config.budget?.maxRuns ?? null;
+  const generatedMaxRuns = maxRuns || Math.max(runCount + targetIterations, targetIterations);
+  const model = config.models?.agent || 'gpt-5.4-mini';
+  const scheduledMode = config.trigger?.mode === 'cron'
+    || config.trigger?.mode === 'continuous'
+    || latestRun?.trigger?.mode === 'continuous'
+    || latestRun?.trigger?.mode === 'cron'
+    || latestRun?.trigger?.mode === 'hook';
+  const atRunCeiling = Number.isInteger(maxRuns) && runCount >= maxRuns;
+  const hasCurrentFailure = isCurrentAutomationFailure({ hooks, latestRun });
+  const pendingHookContext = hooks.inbox.count > 0;
+
+  let status = 'manual';
+  if (locked) status = 'running';
+  else if (atRunCeiling) status = 'max_runs';
+  else if (hasCurrentFailure || latestRun?.status === 'failed') status = 'failed';
+  else if (pendingHookContext) status = 'hooks_waiting';
+  else if (scheduledMode) status = 'scheduled';
+
+  return {
+    schemaVersion: 1,
+    status,
+    locked,
+    scheduledObserved: Boolean(scheduledMode),
+    runCount,
+    targetIterations,
+    maxRuns,
+    generatedMaxRuns,
+    lastRun: latestRun ? {
+      runId: latestRun.runId,
+      runNumber: latestRun.runNumber ?? null,
+      status: latestRun.status || null,
+      triggerMode: latestRun.trigger?.mode || null,
+      startedAt: latestRun.startedAt || null,
+      completedAt: latestRun.completedAt || null,
+    } : null,
+    hooks,
+    commands: {
+      cron: buildCronCommand({ cwd, projectId: paths.projectId, maxRuns: generatedMaxRuns, model }),
+      codexHook: buildCodexHookCommand({ cwd, projectId: paths.projectId }),
+    },
+  };
+}
+
+async function summarizeHookQueue(paths) {
+  const hooksDir = path.join(paths.projectDir, 'hooks');
+  const statuses = await Promise.all(['inbox', 'processing', 'processed', 'skipped', 'failed'].map(async status => {
+    const summary = await summarizeHookStatusDir(path.join(hooksDir, status));
+    return [status, summary];
+  }));
+  return Object.fromEntries(statuses);
+}
+
+async function summarizeHookStatusDir(dir) {
+  const entries = await safeReadDirEntries(dir);
+  const events = [];
+  for (const entry of entries) {
+    if (!entry.isFile() || !entry.name.endsWith('.json')) continue;
+    const filePath = path.join(dir, entry.name);
+    const event = await readJson(filePath, null);
+    if (event) events.push({ ...event, fileName: entry.name });
+  }
+  events.sort((a, b) => String(a.receivedAt || '').localeCompare(String(b.receivedAt || '')));
+  const latest = events.at(-1) || null;
+  return {
+    count: events.length,
+    latest: latest ? summarizeHookEventForUi(latest) : null,
+  };
+}
+
+function summarizeHookEventForUi(event) {
+  return {
+    id: event.id || null,
+    eventName: event.eventName || event.payload?.hookEventName || event.payload?.hook_event_name || null,
+    receivedAt: event.receivedAt || null,
+    updatedAt: event.queueUpdatedAt || null,
+    changedFiles: Array.isArray(event.changedFiles) ? event.changedFiles.slice(0, 12) : [],
+    changedFileCount: Array.isArray(event.changedFiles) ? event.changedFiles.length : 0,
+    reason: event.payload?.reason || event.queueReason || event.reason || null,
+    focusParameterIds: Array.isArray(event.payload?.focusParameterIds) ? event.payload.focusParameterIds.slice(0, 8) : [],
+    parameterIds: Array.isArray(event.payload?.parameterIds) ? event.payload.parameterIds.slice(0, 8) : [],
+    error: event.queueError || null,
+  };
+}
+
+function isCurrentAutomationFailure({ hooks, latestRun }) {
+  if (!hooks.failed.count) return false;
+  const failedAt = hookTimestamp(hooks.failed.latest);
+  const laterSuccessAt = Math.max(
+    hookTimestamp(hooks.processed.latest),
+    hookTimestamp(hooks.skipped.latest),
+    Date.parse(latestRun?.completedAt || '') || 0,
+  );
+  return failedAt >= laterSuccessAt;
+}
+
+function hookTimestamp(event) {
+  const timestamp = Date.parse(event?.updatedAt || event?.receivedAt || '');
+  return Number.isFinite(timestamp) ? timestamp : 0;
+}
+
+async function safeReadDirEntries(dir) {
+  try {
+    return await fs.readdir(dir, { withFileTypes: true });
+  } catch (error) {
+    if (error.code === 'ENOENT') return [];
+    throw error;
+  }
+}
+
+async function readLatestRunForAutomation(paths, state) {
+  const runId = state.lastRunId;
+  if (!runId) return null;
+  return readJson(getRunPaths(paths, runId).runJson, null);
+}
+
+function buildCronCommand({ cwd, projectId, maxRuns, model }) {
+  return [
+    `cd ${shellQuote(cwd)}`,
+    '&&',
+    '/usr/bin/env',
+    'node',
+    'scripts/skill-rsi-cron-runner.mjs',
+    shellQuote(projectId),
+    '--agentic',
+    '--real-eval',
+    '--max-runs',
+    String(maxRuns),
+    '--max-new-runs',
+    '1',
+    '--agent-model',
+    shellQuote(model),
+  ].join(' ');
+}
+
+function buildCodexHookCommand({ cwd, projectId }) {
+  return [
+    `cd ${shellQuote(cwd)}`,
+    '&&',
+    `SKILL_RSI_PROJECT=${shellQuote(projectId)}`,
+    'node',
+    'scripts/codex-skill-rsi-hook.mjs',
+  ].join(' ');
+}
+
+function shellQuote(value) {
+  const text = String(value);
+  if (/^[A-Za-z0-9_./:=@+-]+$/.test(text)) return text;
+  return `'${text.replaceAll("'", "'\\''")}'`;
 }
 
 function normalizeRunPolicy(runPolicy) {

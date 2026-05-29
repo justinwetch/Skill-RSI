@@ -1,6 +1,6 @@
 # Codex Hooks
 
-Skill RSI treats Codex hooks as deterministic event capture, not as a place to run model-backed improvement loops. The hook entrypoint records Codex stdin JSON into a project queue. Cron or LaunchAgent later decides whether a Skill RSI loop should run.
+Skill RSI treats Codex hooks as deterministic event capture, not as a place to run model-backed improvement loops. The hook entrypoint records Codex stdin JSON into a project queue. A later manual run, cron invocation, or LaunchAgent invocation decides whether a Skill RSI loop should run.
 
 Official references:
 
@@ -11,7 +11,7 @@ Official references:
 ## Safety Model
 
 - Codex hooks only record events.
-- Scheduled runners decide model spend.
+- Manual and scheduled runners decide model spend.
 - Hook payloads are sanitized to a small allowlisted event shape.
 - Raw payloads are not retained; Skill RSI stores only a SHA-256 hash for debugging.
 - `transcriptPath` is retained as an opaque audit reference, not parsed as a stable API.
@@ -70,8 +70,6 @@ node scripts/skill-rsi-cron-runner.mjs ux-design \
   --real-eval \
   --max-runs 20 \
   --max-new-runs 1 \
-  --patience 3 \
-  --max-inconclusive 2 \
   --agent-model gpt-5.4-mini
 ```
 
@@ -87,13 +85,13 @@ node src/cli.js continuous ux-design --consume-hooks ...
 
 | Transition | Meaning |
 | --- | --- |
-| `inbox -> processing -> processed` | A scheduled run claimed the event and completed at least one loop. |
-| `inbox -> processing -> skipped` | The event was claimed, but no loop ran because the project was already at budget or a stop rule fired. |
-| `inbox -> processing -> failed` | The event was claimed, and the scheduled invocation failed. |
+| `inbox -> processing -> processed` | A manual or scheduled run claimed the event and completed at least one loop. |
+| `inbox -> processing -> skipped` | The event was claimed, but no loop ran because the project was already at budget. |
+| `inbox -> processing -> failed` | The event was claimed, and the manual or scheduled invocation failed. |
 | `processing -> inbox` | A stale processing event was reclaimed after 30 minutes while the project was unlocked. |
 | `processing -> inbox` | A newly claimed event was requeued because another run already held `run.lock`. |
 
-Scheduled invocations claim all current `inbox` events as one hook-signal batch. `--max-new-runs 1` caps the scheduler tick to one new RSI loop; it does not create one loop per hook event.
+Manual and scheduled invocations claim all current `inbox` events as one hook-signal batch. `--max-new-runs 1` caps a scheduler tick to one new RSI loop; it does not create one loop per hook event.
 
 Reliability behavior:
 
@@ -104,7 +102,7 @@ Reliability behavior:
 
 - Inspect queued events with `ls .skill-rsi/projects/<project>/hooks/inbox/`.
 - Inspect active claims with `ls .skill-rsi/projects/<project>/hooks/processing/`.
-- Inspect skipped events when a project is at budget or stopped by policy.
+- Inspect skipped events when a project is already at its run budget.
 - Inspect failed events for `queueError` and compare with cron or LaunchAgent logs.
 - If `run.lock` exists, confirm whether a Skill RSI process is still active before removing it.
 - If queue files repeatedly return to `inbox`, check for overlapping scheduler invocations or stale project locks.
@@ -114,4 +112,4 @@ Reliability behavior:
 Do not copy the local hook script into GitHub Actions as-is. If hosted automation is needed, use `openai/codex-action` and keep the same separation of responsibilities:
 
 - GitHub/Codex automation records or opens follow-up work.
-- Skill RSI scheduled jobs decide when to spend model budget.
+- Manual or scheduled Skill RSI runs decide when to spend model budget.

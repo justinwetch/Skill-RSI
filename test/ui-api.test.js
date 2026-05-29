@@ -14,6 +14,7 @@ import {
   readRunProgress,
   recordHumanDecision,
 } from '../src/lib/ui-api.js';
+import { recordHookEvent } from '../src/lib/hooks.js';
 
 test('ui api exposes stable project and run detail surfaces', async () => {
   const cwd = await fs.mkdtemp(path.join(os.tmpdir(), 'skill-rsi-ui-api-'));
@@ -129,6 +130,87 @@ test('ui api creates new projects and rejects duplicates', async () => {
     }),
     /already exists/
   );
+});
+
+test('ui api exposes automation summary for manual, queued, locked, ceiling, and failed states', async () => {
+  const cwd = await fs.mkdtemp(path.join(os.tmpdir(), 'skill-rsi-ui-api-automation-'));
+
+  const manual = await createProjectForUi({
+    cwd,
+    projectName: 'Automation Manual',
+    goal: 'Improve a manual project.',
+  });
+  assert.equal(manual.automation.status, 'manual');
+  assert.equal(manual.automation.hooks.inbox.count, 0);
+  assert.match(manual.automation.commands.cron, /skill-rsi-cron-runner\.mjs automation-manual/);
+  assert.match(manual.automation.commands.cron, /--max-runs 3/);
+  assert.match(manual.automation.commands.cron, /--max-new-runs 1/);
+  assert.match(manual.automation.commands.cron, /--agentic/);
+  assert.match(manual.automation.commands.cron, /--real-eval/);
+  assert.doesNotMatch(manual.automation.commands.cron, /--patience|--max-inconclusive/);
+  assert.match(manual.automation.commands.codexHook, /SKILL_RSI_PROJECT=automation-manual/);
+
+  await recordHookEvent({
+    cwd,
+    projectName: 'Automation Manual',
+    queued: true,
+    event: {
+      hook_event_name: 'Stop',
+      changedFiles: ['SKILL.md', 'references/notes.md'],
+      reason: 'Updated the skill implementation notes.',
+      focusParameterIds: ['p01-trigger'],
+    },
+  });
+  const queued = await readProjectSummary({ cwd, projectName: 'Automation Manual' });
+  assert.equal(queued.automation.status, 'hooks_waiting');
+  assert.equal(queued.automation.hooks.inbox.count, 1);
+  assert.deepEqual(queued.automation.hooks.inbox.latest.changedFiles, ['SKILL.md', 'references/notes.md']);
+  assert.equal(queued.automation.hooks.inbox.latest.reason, 'Updated the skill implementation notes.');
+  assert.deepEqual(queued.automation.hooks.inbox.latest.focusParameterIds, ['p01-trigger']);
+
+  await fs.writeFile(path.join(cwd, '.skill-rsi', 'projects', 'automation-manual', 'run.lock'), '{}');
+  const locked = await readProjectSummary({ cwd, projectName: 'Automation Manual' });
+  assert.equal(locked.automation.status, 'running');
+  assert.equal(locked.automation.locked, true);
+
+  const ceiling = await createProjectForUi({
+    cwd,
+    projectName: 'Automation Ceiling',
+    goal: 'Improve until the run ceiling.',
+  });
+  const ceilingDir = path.join(cwd, '.skill-rsi', 'projects', ceiling.projectId);
+  const ceilingConfig = JSON.parse(await fs.readFile(path.join(ceilingDir, 'config.json'), 'utf8'));
+  const ceilingState = JSON.parse(await fs.readFile(path.join(ceilingDir, 'state.json'), 'utf8'));
+  await fs.writeFile(path.join(ceilingDir, 'config.json'), JSON.stringify({
+    ...ceilingConfig,
+    budget: { ...ceilingConfig.budget, maxRuns: 1 },
+  }, null, 2));
+  await fs.writeFile(path.join(ceilingDir, 'state.json'), JSON.stringify({
+    ...ceilingState,
+    runCount: 1,
+  }, null, 2));
+  const atCeiling = await readProjectSummary({ cwd, projectName: 'Automation Ceiling' });
+  assert.equal(atCeiling.automation.status, 'max_runs');
+  assert.equal(atCeiling.automation.maxRuns, 1);
+
+  const failed = await createProjectForUi({
+    cwd,
+    projectName: 'Automation Failed',
+    goal: 'Expose failed hook events.',
+  });
+  const failedHooksDir = path.join(cwd, '.skill-rsi', 'projects', failed.projectId, 'hooks', 'failed');
+  await fs.mkdir(failedHooksDir, { recursive: true });
+  await fs.writeFile(path.join(failedHooksDir, 'failed.json'), JSON.stringify({
+    id: 'failed',
+    eventName: 'Stop',
+    receivedAt: new Date().toISOString(),
+    changedFiles: ['SKILL.md'],
+    queueError: { name: 'TypeError', message: 'cannot read scores' },
+  }, null, 2));
+  const failedSummary = await readProjectSummary({ cwd, projectName: 'Automation Failed' });
+  assert.equal(failedSummary.automation.status, 'failed');
+  assert.equal(failedSummary.automation.hooks.failed.count, 1);
+  assert.equal(failedSummary.automation.hooks.failed.latest.error.message, 'cannot read scores');
 });
 
 test('ui api stores the selected project model across all model roles', async () => {

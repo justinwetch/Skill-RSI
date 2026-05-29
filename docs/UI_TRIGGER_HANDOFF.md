@@ -1,65 +1,44 @@
-# UI Trigger Integration Handoff
+# UI Automation Notes
 
-This note is context for discussing how cron and Codex hooks should appear in the Skill RSI UI. It is not a UI proposal.
+This note records how cron and Codex hooks appear in the Skill RSI UI after the trigger-layer v1 work. It is implementation context, not a separate product proposal.
 
-## Current Trigger Model
+## Product model
 
-Skill RSI now separates event capture from loop execution:
-
-- Cron/LaunchAgent is the unattended execution path.
-- Codex hooks are event capture only.
-- Hook events are queued locally under the project.
+- Manual runs remain available from the project page.
+- Scheduled runs are installed outside Skill RSI through cron or LaunchAgent.
+- The UI generates copyable setup commands, but it does not install, enable, disable, or edit operating-system scheduler jobs.
+- Codex hooks queue local context only. They never start Skill RSI and never spend model budget.
 - A later manual or scheduled run consumes queued hook context and feeds it into planning.
+- Repeated non-promotions are normal RSI evidence. The UI path keeps iterating until the configured run ceiling or a real failure.
 
-This avoids spending model budget inside a Codex lifecycle hook and keeps all RSI runs bounded by project budgets and stop rules.
+## What the UI surfaces
 
-## What Exists In Code
+- Current automation state: manual only, running, scheduled observed, Codex context waiting, max-runs ceiling, or current failure.
+- Pending hook context: event count, latest received time, changed files, optional reason, and optional focus parameters.
+- Hook queue counts for `inbox`, `processing`, `processed`, `skipped`, and `failed`.
+- Copyable bounded cron/LaunchAgent command using `--max-runs` and `--max-new-runs 1`.
+- Copyable Codex Stop hook command requiring an explicit `SKILL_RSI_PROJECT`.
 
-- `continuous <project> --max-runs N --max-new-runs N` supports scheduled, bounded progress.
-- `continuous <project> --consume-hooks` consumes queued hook events before running.
-- `hook-record <project> --event hook.json|-` queues a hook event without running a loop.
+The UI should not show queued hook events as completed runs. Queued context shapes the next loop; it is not itself progress.
+
+## Existing code paths
+
+- `readProjectSummary` returns `automation` summary data for project detail.
+- `POST /api/projects/:project/step` consumes queued hooks by default before starting a manual UI run.
+- `continuous <project> --consume-hooks` consumes queued hooks for CLI or scheduled runs.
 - `scripts/skill-rsi-cron-runner.mjs` wraps `continuous` for cron/LaunchAgent use and consumes hooks by default.
 - `scripts/codex-skill-rsi-hook.mjs` is the Codex-specific adapter. It requires `SKILL_RSI_PROJECT`, records sanitized event metadata, and never runs Skill RSI directly.
-- Queued hook summaries include event count, event names, changed files, transcript/source references, optional focus parameter IDs, optional parameter IDs, and optional reason text.
 
-## Product Meaning
+## Constraints
 
-The UI should treat these as project trigger settings and project trigger state, not as a separate automation product:
+- Do not add human approval, accept-champion, or review-gate language.
+- Do not add plateau state. A kept champion is an experimental result, not a special pause state.
+- Do not promote `--patience` or `--max-inconclusive` in UI-generated setup. Those remain CLI-only operator flags.
+- Do not infer the project from `cwd` in the Codex hook adapter.
+- Keep hook payloads compact and local. Raw Codex payloads are not retained.
 
-- A project can be run manually.
-- A project can be scheduled to continue periodically.
-- A project can receive Codex hook events that shape the next run.
-- Queued hook events should be understandable as pending context, not as runs that already happened.
-- Reaching `max-runs`, patience, or inconclusive stop rules can prevent a scheduled wakeup from starting a new loop.
+## Related docs
 
-## Important Constraints
-
-- Hooks must not imply instant RSI execution.
-- A queued hook is not a loop and should not be displayed as one.
-- Cron should always be shown with explicit run ceilings.
-- `--max-new-runs 1` means one new loop per scheduler tick, not one loop per hook event.
-- Codex hook setup requires an explicit Skill RSI project name.
-- Hook payloads are sanitized; raw Codex hook payloads are not retained.
-- Transcript paths are audit references only, not stable APIs.
-- Local `.env` provider keys still gate real agentic/eval runs.
-
-## Discussion Questions For UI
-
-- Where should users see the current trigger mode and run ceiling?
-- How should a user understand “scheduled but stopped by budget or policy”?
-- How should pending hook context be surfaced without making it look like completed progress?
-- Should the UI expose hook queue folders/states directly, or summarize them?
-- What is the right affordance for copying/installing a Codex hook command?
-- How should the UI explain the difference between manual run, scheduled run, and hook-informed run?
-- What diagnostics should appear when Codex hooks are configured but no scheduled/manual run has consumed them yet?
-- What should happen visually when a scheduler invocation finds the project locked?
-
-## Suggested Sources To Read
-
-- `docs/SCHEDULING.md`
-- `docs/CODEX_HOOKS.md`
-- `src/lib/hooks.js`
-- `src/cli.js`
-- `scripts/codex-skill-rsi-hook.mjs`
-- `scripts/skill-rsi-cron-runner.mjs`
-- `test/triggers.test.js`
+- [Scheduling](SCHEDULING.md)
+- [Codex hooks](CODEX_HOOKS.md)
+- [How it works](HOW_IT_WORKS.md)

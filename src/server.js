@@ -18,6 +18,15 @@ import {
   recordHumanDecision,
   UI_OPENAI_MODELS,
 } from './lib/ui-api.js';
+import {
+  claimPendingHookEvents,
+  hasProjectRunLock,
+  markHookEventsFailed,
+  markHookEventsProcessed,
+  markHookEventsSkipped,
+  requeueHookEvents,
+  summarizeHookEvents,
+} from './lib/hooks.js';
 import { checkVisualRunnerAvailability } from './lib/visual-runner.js';
 
 const DEFAULT_PORT = 8765;
@@ -167,27 +176,69 @@ async function handleApi(request, response, url) {
     if (!Number.isInteger(loops) || loops < 1) {
       throw badRequest('loops must be a positive integer');
     }
-    const result = await runProject({
-      cwd: repoRoot,
-      projectName,
-      goal: body.goal || `Improve the ${projectName} Agent Skill.`,
-      loops,
-      mode,
-      maxRuns: body.maxRuns || null,
-      evalMode: body.evalMode || 'mock',
-      generationModel,
-      judgeModel,
-      agentModel,
-      apiKeys: {
-        ...(body.openAiApiKey ? { openai: body.openAiApiKey } : {}),
-      },
-      stopRules: body.stopRules || {},
-      triggerMode: body.triggerMode || 'manual',
-    });
+    const consumeHooks = body.consumeHooks !== false;
+    if (consumeHooks && await hasProjectRunLock({ cwd: repoRoot, projectName })) {
+      throw conflict(`Project is already running; pending Codex context remains queued for ${projectName}.`);
+    }
+    const claimedHookEvents = consumeHooks
+      ? await claimPendingHookEvents({ cwd: repoRoot, projectName })
+      : [];
+    if (claimedHookEvents.length && await hasProjectRunLock({ cwd: repoRoot, projectName })) {
+      await requeueHookEvents({
+        cwd: repoRoot,
+        projectName,
+        events: claimedHookEvents,
+        reason: 'Project became locked after hook events were claimed',
+      });
+      throw conflict(`Project is already running; requeued ${claimedHookEvents.length} pending hook event(s).`);
+    }
+    let result;
+    try {
+      result = await runProject({
+        cwd: repoRoot,
+        projectName,
+        goal: body.goal || `Improve the ${projectName} Agent Skill.`,
+        loops,
+        mode,
+        maxRuns: body.maxRuns || null,
+        evalMode: body.evalMode || 'mock',
+        generationModel,
+        judgeModel,
+        agentModel,
+        apiKeys: {
+          ...(body.openAiApiKey ? { openai: body.openAiApiKey } : {}),
+        },
+        stopRules: body.stopRules || {},
+        triggerMode: claimedHookEvents.length ? 'hook' : body.triggerMode || 'manual',
+        hookContext: summarizeHookEvents(claimedHookEvents),
+      });
+      if (claimedHookEvents.length) {
+        if (result.completedRuns.length > 0) {
+          await markHookEventsProcessed({ cwd: repoRoot, projectName, events: claimedHookEvents });
+        } else {
+          await markHookEventsSkipped({
+            cwd: repoRoot,
+            projectName,
+            events: claimedHookEvents,
+            reason: result.stopReason || 'no runs completed',
+          });
+        }
+      }
+    } catch (error) {
+      if (claimedHookEvents.length) {
+        if (isProjectLockedError(error)) {
+          await requeueHookEvents({ cwd: repoRoot, projectName, events: claimedHookEvents, reason: error.message });
+        } else {
+          await markHookEventsFailed({ cwd: repoRoot, projectName, events: claimedHookEvents, error });
+        }
+      }
+      throw error;
+    }
     writeJson(response, 200, {
       schemaVersion: 1,
       projectId: result.projectId,
       completedRuns: result.completedRuns,
+      consumedHookEvents: claimedHookEvents.length,
       state: result.state,
       stopReason: result.stopReason,
     });
@@ -277,4 +328,14 @@ function badRequest(message) {
   const error = new Error(message);
   error.statusCode = 400;
   return error;
+}
+
+function conflict(message) {
+  const error = new Error(message);
+  error.statusCode = 409;
+  return error;
+}
+
+function isProjectLockedError(error) {
+  return typeof error?.message === 'string' && error.message.startsWith('Project is already locked:');
 }

@@ -6,7 +6,15 @@ import { readProjectStatus } from './lib/status.js';
 import { loadSkillPackage } from './lib/skill-package.js';
 import { runHeadlessEval } from './lib/evaluator.js';
 import { writeAgentContractArtifact, writeRealAgentContractArtifact } from './lib/agent-contracts.js';
-import { recordHookEvent } from './lib/hooks.js';
+import {
+  claimPendingHookEvents,
+  markHookEventsFailed,
+  markHookEventsProcessed,
+  markHookEventsSkipped,
+  recordHookEvent,
+  requeueHookEvents,
+  summarizeHookEvents,
+} from './lib/hooks.js';
 import { getProjectPaths, getRunPaths } from './lib/paths.js';
 import { readJson } from './lib/store.js';
 import { loadDotEnv } from './lib/env.js';
@@ -62,8 +70,9 @@ Usage:
   skill-rsi run <project> --mock --real-eval --loops 1
   skill-rsi run <project> --agentic --loops 1 [--model ${DEFAULT_TEST_MODEL}]
   skill-rsi step <project> --mock
-  skill-rsi continuous <project> --mock --max-runs 10 --patience 3 --max-inconclusive 2
+  skill-rsi continuous <project> --mock --max-runs 10 [--max-new-runs 1] --patience 3 --max-inconclusive 2
   skill-rsi hook <project> --mock --event hook.json
+  skill-rsi hook-record <project> --event hook.json|-
   skill-rsi doctor [--json]
   skill-rsi projects
   skill-rsi status <project>
@@ -108,6 +117,20 @@ function resolveModelOverrides(options) {
     judgeModel: options['judge-model'] || model || null,
     agentModel: options['agent-model'] || model || null,
   };
+}
+
+function parseNonNegativeIntOption(value, label) {
+  if (!/^\d+$/.test(String(value))) throw new Error(`${label} must be a non-negative integer`);
+  const parsed = Number.parseInt(value, 10);
+  if (!Number.isInteger(parsed) || parsed < 0) throw new Error(`${label} must be a non-negative integer`);
+  return parsed;
+}
+
+function parsePositiveIntOption(value, label) {
+  if (!/^\d+$/.test(String(value))) throw new Error(`${label} must be a positive integer`);
+  const parsed = Number.parseInt(value, 10);
+  if (!Number.isInteger(parsed) || parsed < 1) throw new Error(`${label} must be a positive integer`);
+  return parsed;
 }
 
 function normalizeRunIdOption(value) {
@@ -320,38 +343,101 @@ async function main() {
 
   if (command === 'continuous') {
     if (!options['max-runs']) throw new Error('continuous requires --max-runs');
-    const maxRuns = Number.parseInt(options['max-runs'], 10);
+    const maxRuns = parseNonNegativeIntOption(options['max-runs'], '--max-runs');
+    const maxNewRuns = options['max-new-runs']
+      ? parsePositiveIntOption(options['max-new-runs'], '--max-new-runs')
+      : null;
     const paths = getProjectPaths(process.cwd(), projectName);
     const state = await readJson(paths.stateJson, { runCount: 0 });
     const remaining = Math.max(0, maxRuns - state.runCount);
+    const loops = maxNewRuns ? Math.min(remaining, maxNewRuns) : remaining;
+    const claimedHookEvents = options['consume-hooks']
+      ? await claimPendingHookEvents({ cwd: process.cwd(), projectName })
+      : [];
     if (remaining === 0) {
+      if (claimedHookEvents.length) {
+        await markHookEventsSkipped({
+          cwd: process.cwd(),
+          projectName,
+          events: claimedHookEvents,
+          reason: `max-runs ${maxRuns} already reached`,
+        });
+        console.log(`Skipped ${claimedHookEvents.length} pending hook event(s); max-runs ${maxRuns} already reached.`);
+      }
       console.log(`No runs needed; ${projectName} is already at max-runs ${maxRuns}.`);
       return;
     }
     const goal = options.goal || `Improve the ${projectName} Agent Skill.`;
     const mode = resolveRunMode(options) || 'stub';
     const { generationModel, judgeModel, agentModel } = resolveModelOverrides(options);
-    const result = await runProject({
+    let result;
+    try {
+      result = await runProject({
+        cwd: process.cwd(),
+        projectName,
+        goal,
+        loops,
+        mode,
+        maxRuns,
+        evalMode: options['real-eval'] ? 'real' : 'mock',
+        generationModel,
+        judgeModel,
+        agentModel,
+        stopRules: resolveStopRules(options),
+        triggerMode: claimedHookEvents.length ? 'hook' : 'continuous',
+        hookContext: summarizeHookEvents(claimedHookEvents),
+        apiKeys: {
+          anthropic: options['anthropic-key'],
+          openai: options['openai-key'],
+          gemini: options['gemini-key'],
+        },
+      });
+      if (claimedHookEvents.length) {
+        const completed = result.completedRuns.length > 0;
+        if (completed) {
+          await markHookEventsProcessed({ cwd: process.cwd(), projectName, events: claimedHookEvents });
+        } else {
+          await markHookEventsSkipped({
+            cwd: process.cwd(),
+            projectName,
+            events: claimedHookEvents,
+            reason: result.stopReason || 'no runs completed',
+          });
+        }
+      }
+    } catch (error) {
+      if (claimedHookEvents.length) {
+        if (isProjectLockedError(error)) {
+          await requeueHookEvents({
+            cwd: process.cwd(),
+            projectName,
+            events: claimedHookEvents,
+            reason: error.message,
+          });
+          console.log(`Requeued ${claimedHookEvents.length} pending hook event(s); project is already locked.`);
+          return;
+        }
+        await markHookEventsFailed({ cwd: process.cwd(), projectName, events: claimedHookEvents, error });
+      }
+      throw error;
+    }
+    console.log(`Continuous run completed ${result.completedRuns.length} loop(s); total runs ${result.state.runCount}.`);
+    if (claimedHookEvents.length) {
+      const action = result.completedRuns.length > 0 ? 'Processed' : 'Skipped';
+      console.log(`${action} ${claimedHookEvents.length} pending hook event(s).`);
+    }
+    if (result.stopReason) console.log(`Stop reason: ${result.stopReason}`);
+    return;
+  }
+
+  if (command === 'hook-record') {
+    const hookPath = await recordHookEvent({
       cwd: process.cwd(),
       projectName,
-      goal,
-      loops: remaining,
-      mode,
-      maxRuns,
-      evalMode: options['real-eval'] ? 'real' : 'mock',
-      generationModel,
-      judgeModel,
-      agentModel,
-      stopRules: resolveStopRules(options),
-      triggerMode: 'continuous',
-      apiKeys: {
-        anthropic: options['anthropic-key'],
-        openai: options['openai-key'],
-        gemini: options['gemini-key'],
-      },
+      eventPath: options.event || null,
+      queued: true,
     });
-    console.log(`Continuous run completed ${result.completedRuns.length} loop(s); total runs ${result.state.runCount}.`);
-    if (result.stopReason) console.log(`Stop reason: ${result.stopReason}`);
+    console.log(`Queued hook: ${hookPath}`);
     return;
   }
 
@@ -626,6 +712,10 @@ async function main() {
   }
 
   throw new Error(`Unknown command "${command}"`);
+}
+
+function isProjectLockedError(error) {
+  return typeof error?.message === 'string' && error.message.startsWith('Project is already locked:');
 }
 
 main().catch(error => {

@@ -3,11 +3,14 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
-import { execFile } from 'node:child_process';
+import { execFile, spawn } from 'node:child_process';
 import { promisify } from 'node:util';
+import { claimPendingHookEvents } from '../src/lib/hooks.js';
 
 const execFileAsync = promisify(execFile);
 const CLI = path.resolve('src/cli.js');
+const CODEX_HOOK_SCRIPT = path.resolve('scripts/codex-skill-rsi-hook.mjs');
+const CRON_RUNNER = path.resolve('scripts/skill-rsi-cron-runner.mjs');
 
 test('step and report commands work from CLI', async () => {
   const cwd = await fs.mkdtemp(path.join(os.tmpdir(), 'skill-rsi-cli-step-'));
@@ -247,6 +250,50 @@ test('continuous command runs only remaining budget', async () => {
   assert.match(second.stdout, /already at max-runs 2/);
 });
 
+test('continuous command supports max-new-runs per invocation cap', async () => {
+  const cwd = await fs.mkdtemp(path.join(os.tmpdir(), 'skill-rsi-cli-max-new-runs-'));
+
+  const first = await execFileAsync('node', [
+    CLI,
+    'continuous',
+    'Capped Project',
+    '--mock',
+    '--max-runs',
+    '3',
+    '--max-new-runs',
+    '1',
+  ], { cwd });
+  assert.match(first.stdout, /completed 1 loop/);
+  assert.match(first.stdout, /total runs 1/);
+
+  const second = await execFileAsync('node', [
+    CLI,
+    'continuous',
+    'Capped Project',
+    '--mock',
+    '--max-runs',
+    '3',
+    '--max-new-runs',
+    '1',
+  ], { cwd });
+  assert.match(second.stdout, /completed 1 loop/);
+  assert.match(second.stdout, /total runs 2/);
+
+  await assert.rejects(
+    () => execFileAsync('node', [
+      CLI,
+      'continuous',
+      'Capped Project',
+      '--mock',
+      '--max-runs',
+      '3',
+      '--max-new-runs',
+      '0',
+    ], { cwd }),
+    /--max-new-runs must be a positive integer/
+  );
+});
+
 function baselineSkill(name) {
   return `---
 name: ${name}
@@ -350,3 +397,259 @@ test('hook command records event and triggers one run', async () => {
   assert.ok(manager.trigger.hook.focusParameterIds.includes('p08-output_contract'));
   assert.ok(plan.focusParameterIds.includes('p08-output_contract'));
 });
+
+test('hook-record queues stdin event without triggering a run', async () => {
+  const cwd = await fs.mkdtemp(path.join(os.tmpdir(), 'skill-rsi-cli-hook-record-'));
+
+  const recorded = await execFileWithInput('node', [
+    CLI,
+    'hook-record',
+    'Queued Project',
+    '--event',
+    '-',
+  ], JSON.stringify({
+    hook_event_name: 'Stop',
+    changedFiles: ['SKILL.md'],
+    transcript_path: '/tmp/codex-transcript.jsonl',
+    last_assistant_message: 'Do not persist this conversational output.',
+  }), { cwd });
+  assert.match(recorded.stdout, /Queued hook:/);
+
+  const inboxDir = path.join(cwd, '.skill-rsi', 'projects', 'queued-project', 'hooks', 'inbox');
+  const [eventFile] = await fs.readdir(inboxDir);
+  const event = JSON.parse(await fs.readFile(path.join(inboxDir, eventFile), 'utf8'));
+  assert.equal(event.eventName, 'Stop');
+  assert.equal(event.transcriptPath, '/tmp/codex-transcript.jsonl');
+  assert.deepEqual(event.changedFiles, ['SKILL.md']);
+  assert.equal(event.payload.last_assistant_message, undefined);
+  assert.equal(event.payload.hookEventName, 'Stop');
+  assert.equal(typeof event.rawPayloadSha256, 'string');
+
+  const runsDir = path.join(cwd, '.skill-rsi', 'projects', 'queued-project', 'runs');
+  await assert.rejects(() => fs.readdir(runsDir), { code: 'ENOENT' });
+});
+
+test('continuous --consume-hooks drains inbox without forcing a run at max-runs zero', async () => {
+  const cwd = await fs.mkdtemp(path.join(os.tmpdir(), 'skill-rsi-cli-consume-hooks-'));
+  await execFileWithInput('node', [
+    CLI,
+    'hook-record',
+    'Consume Project',
+    '--event',
+    '-',
+  ], JSON.stringify({ hook_event_name: 'Stop', changedFiles: ['README.md'] }), { cwd });
+
+  const consumed = await execFileAsync('node', [
+    CLI,
+    'continuous',
+    'Consume Project',
+    '--mock',
+    '--max-runs',
+    '0',
+    '--consume-hooks',
+  ], { cwd });
+  assert.match(consumed.stdout, /Skipped 1 pending hook event/);
+  assert.match(consumed.stdout, /already at max-runs 0/);
+
+  const hooksDir = path.join(cwd, '.skill-rsi', 'projects', 'consume-project', 'hooks');
+  const inbox = await safeReadDir(path.join(hooksDir, 'inbox'));
+  const processing = await safeReadDir(path.join(hooksDir, 'processing'));
+  const skipped = await fs.readdir(path.join(hooksDir, 'skipped'));
+  assert.deepEqual(inbox, []);
+  assert.deepEqual(processing, []);
+  assert.equal(skipped.length, 1);
+});
+
+test('continuous --consume-hooks processes claimed events when a run completes', async () => {
+  const cwd = await fs.mkdtemp(path.join(os.tmpdir(), 'skill-rsi-cli-process-hooks-'));
+  await execFileWithInput('node', [
+    CLI,
+    'hook-record',
+    'Process Project',
+    '--event',
+    '-',
+  ], JSON.stringify({ hook_event_name: 'Stop', changedFiles: ['SKILL.md'] }), { cwd });
+
+  const processedRun = await execFileAsync('node', [
+    CLI,
+    'continuous',
+    'Process Project',
+    '--mock',
+    '--max-runs',
+    '1',
+    '--consume-hooks',
+  ], { cwd });
+  assert.match(processedRun.stdout, /Processed 1 pending hook event/);
+
+  const hooksDir = path.join(cwd, '.skill-rsi', 'projects', 'process-project', 'hooks');
+  assert.deepEqual(await safeReadDir(path.join(hooksDir, 'inbox')), []);
+  assert.deepEqual(await safeReadDir(path.join(hooksDir, 'processing')), []);
+  assert.equal((await fs.readdir(path.join(hooksDir, 'processed'))).length, 1);
+
+  const runsDir = path.join(cwd, '.skill-rsi', 'projects', 'process-project', 'runs');
+  const [runId] = await fs.readdir(runsDir);
+  const manager = JSON.parse(await fs.readFile(path.join(runsDir, runId, 'manager', 'manager.json'), 'utf8'));
+  assert.equal(manager.trigger.mode, 'hook');
+  assert.deepEqual(manager.trigger.hook.changedFiles, ['SKILL.md']);
+});
+
+test('claimPendingHookEvents reclaims stale processing events', async () => {
+  const cwd = await fs.mkdtemp(path.join(os.tmpdir(), 'skill-rsi-stale-processing-'));
+  await execFileWithInput('node', [
+    CLI,
+    'hook-record',
+    'Stale Project',
+    '--event',
+    '-',
+  ], JSON.stringify({ hook_event_name: 'Stop', changedFiles: ['SKILL.md'] }), { cwd });
+
+  const firstClaim = await claimPendingHookEvents({ cwd, projectName: 'Stale Project' });
+  assert.equal(firstClaim.length, 1);
+
+  const secondClaim = await claimPendingHookEvents({
+    cwd,
+    projectName: 'Stale Project',
+    staleProcessingMs: 1,
+    now: new Date(Date.now() + 60_000),
+  });
+  assert.equal(secondClaim.length, 1);
+  assert.equal(secondClaim[0].id, firstClaim[0].id);
+  assert.equal(secondClaim[0].queueStatus, 'processing');
+
+  const hooksDir = path.join(cwd, '.skill-rsi', 'projects', 'stale-project', 'hooks');
+  assert.deepEqual(await safeReadDir(path.join(hooksDir, 'inbox')), []);
+  assert.equal((await fs.readdir(path.join(hooksDir, 'processing'))).length, 1);
+});
+
+test('claimPendingHookEvents leaves stale processing events alone while project is locked', async () => {
+  const cwd = await fs.mkdtemp(path.join(os.tmpdir(), 'skill-rsi-stale-processing-locked-'));
+  await execFileWithInput('node', [
+    CLI,
+    'hook-record',
+    'Locked Stale Project',
+    '--event',
+    '-',
+  ], JSON.stringify({ hook_event_name: 'Stop', changedFiles: ['SKILL.md'] }), { cwd });
+
+  const firstClaim = await claimPendingHookEvents({ cwd, projectName: 'Locked Stale Project' });
+  assert.equal(firstClaim.length, 1);
+
+  const projectDir = path.join(cwd, '.skill-rsi', 'projects', 'locked-stale-project');
+  await fs.writeFile(path.join(projectDir, 'run.lock'), JSON.stringify({ pid: 123, createdAt: new Date().toISOString() }));
+
+  const secondClaim = await claimPendingHookEvents({
+    cwd,
+    projectName: 'Locked Stale Project',
+    staleProcessingMs: 1,
+    now: new Date(Date.now() + 60_000),
+  });
+  assert.equal(secondClaim.length, 0);
+
+  const hooksDir = path.join(projectDir, 'hooks');
+  assert.deepEqual(await safeReadDir(path.join(hooksDir, 'inbox')), []);
+  const processing = await fs.readdir(path.join(hooksDir, 'processing'));
+  assert.equal(processing.length, 1);
+  const event = JSON.parse(await fs.readFile(path.join(hooksDir, 'processing', processing[0]), 'utf8'));
+  assert.equal(event.queueStatus, 'processing');
+});
+
+test('continuous --consume-hooks requeues claimed events when project is locked', async () => {
+  const cwd = await fs.mkdtemp(path.join(os.tmpdir(), 'skill-rsi-locked-requeue-'));
+  await execFileWithInput('node', [
+    CLI,
+    'hook-record',
+    'Locked Project',
+    '--event',
+    '-',
+  ], JSON.stringify({ hook_event_name: 'Stop', changedFiles: ['SKILL.md'] }), { cwd });
+
+  const projectDir = path.join(cwd, '.skill-rsi', 'projects', 'locked-project');
+  await fs.writeFile(path.join(projectDir, 'run.lock'), JSON.stringify({ pid: 123, createdAt: new Date().toISOString() }));
+
+  const locked = await execFileAsync('node', [
+    CLI,
+    'continuous',
+    'Locked Project',
+    '--mock',
+    '--max-runs',
+    '1',
+    '--consume-hooks',
+  ], { cwd });
+  assert.match(locked.stdout, /Requeued 1 pending hook event/);
+
+  const hooksDir = path.join(projectDir, 'hooks');
+  const inbox = await fs.readdir(path.join(hooksDir, 'inbox'));
+  assert.equal(inbox.length, 1);
+  assert.deepEqual(await safeReadDir(path.join(hooksDir, 'processing')), []);
+  assert.deepEqual(await safeReadDir(path.join(hooksDir, 'failed')), []);
+
+  const event = JSON.parse(await fs.readFile(path.join(hooksDir, 'inbox', inbox[0]), 'utf8'));
+  assert.equal(event.queueStatus, 'queued');
+  assert.match(event.queueReason, /Project is already locked/);
+});
+
+test('Codex hook script queues events and cron runner consumes them safely', async () => {
+  const cwd = await fs.mkdtemp(path.join(os.tmpdir(), 'skill-rsi-codex-cron-'));
+  const hook = await execFileWithInput('node', [
+    CODEX_HOOK_SCRIPT,
+  ], JSON.stringify({
+    hook_event_name: 'Stop',
+    changedFiles: ['docs/SCHEDULING.md'],
+  }), {
+    cwd,
+    env: {
+      ...process.env,
+      SKILL_RSI_PROJECT: 'Cron Script Project',
+    },
+  });
+  assert.equal(JSON.parse(hook.stdout).continue, true);
+  assert.match(hook.stderr, /Queued Skill RSI hook/);
+
+  const runner = await execFileAsync('node', [
+    CRON_RUNNER,
+    'Cron Script Project',
+    '--mock',
+    '--max-runs',
+    '0',
+  ], { cwd });
+  assert.match(runner.stdout, /skill-rsi-cron/);
+  assert.match(runner.stdout, /Skipped 1 pending hook event/);
+
+  const skippedDir = path.join(cwd, '.skill-rsi', 'projects', 'cron-script-project', 'hooks', 'skipped');
+  assert.equal((await fs.readdir(skippedDir)).length, 1);
+});
+
+function execFileWithInput(command, args, input, options = {}) {
+  return new Promise((resolve, reject) => {
+    const child = spawn(command, args, {
+      ...options,
+      stdio: ['pipe', 'pipe', 'pipe'],
+    });
+    let stdout = '';
+    let stderr = '';
+    child.stdout.on('data', chunk => { stdout += chunk; });
+    child.stderr.on('data', chunk => { stderr += chunk; });
+    child.on('error', reject);
+    child.on('close', code => {
+      if (code === 0) {
+        resolve({ stdout, stderr });
+      } else {
+        const error = new Error(`${command} ${args.join(' ')} exited with ${code}\n${stderr}`);
+        error.code = code;
+        error.stdout = stdout;
+        error.stderr = stderr;
+        reject(error);
+      }
+    });
+    child.stdin.end(input);
+  });
+}
+
+async function safeReadDir(dir) {
+  try {
+    return await fs.readdir(dir);
+  } catch (error) {
+    if (error.code === 'ENOENT') return [];
+    throw error;
+  }
+}

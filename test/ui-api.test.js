@@ -102,6 +102,111 @@ test('ui api exposes comparison and optional audit annotations', async () => {
   assert.ok(detail.timeline.some(entry => entry.event === 'human_decision.recorded'));
 });
 
+test('ui api derives latest loop result for a cold-start champion', async () => {
+  const cwd = await fs.mkdtemp(path.join(os.tmpdir(), 'skill-rsi-ui-loop-result-cold-'));
+  const result = await runProject({
+    cwd,
+    projectName: 'Loop Result Cold',
+    goal: 'Expose a satisfying first loop result.',
+    loops: 1,
+    mode: 'mock',
+  });
+  const runId = result.completedRuns[0].runId;
+  const detail = await readRunDetail({ cwd, projectName: 'Loop Result Cold', runId });
+  const duel = JSON.parse(await fs.readFile(detail.artifacts.candidateDuelJson, 'utf8'));
+  duel.stats.winner = 'skillA';
+  duel.stats.scoreDelta = 10;
+  duel.stats.totalScoreA = 40;
+  duel.stats.totalScoreB = 30;
+  duel.stats.skillAWins = 7;
+  duel.stats.skillBWins = 3;
+  duel.stats.ties = 0;
+  const recommendation = JSON.parse(await fs.readFile(detail.artifacts.recommendationJson, 'utf8'));
+  recommendation.decision = 'promote';
+  recommendation.recommendedChampionCandidateId = 'candidate-a';
+  recommendation.confidence = 'medium';
+  await fs.writeFile(detail.artifacts.candidateDuelJson, `${JSON.stringify(duel, null, 2)}\n`);
+  await fs.writeFile(detail.artifacts.recommendationJson, `${JSON.stringify(recommendation, null, 2)}\n`);
+
+  const summary = await readProjectSummary({ cwd, projectName: 'Loop Result Cold' });
+  assert.equal(summary.latestLoopResult.runId, runId);
+  assert.equal(summary.latestLoopResult.competitionMode, 'cold_start_duel');
+  assert.equal(summary.latestLoopResult.outcome, 'first_champion');
+  assert.equal(summary.latestLoopResult.headline, 'First champion crowned');
+  assert.equal(summary.latestLoopResult.labels.sideA, 'Candidate A');
+  assert.equal(summary.latestLoopResult.labels.sideB, 'Candidate B');
+  assert.equal(summary.latestLoopResult.promptOutcomes.length, summary.latestLoopResult.promptWins.total);
+  assert.ok(Number.isFinite(summary.latestLoopResult.sides.sideA.totalScore));
+  assert.ok(Number.isFinite(summary.latestLoopResult.sides.sideB.totalScore));
+  assert.ok(summary.latestLoopResult.policyChips.some(chip => /confidence/.test(chip.kind)));
+});
+
+test('ui api derives latest loop result for champion challenge and policy gates', async () => {
+  const cwd = await fs.mkdtemp(path.join(os.tmpdir(), 'skill-rsi-ui-loop-result-challenge-'));
+  const result = await runProject({
+    cwd,
+    projectName: 'Loop Result Challenge',
+    goal: 'Expose champion challenge outcomes.',
+    loops: 2,
+    mode: 'mock',
+  });
+  const runId = result.completedRuns.at(-1).runId;
+  const detail = await readRunDetail({ cwd, projectName: 'Loop Result Challenge', runId });
+  const challenge = JSON.parse(await fs.readFile(detail.artifacts.challengeJson, 'utf8'));
+  challenge.stats.winner = 'skillA';
+  challenge.stats.scoreDelta = 12;
+  challenge.stats.totalScoreA = 42;
+  challenge.stats.totalScoreB = 30;
+  challenge.stats.skillAWins = 8;
+  challenge.stats.skillBWins = 2;
+  challenge.stats.ties = 0;
+  const recommendation = JSON.parse(await fs.readFile(detail.artifacts.recommendationJson, 'utf8'));
+  recommendation.decision = 'keep_current';
+  recommendation.recommendedChampionCandidateId = null;
+  recommendation.reasoning = 'The challenger scored higher, but stable-prompt regression blocked promotion.';
+  recommendation.resultSummary = {
+    ...(recommendation.resultSummary || {}),
+    criticalRegressions: [{ promptId: 'stable-critical' }],
+  };
+  await fs.writeFile(detail.artifacts.challengeJson, `${JSON.stringify(challenge, null, 2)}\n`);
+  await fs.writeFile(detail.artifacts.recommendationJson, `${JSON.stringify(recommendation, null, 2)}\n`);
+
+  const summary = await readProjectSummary({ cwd, projectName: 'Loop Result Challenge' });
+  assert.equal(summary.latestLoopResult.competitionMode, 'champion_challenge');
+  assert.equal(summary.latestLoopResult.outcome, 'kept');
+  assert.equal(summary.latestLoopResult.headline, 'Champion held, challenger lost');
+  assert.equal(summary.latestLoopResult.rawWinner, 'sideA');
+  assert.equal(summary.latestLoopResult.promotedSide, null);
+  assert.equal(summary.latestLoopResult.sides.sideA.totalScore, 42);
+  assert.equal(summary.latestLoopResult.sides.sideB.totalScore, 30);
+  assert.ok(summary.latestLoopResult.policyChips.some(chip => chip.kind === 'regression'));
+  assert.ok(summary.latestLoopResult.blockers.some(blocker => /stable-prompt regression/i.test(blocker)));
+});
+
+test('ui api includes visual metadata in latest loop result', async () => {
+  const cwd = await fs.mkdtemp(path.join(os.tmpdir(), 'skill-rsi-ui-loop-result-visual-'));
+  const result = await runProject({
+    cwd,
+    projectName: 'Loop Result Visual',
+    goal: 'Expose visual result metadata.',
+    loops: 1,
+    mode: 'mock',
+  });
+  const runId = result.completedRuns[0].runId;
+  const detail = await readRunDetail({ cwd, projectName: 'Loop Result Visual', runId });
+  const duel = JSON.parse(await fs.readFile(detail.artifacts.candidateDuelJson, 'utf8'));
+  duel.evaluations[0].visual = {
+    skillA: { status: 'complete', blankScreenDetected: false, screenshots: [{ path: '/tmp/a.png' }] },
+    skillB: { status: 'failed', blankScreenDetected: true, screenshots: [] },
+  };
+  await fs.writeFile(detail.artifacts.candidateDuelJson, `${JSON.stringify(duel, null, 2)}\n`);
+
+  const summary = await readProjectSummary({ cwd, projectName: 'Loop Result Visual' });
+  assert.equal(summary.latestLoopResult.visual.screenshotCount, 1);
+  assert.equal(summary.latestLoopResult.visual.renderIssues, 1);
+  assert.ok(summary.latestLoopResult.policyChips.some(chip => chip.kind === 'visual'));
+});
+
 test('ui api creates new projects and rejects duplicates', async () => {
   const cwd = await fs.mkdtemp(path.join(os.tmpdir(), 'skill-rsi-ui-api-create-'));
 

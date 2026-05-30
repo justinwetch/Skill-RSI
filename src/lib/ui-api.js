@@ -336,6 +336,7 @@ export async function readProjectSummary({ cwd, projectName }) {
   const config = await loadProjectConfig({ cwd, projectName });
   const humanDecisions = await listHumanDecisions(paths);
   const automation = await readAutomationSummary({ cwd, paths, state, config });
+  const latestLoopResult = await buildLatestLoopResult({ paths, state, history });
 
   return {
     schemaVersion: 1,
@@ -379,6 +380,7 @@ export async function readProjectSummary({ cwd, projectName }) {
     } : null,
     humanDecisionCount: humanDecisions.length,
     automation,
+    latestLoopResult,
     artifacts: {
       historyIndex: paths.historyIndex,
       historySummary: paths.historySummary,
@@ -386,6 +388,306 @@ export async function readProjectSummary({ cwd, projectName }) {
       promptBankIndex: paths.promptBankIndex,
     },
   };
+}
+
+async function buildLatestLoopResult({ paths, state, history }) {
+  const runId = state.lastRunId;
+  if (!runId) return null;
+  const runPaths = getRunPaths(paths, runId);
+  const [run, experimentPlan, candidateDuel, challenge, recommendation] = await Promise.all([
+    readJson(runPaths.runJson, null),
+    readJson(runPaths.experimentPlanJson, null),
+    readJson(runPaths.candidateDuelJson, null),
+    readJson(runPaths.challengeJson, null),
+    readJson(runPaths.recommendationJson, null),
+  ]);
+  if (!run) return null;
+
+  const competitionMode = experimentPlan?.competitionMode || run.competitionMode || (challenge ? 'champion_challenge' : 'cold_start_duel');
+  const evalRun = competitionMode === 'cold_start_duel' ? candidateDuel : challenge || candidateDuel;
+  const labels = competitionMode === 'cold_start_duel'
+    ? {
+      sideA: 'Candidate A',
+      sideB: 'Candidate B',
+      sideARole: 'candidate-a',
+      sideBRole: 'candidate-b',
+    }
+    : {
+      sideA: 'Challenger',
+      sideB: 'Champion',
+      sideARole: 'challenger',
+      sideBRole: 'champion',
+    };
+  const trajectory = Array.isArray(history?.trajectory) ? history.trajectory : [];
+  const latestHistory = trajectory.find(item => item.runId === runId) || trajectory.at(-1) || null;
+
+  if (!evalRun) {
+    return {
+      schemaVersion: 1,
+      available: true,
+      runId,
+      runNumber: run.runNumber ?? state.runCount ?? null,
+      competitionMode,
+      outcome: run.status === 'failed' ? 'failed' : 'blocked',
+      headline: run.status === 'failed' ? 'Run failed' : 'No evaluation recorded',
+      subhead: run.status === 'failed'
+        ? 'The loop did not complete cleanly.'
+        : 'The loop produced no head-to-head evaluation to summarize.',
+      decision: recommendation?.decision || latestHistory?.decision || null,
+      confidence: recommendation?.confidence || null,
+      labels,
+      sides: buildScoreSides(labels, null),
+      scoreDelta: null,
+      promptWins: { sideA: 0, sideB: 0, ties: 0, failed: 0, total: 0 },
+      promptOutcomes: [],
+      topCriterionEdges: [],
+      policyChips: buildPolicyChips({ recommendation, evalRun: null }),
+      blockers: extractPromotionBlockers(recommendation),
+      reasons: summarizeResultReasons({ recommendation, latestHistory }),
+      nextLoopNote: firstNextLoopNote(history),
+    };
+  }
+
+  const decision = recommendation?.decision || latestHistory?.decision || null;
+  const outcome = classifyLoopOutcome({ competitionMode, decision, recommendation, evalRun, run });
+  const headline = loopResultHeadline({ outcome, competitionMode, recommendation, evalRun, labels });
+  const subhead = loopResultSubhead({ outcome, recommendation, evalRun, labels });
+  const promptOutcomes = summarizePromptOutcomes(evalRun);
+
+  return {
+    schemaVersion: 1,
+    available: true,
+    runId,
+    runNumber: run.runNumber ?? state.runCount ?? null,
+    competitionMode,
+    outcome,
+    headline,
+    subhead,
+    decision,
+    confidence: recommendation?.confidence || evalRun.stats?.confidence?.level || null,
+    labels,
+    rawWinner: mapWinnerToSide(evalRun.stats?.winner),
+    promotedSide: promotedCandidateToSide(recommendation?.recommendedChampionCandidateId, competitionMode),
+    sides: buildScoreSides(labels, evalRun),
+    scoreDelta: Number.isFinite(evalRun.stats?.scoreDelta) ? evalRun.stats.scoreDelta : null,
+    promptWins: {
+      sideA: evalRun.stats?.skillAWins || 0,
+      sideB: evalRun.stats?.skillBWins || 0,
+      ties: evalRun.stats?.ties || 0,
+      failed: evalRun.stats?.failedEvals || 0,
+      total: evalRun.stats?.totalEvals || promptOutcomes.length,
+    },
+    promptOutcomes,
+    topCriterionEdges: summarizeCriterionEdges(evalRun),
+    policyChips: buildPolicyChips({ recommendation, evalRun }),
+    blockers: extractPromotionBlockers(recommendation),
+    reasons: summarizeResultReasons({ recommendation, latestHistory }),
+    nextLoopNote: firstNextLoopNote(history),
+    visual: summarizeVisualResult(evalRun),
+  };
+}
+
+function classifyLoopOutcome({ competitionMode, decision, recommendation, evalRun, run }) {
+  if (run?.status === 'failed') return 'failed';
+  if (decision === 'promote') {
+    return competitionMode === 'cold_start_duel' ? 'first_champion' : 'promoted';
+  }
+  if (decision === 'keep_current') return 'kept';
+  if (decision === 'request_new_experiment') return 'inconclusive';
+  if (decision === 'edit_current') return 'refined';
+  if (recommendation?.resultSummary?.criticalRegressions?.length) return 'kept';
+  if (evalRun?.stats?.winner === 'tie') return 'inconclusive';
+  return 'complete';
+}
+
+function loopResultHeadline({ outcome, competitionMode, recommendation, evalRun, labels }) {
+  if (outcome === 'failed') return 'Run failed';
+  if (outcome === 'first_champion') return 'First champion crowned';
+  if (outcome === 'promoted') return 'Challenger promoted';
+  if (outcome === 'kept') return 'Champion held, challenger lost';
+  if (outcome === 'inconclusive') return 'No clear winner';
+  if (outcome === 'refined') return 'Champion refined';
+  const winner = mapWinnerToSide(evalRun?.stats?.winner);
+  if (winner === 'sideA') return `${labels.sideA} led the eval`;
+  if (winner === 'sideB') return `${labels.sideB} led the eval`;
+  return competitionMode === 'cold_start_duel' ? 'Candidate duel complete' : 'Challenge complete';
+}
+
+function loopResultSubhead({ outcome, recommendation, evalRun, labels }) {
+  if (recommendation?.reasoning) return firstSentence(recommendation.reasoning);
+  if (outcome === 'first_champion') return 'The bootstrap duel produced the project’s first champion.';
+  if (outcome === 'promoted') return 'The challenger cleared the promotion policy and became the new champion.';
+  if (outcome === 'kept') return 'The challenger did not clear the promotion policy, so the current champion remains in place.';
+  if (outcome === 'inconclusive') return 'The scores were too close or noisy to crown a new version.';
+  const winner = mapWinnerToSide(evalRun?.stats?.winner);
+  if (winner === 'sideA') return `${labels.sideA} had the stronger aggregate score.`;
+  if (winner === 'sideB') return `${labels.sideB} had the stronger aggregate score.`;
+  return 'The loop completed and recorded its evidence.';
+}
+
+function buildScoreSides(labels, evalRun) {
+  return {
+    sideA: {
+      label: labels.sideA,
+      role: labels.sideARole,
+      totalScore: Number.isFinite(evalRun?.stats?.totalScoreA) ? evalRun.stats.totalScoreA : null,
+    },
+    sideB: {
+      label: labels.sideB,
+      role: labels.sideBRole,
+      totalScore: Number.isFinite(evalRun?.stats?.totalScoreB) ? evalRun.stats.totalScoreB : null,
+    },
+  };
+}
+
+function mapWinnerToSide(winner) {
+  if (winner === 'skillA') return 'sideA';
+  if (winner === 'skillB') return 'sideB';
+  if (winner === 'tie') return 'tie';
+  return null;
+}
+
+function promotedCandidateToSide(candidateId, competitionMode) {
+  if (!candidateId) return null;
+  if (candidateId === 'challenger') return 'sideA';
+  if (candidateId === 'current' || candidateId === 'champion') return 'sideB';
+  if (competitionMode === 'cold_start_duel' && candidateId === 'candidate-a') return 'sideA';
+  if (competitionMode === 'cold_start_duel' && candidateId === 'candidate-b') return 'sideB';
+  return null;
+}
+
+function summarizePromptOutcomes(evalRun) {
+  return normalizeArray(evalRun?.evaluations).map((evaluation, index) => ({
+    id: evaluation.prompt?.id || evaluation.id || index + 1,
+    bucket: evaluation.prompt?.bucket || null,
+    status: evaluation.status || evaluation.judge?.status || 'complete',
+    winner: (evaluation.status && evaluation.status !== 'complete') || (evaluation.judge?.status && evaluation.judge.status !== 'complete')
+      ? 'failed'
+      : mapWinnerToSide(evaluation.judge?.winner) || 'failed',
+    scoreA: Number.isFinite(evaluation.judge?.scoreA) ? evaluation.judge.scoreA : null,
+    scoreB: Number.isFinite(evaluation.judge?.scoreB) ? evaluation.judge.scoreB : null,
+  }));
+}
+
+function summarizeCriterionEdges(evalRun) {
+  const criteria = normalizeArray(evalRun?.criteria).filter(criterion => !String(criterion.id || '').startsWith('parameter_'));
+  const rows = [];
+  for (const criterion of criteria) {
+    const criterionId = criterion.id || criterion.name;
+    let totalA = 0;
+    let totalB = 0;
+    let count = 0;
+    for (const evaluation of normalizeArray(evalRun?.evaluations)) {
+      const a = evaluation.judge?.breakdown?.skillA?.[criterionId];
+      const b = evaluation.judge?.breakdown?.skillB?.[criterionId];
+      if (!Number.isFinite(a) || !Number.isFinite(b)) continue;
+      totalA += a;
+      totalB += b;
+      count += 1;
+    }
+    if (!count) continue;
+    const avgA = totalA / count;
+    const avgB = totalB / count;
+    const delta = avgA - avgB;
+    rows.push({
+      id: criterionId,
+      name: criterion.name || criterionId,
+      avgA: Number(avgA.toFixed(2)),
+      avgB: Number(avgB.toFixed(2)),
+      delta: Number(delta.toFixed(2)),
+      leader: delta > 0 ? 'sideA' : delta < 0 ? 'sideB' : 'tie',
+    });
+  }
+  return rows
+    .sort((a, b) => Math.abs(b.delta) - Math.abs(a.delta))
+    .slice(0, 3);
+}
+
+function buildPolicyChips({ recommendation, evalRun }) {
+  const chips = [];
+  if (recommendation?.confidence) {
+    chips.push({ kind: 'confidence', tone: confidenceTone(recommendation.confidence), label: `${recommendation.confidence} confidence` });
+  }
+  if (recommendation?.resultSummary?.provisionalBootstrap) {
+    chips.push({ kind: 'bootstrap', tone: 'info', label: 'provisional bootstrap' });
+  }
+  if (recommendation?.resultSummary?.criticalRegressions?.length) {
+    chips.push({ kind: 'regression', tone: 'warning', label: `stable regression x${recommendation.resultSummary.criticalRegressions.length}` });
+  }
+  if (evalRun?.stats?.failedEvals) {
+    chips.push({ kind: 'failed_eval', tone: 'warning', label: `${evalRun.stats.failedEvals} eval failure${evalRun.stats.failedEvals === 1 ? '' : 's'}` });
+  }
+  const visual = summarizeVisualResult(evalRun);
+  if (visual.renderIssues > 0) {
+    chips.push({ kind: 'visual', tone: 'warning', label: `${visual.renderIssues} render issue${visual.renderIssues === 1 ? '' : 's'}` });
+  } else if (visual.screenshotCount > 0) {
+    chips.push({ kind: 'visual', tone: 'success', label: `${visual.screenshotCount} screenshot${visual.screenshotCount === 1 ? '' : 's'}` });
+  }
+  return chips.slice(0, 4);
+}
+
+function confidenceTone(confidence) {
+  if (confidence === 'high') return 'success';
+  if (confidence === 'medium') return 'info';
+  return 'muted';
+}
+
+function extractPromotionBlockers(recommendation) {
+  const blockers = [];
+  const regressions = normalizeArray(recommendation?.resultSummary?.criticalRegressions);
+  if (regressions.length) {
+    blockers.push(regressions.length === 1
+      ? 'Stable-prompt regression blocked promotion'
+      : `${regressions.length} stable-prompt regressions blocked promotion`);
+  }
+  for (const noise of normalizeArray(recommendation?.resultSummary?.likelyNoise)) {
+    blockers.push(String(noise));
+  }
+  return blockers.slice(0, 3);
+}
+
+function summarizeResultReasons({ recommendation, latestHistory }) {
+  const observations = normalizeArray(recommendation?.observations).filter(Boolean);
+  const reasons = observations.length ? observations : [latestHistory?.summary].filter(Boolean);
+  return reasons.map(reason => compactSentence(reason, 140)).slice(0, 2);
+}
+
+function firstNextLoopNote(history) {
+  const premise = buildNextLoopPremise(history);
+  return premise?.notes?.[0] || null;
+}
+
+function compactSentence(value, maxLength) {
+  const text = String(value || '').replace(/\s+/g, ' ').trim();
+  if (text.length <= maxLength) return text;
+  return `${text.slice(0, Math.max(0, maxLength - 1)).trim()}…`;
+}
+
+function firstSentence(value) {
+  const text = String(value || '').replace(/\s+/g, ' ').trim();
+  const match = text.match(/^.*?[.!?](?:\s|$)/);
+  return (match?.[0] || text).trim();
+}
+
+function normalizeArray(value) {
+  return Array.isArray(value) ? value : [];
+}
+
+function summarizeVisualResult(evalRun) {
+  let screenshotCount = 0;
+  let renderIssues = 0;
+  for (const evaluation of normalizeArray(evalRun?.evaluations)) {
+    const visuals = [
+      ...Object.values(evaluation.results || {}).map(result => result?.visual).filter(Boolean),
+      evaluation.visual?.skillA,
+      evaluation.visual?.skillB,
+    ].filter(Boolean);
+    for (const visual of visuals) {
+      screenshotCount += normalizeArray(visual.screenshots).length;
+      if (visual.status === 'failed' || visual.blankScreenDetected) renderIssues += 1;
+    }
+  }
+  return { screenshotCount, renderIssues };
 }
 
 export async function updateProjectModelForUi({ cwd, projectName, model }) {

@@ -1121,6 +1121,7 @@ function Project(props) {
       {screen === 'skill' && (
         <SkillViewer source={skillSource} data={skillData} compareData={compareData} loading={skillLoading}
           activeFile={skillFile} setActiveFile={setSkillFile} onViewSkill={onViewSkill}
+          summary={summary} onExportChampion={onExportChampion}
           strategies={{
             competitionMode: skillCmp?.competitionMode || 'cold_start_duel',
             a: skillCmp?.competitionMode === 'cold_start_duel' ? skillCmp?.sides?.candidateA?.strategy : skillCmp?.sides?.champion?.strategy,
@@ -1142,20 +1143,14 @@ function Project(props) {
               outputType={summary.config?.eval?.outputType} />
           ) : (
             <>
+              {summary.latestLoopResult && (
+                <LoopResultCard result={summary.latestLoopResult} summary={summary}
+                  onEvidence={() => onOpenRun(null, 'home')} onViewSkill={onViewSkill} />
+              )}
               <NextLoopPremise premise={summary.history?.nextLoopPremise} />
               <RunBar summary={summary} loops={loops} setLoops={setLoops} busy={busy}
                 settingsBusy={settingsBusy} onStart={onStart} onModelChange={onModelChange} />
-              {runDetail?.recommendation && (
-                <Verdict summary={summary} runDetail={runDetail} comparison={comparison}
-                  busy={busy} onStart={onStart} onEvidence={() => onOpenRun(null, 'home')} />
-              )}
-              {summary.state.currentChampion && (
-                <ProjectActions summary={summary} loops={loops} busy={busy}
-                  onStart={onStart} onViewChampion={() => onViewSkill('champion')}
-                  onExportChampion={onExportChampion} />
-              )}
               <div className="grid home">
-                <ChampionCard summary={summary} runDetail={runDetail} comparison={comparison} onViewSkill={onViewSkill} />
                 <HistoryCard summary={summary} onOpenRun={id => onOpenRun(id, 'home')} onOpenAll={() => setScreen('history')} />
               </div>
               <SecondaryRow summary={summary} runDetail={runDetail} />
@@ -1569,149 +1564,182 @@ function Stage({ state, label, Icon, line, lineFilled }) {
   );
 }
 
-/* ---------------- verdict ---------------- */
+/* ---------------- loop result ---------------- */
 
-function Verdict({ summary, runDetail, comparison, busy, onStart, onEvidence }) {
-  const rec = runDetail.recommendation;
-  const duel = comparison?.evalSummary?.candidateDuel;
-  const challenge = comparison?.evalSummary?.challenge;
-  const promoted = rec.decision === 'promote';
-  const iteration = summary.state.runCount;
-  const title = {
-    promote: `Iteration ${iteration} improved the skill`,
-    keep_current: `Iteration ${iteration} kept the current champion`,
-    edit_current: `Iteration ${iteration} refined the champion`,
-    request_new_experiment: `Iteration ${iteration} was inconclusive`,
-  }[rec.decision] || `Iteration ${iteration} complete`;
-  const headToHead = challenge || duel;
-  const winLine = headToHead
-    ? `Winner won ${Math.max(headToHead.wins.skillA, headToHead.wins.skillB)} of ${headToHead.wins.skillA + headToHead.wins.skillB + headToHead.wins.ties} prompts · ${rec.confidence} confidence.`
-    : `${rec.confidence} confidence.`;
-  const guidance = rec.nextRoundGuidance || runDetail.run?.recommendation?.nextRoundGuidance;
-  const observations = rec.observations || runDetail.run?.recommendation?.observations || [];
-
+function LoopResultCard({ result, summary, onEvidence, onViewSkill }) {
+  const outcomeTone = resultTone(result.outcome);
+  const OutcomeIcon = resultIcon(result.outcome);
+  const hasScores = result.sides?.sideA?.totalScore != null || result.sides?.sideB?.totalScore != null;
+  const delta = result.scoreDelta;
+  const deltaSide = delta > 0 ? 'sideA' : delta < 0 ? 'sideB' : 'tie';
+  const deltaLabel = delta == null ? 'n/a' : delta === 0 ? 'even' : `+${Math.abs(delta)}`;
+  const hasChampion = !!summary.state.currentChampion;
+  const prompts = result.promptOutcomes || [];
+  const sideATotal = result.sides?.sideA?.totalScore;
+  const sideBTotal = result.sides?.sideB?.totalScore;
+  const numericSideA = Number(sideATotal) || 0;
+  const numericSideB = Number(sideBTotal) || 0;
+  const policyWinner = resultPolicyWinnerSide(result);
+  const advantage = buildResultAdvantage({
+    result,
+    policyWinner,
+    deltaSide,
+    numericSideA,
+    numericSideB,
+  });
+  const visibleEdges = policyWinner
+    ? (result.topCriterionEdges || []).filter(edge => edge.leader === policyWinner)
+    : (result.topCriterionEdges || []);
+  const totalPrompts = result.promptWins?.total ?? prompts.length;
+  const winnerPromptWins = policyWinner === 'sideA'
+    ? result.promptWins?.sideA ?? 0
+    : policyWinner === 'sideB'
+      ? result.promptWins?.sideB ?? 0
+      : result.promptWins?.ties ?? 0;
+  const promptMetricLabel = policyWinner ? 'prompts won' : 'prompts tied';
+  const scoreMeta = buildScoreMeta({ result, sideATotal, sideBTotal, deltaLabel });
   return (
-    <div className={`verdict ${promoted ? 'good' : 'neutral'}`}>
-      <div className="verdict-head">
-        {promoted ? <CheckCircle2 size={22} /> : <Flag size={20} />}
-        <span className="verdict-title">{title}</span>
-      </div>
-      <p className="verdict-body">{rec.reasoning || winLine}</p>
-      <div className="verdict-actions">
-        {(runDetail?.evals?.candidateDuel || runDetail?.evals?.challenge) && (
-          <button className="btn" onClick={onEvidence}><FileText size={16} /> Detailed Data <ArrowRight size={15} /></button>
-        )}
-      </div>
-      {(observations.length > 0 || guidance) && (
-        <details className="disclosure" open>
-          <summary><ChevronRightInline /> Analyst notes &amp; next steps</summary>
-          {observations.length > 0 && (
-            <ul className="notes-list">{observations.map((o, i) => <li key={i}>{o}</li>)}</ul>
-          )}
-          {guidance && (
-            <div className="next-steps">
-              {guidance.vary && <div><b>Try next</b><span>{guidance.vary}</span></div>}
-              {guidance.preserve && <div><b>Preserve</b><span>{guidance.preserve}</span></div>}
-              {guidance.investigate && <div><b>Investigate</b><span>{guidance.investigate}</span></div>}
+    <section className={`loop-result ${outcomeTone} policy-${policyWinner || 'tie'}`}>
+      <div className="loop-result-inner">
+        <div className="loop-result-head">
+          <div className="loop-result-title">
+            <span className="loop-result-icon"><OutcomeIcon size={22} /></span>
+            <div className="eyebrow">Loop result · iteration {result.runNumber || summary.state.runCount}</div>
+            <h2>{result.headline}</h2>
+          </div>
+          <span className={`loop-result-status ${outcomeTone}`}>{loopResultStatus(result)}</span>
+        </div>
+
+        <div className="result-metrics">
+          {advantage && (
+            <div className={`result-metric ${resultSideTone(policyWinner, policyWinner)}`}>
+              <b>{advantage.value}</b>
+              <span>{advantage.label}</span>
             </div>
           )}
-        </details>
-      )}
-    </div>
+          <div className={`result-metric ${resultSideTone(policyWinner, policyWinner)}`}>
+            <b>{winnerPromptWins}<em>/</em>{totalPrompts || 0}</b>
+            <span>{promptMetricLabel}</span>
+          </div>
+        </div>
+
+        {visibleEdges.length > 0 && (
+          <div className="result-insights">
+            <div className="edge-list">
+              <div className="mini-label">Where {result.labels?.[policyWinner] || leadLabel || 'the winner'} was stronger</div>
+              {visibleEdges.map(edge => (
+                <div className="edge-row" key={edge.id}>
+                  <span>{edge.name}</span>
+                  <b className={resultSideTone(edge.leader, policyWinner)}>{criterionEdgePercent(edge)}</b>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {scoreMeta.length > 0 && (
+          <div className="score-meta">
+            {scoreMeta.map(item => <span className={item.tone} key={item.label}>{item.label}</span>)}
+          </div>
+        )}
+
+        <div className="result-actions">
+          {hasChampion && <button className="btn" onClick={() => onViewSkill('champion')}><Trophy size={15} /> View champion</button>}
+          {hasScores && <button className="btn" onClick={onEvidence}><FileText size={16} /> Detailed Data <ArrowRight size={15} /></button>}
+        </div>
+      </div>
+    </section>
   );
 }
 
-function ChevronRightInline() {
-  return <ChevronDown size={14} />;
-}
-
-function ProjectActions({ summary, loops, busy, onStart, onViewChampion, onExportChampion }) {
-  const [exportOpen, setExportOpen] = useState(false);
-  const [outDir, setOutDir] = useState(`exports/${summary.projectId}-champion`);
-  const [exportState, setExportState] = useState({ busy: false, message: '', error: '' });
-
-  async function submitExport(e) {
-    e.preventDefault();
-    if (!onExportChampion || exportState.busy) return;
-    setExportState({ busy: true, message: '', error: '' });
-    try {
-      const result = await onExportChampion(outDir);
-      setExportState({
-        busy: false,
-        message: `Exported ${result.fileCount} file${result.fileCount === 1 ? '' : 's'} to ${result.outDir}.`,
-        error: '',
-      });
-    } catch (err) {
-      setExportState({ busy: false, message: '', error: err.message });
-    }
+function buildResultAdvantage({ result, policyWinner, deltaSide, numericSideA, numericSideB }) {
+  if (!policyWinner || deltaSide === 'tie') return { value: 'Even', label: 'no overall score edge' };
+  const winnerScore = policyWinner === 'sideA' ? numericSideA : numericSideB;
+  const loserScore = policyWinner === 'sideA' ? numericSideB : numericSideA;
+  const percent = percentAdvantage(winnerScore, loserScore);
+  if (percent == null) return null;
+  const winnerLabel = result.labels?.[policyWinner] || 'Winner';
+  if (result.outcome === 'promoted') {
+    return { value: `${percent}%`, label: 'overall improvement over the champion' };
   }
-
-  return (
-    <div className="next-actions">
-      <div className="next-actions-copy">
-        <span className="card-label">Next actions</span>
-        <p>Leave this champion in place, run another iteration, inspect it, or export the package.</p>
-      </div>
-      <div className="next-action-buttons">
-        <span className="pill">Leave as champion</span>
-        <button className="btn" disabled={busy} onClick={() => onStart(loops)}>
-          {busy ? <Loader2 size={15} className="spin" /> : <RefreshCw size={15} />} Run another iteration
-        </button>
-        <button className="btn" onClick={onViewChampion}><FileText size={15} /> View champion</button>
-        <button className="btn" onClick={() => setExportOpen(!exportOpen)}><Download size={15} /> Export champion</button>
-      </div>
-      {exportOpen && (
-        <form className="export-row" onSubmit={submitExport}>
-          <input value={outDir} onChange={e => setOutDir(e.target.value)}
-            aria-label="Champion export directory" />
-          <button className="btn primary" disabled={exportState.busy}>
-            {exportState.busy ? <Loader2 size={15} className="spin" /> : <Download size={15} />} Export
-          </button>
-          {exportState.message && <span className="export-note success">{exportState.message}</span>}
-          {exportState.error && <span className="export-note error">{exportState.error}</span>}
-        </form>
-      )}
-    </div>
-  );
+  if (result.outcome === 'first_champion') {
+    return { value: `${percent}%`, label: `${winnerLabel} stronger overall` };
+  }
+  if (result.outcome === 'kept' || result.decision === 'keep_current') {
+    return { value: `${percent}%`, label: `${winnerLabel} stronger overall` };
+  }
+  return { value: `${percent}%`, label: `${winnerLabel} overall edge` };
 }
 
-/* ---------------- champion ---------------- */
+function percentAdvantage(winnerScore, loserScore) {
+  if (!Number.isFinite(winnerScore) || !Number.isFinite(loserScore)) return null;
+  const delta = winnerScore - loserScore;
+  if (delta <= 0) return 0;
+  const denominator = Math.max(Math.abs(loserScore), 1);
+  return Math.round((delta / denominator) * 100);
+}
 
-function ChampionCard({ summary, runDetail, comparison, onViewSkill }) {
-  const champ = summary.state.currentChampion;
-  const side = comparison?.sides?.currentChampion;
-  if (!champ) {
-    return (
-      <div className="card">
-        <p className="card-label">Current champion</p>
-        <p className="muted">No champion yet. Start an iteration to generate, evaluate, and crown one.</p>
-      </div>
-    );
-  }
-  const recId = runDetail?.recommendation?.recommendedChampionCandidateId;
-  const matchKey = recId === 'challenger' ? 'challenger' : recId === 'candidate-a' ? 'candidateA' : recId === 'candidate-b' ? 'candidateB' : null;
-  const matchSide = matchKey ? comparison?.sides?.[matchKey] : null;
-  const strategy = matchSide?.strategy;
-  const params = matchSide?.changedParameterIds || [];
-  return (
-    <div className="card">
-      <div className="card-head">
-        <span className="card-label">Current champion</span>
-        <button className="btn sm" onClick={() => onViewSkill('champion')}><FileText size={14} /> View skill</button>
-      </div>
-      <dl className="kv">
-        <dt>Promoted in</dt><dd>{shortRun(champ.runId)}</dd>
-        {side?.available && <><dt>Files</dt><dd>{side.fileCount}</dd></>}
-        {side?.packageType && <><dt>Package</dt><dd>{side.packageType}</dd></>}
-        {strategy && <><dt>Approach</dt><dd>{strategy}</dd></>}
-        <dt>Fingerprint</dt><dd className="mono">{(champ.skillHash || '').slice(0, 12)}</dd>
-        <dt>Updated</dt><dd>{fmtTime(summary.state.updatedAt)}</dd>
-      </dl>
-      {params.length > 0 && (
-        <div className="param-tags">{params.map(p => <span className="tag" key={p}>{cleanParam(p)}</span>)}</div>
-      )}
-    </div>
-  );
+function buildScoreMeta({ result, sideATotal, sideBTotal, deltaLabel }) {
+  const sideA = result.labels?.sideA || 'A';
+  const sideB = result.labels?.sideB || 'B';
+  const sideAScore = sideATotal == null ? 'n/a' : formatCompact(sideATotal);
+  const sideBScore = sideBTotal == null ? 'n/a' : formatCompact(sideBTotal);
+  return [
+    { label: `${sideB} ${sideBScore}`, tone: resultSideTone('sideB', resultPolicyWinnerSide(result)) },
+    { label: `${sideA} ${sideAScore}`, tone: resultSideTone('sideA', resultPolicyWinnerSide(result)) },
+    { label: `${deltaLabel} edge`, tone: 'muted' },
+    { label: `${result.promptWins?.ties ?? 0} ties`, tone: 'muted' },
+  ];
+}
+
+function loopResultStatus(result) {
+  if (result.outcome === 'promoted') return 'promoted';
+  if (result.outcome === 'first_champion') return 'champion';
+  if (result.outcome === 'kept') return 'held';
+  if (result.outcome === 'inconclusive') return 'no clear winner';
+  if (result.outcome === 'failed') return 'failed';
+  return result.decision || 'complete';
+}
+
+function resultTone(outcome) {
+  if (outcome === 'promoted' || outcome === 'first_champion') return 'promoted';
+  if (outcome === 'failed' || outcome === 'blocked') return 'blocked';
+  if (outcome === 'inconclusive') return 'inconclusive';
+  return 'held';
+}
+
+function resultPolicyWinnerSide(result) {
+  if (result.promotedSide === 'sideA' || result.promotedSide === 'sideB') return result.promotedSide;
+  if (result.decision === 'keep_current' && result.competitionMode !== 'cold_start_duel') return 'sideB';
+  if (result.outcome === 'promoted') return 'sideA';
+  if (result.outcome === 'first_champion') return result.rawWinner === 'sideA' || result.rawWinner === 'sideB' ? result.rawWinner : null;
+  if (result.outcome === 'kept') return result.competitionMode === 'cold_start_duel' ? null : 'sideB';
+  return null;
+}
+
+function resultSideTone(side, policyWinner) {
+  if (side !== 'sideA' && side !== 'sideB') return 'tie';
+  if (!policyWinner) return 'tie';
+  return side === policyWinner ? 'winner' : 'loser';
+}
+
+function resultIcon(outcome) {
+  if (outcome === 'promoted' || outcome === 'first_champion') return Trophy;
+  if (outcome === 'failed' || outcome === 'blocked') return AlertTriangle;
+  if (outcome === 'inconclusive') return Scale;
+  return Flag;
+}
+
+function criterionEdgeDelta(edge) {
+  const value = Math.abs(edge.delta || 0).toFixed(Math.abs(edge.delta || 0) % 1 ? 1 : 0);
+  return edge.leader === 'tie' ? 'Tie' : `+${value}`;
+}
+
+function criterionEdgePercent(edge) {
+  const winnerScore = edge.leader === 'sideA' ? edge.avgA : edge.leader === 'sideB' ? edge.avgB : null;
+  const loserScore = edge.leader === 'sideA' ? edge.avgB : edge.leader === 'sideB' ? edge.avgA : null;
+  const percent = percentAdvantage(winnerScore, loserScore);
+  return percent == null ? criterionEdgeDelta(edge) : `${percent}% better`;
 }
 
 /* ---------------- history ---------------- */
@@ -2127,23 +2155,52 @@ function ImageLightbox({ image, onClose }) {
 
 /* ---------------- skill viewer ---------------- */
 
-function SkillViewer({ source, data, compareData, loading, activeFile, setActiveFile, onViewSkill, strategies }) {
+function SkillViewer({ source, data, compareData, loading, activeFile, setActiveFile, onViewSkill, strategies, summary, onExportChampion }) {
+  const [exportState, setExportState] = useState({ busy: false, message: '', error: '' });
   const files = data?.files || [];
   const file = files[activeFile] || files[0] || null;
   const mode = strategies?.competitionMode || 'cold_start_duel';
   const tabs = mode === 'cold_start_duel'
     ? [['champion', 'Champion'], ['candidate-a', 'Candidate A'], ['candidate-b', 'Candidate B'], ['compare', 'Compare A · B']]
     : [['champion', 'Champion'], ['challenger', 'Challenger'], ['compare', 'Compare']];
+  const champion = summary?.state?.currentChampion || null;
+  const canExportChampion = source === 'champion' && data?.available && onExportChampion;
+  async function downloadChampion() {
+    if (!canExportChampion || exportState.busy) return;
+    setExportState({ busy: true, message: '', error: '' });
+    try {
+      const result = await onExportChampion(`exports/${summary.projectId}-champion`);
+      setExportState({
+        busy: false,
+        message: `Saved ${result.fileCount} file${result.fileCount === 1 ? '' : 's'} to ${result.outDir}.`,
+        error: '',
+      });
+    } catch (err) {
+      setExportState({ busy: false, message: '', error: err.message });
+    }
+  }
   return (
     <div className="animate-slide-up">
-      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, flexWrap: 'wrap', marginBottom: 14 }}>
+      <div className="skill-view-head">
         <div className="seg">
           {tabs.map(([key, label]) => (
             <button key={key} className={source === key ? 'active' : ''} onClick={() => onViewSkill(key)}>{label}</button>
           ))}
         </div>
-        {source !== 'compare' && data?.hash && <span className="mono" style={{ color: 'var(--color-text-muted)' }}>{data.hash.slice(0, 12)}</span>}
+        <div className="skill-view-actions">
+          {canExportChampion && (
+            <button className="btn primary" onClick={downloadChampion} disabled={exportState.busy}>
+              {exportState.busy ? <Loader2 size={15} className="spin" /> : <Download size={15} />}
+              Download champion
+            </button>
+          )}
+        </div>
       </div>
+      {(exportState.message || exportState.error) && (
+        <div className={`export-note ${exportState.error ? 'error' : 'success'} skill-export-note`}>
+          {exportState.error || exportState.message}
+        </div>
+      )}
 
       {source === 'compare' ? (
         <SkillCompare compareData={compareData} loading={loading} strategies={strategies} />
@@ -2160,6 +2217,18 @@ function SkillViewer({ source, data, compareData, loading, activeFile, setActive
         <div className="empty">This skill package isn’t available{source !== 'champion' ? ' for this run' : ''}.</div>
       ) : (
         <>
+          {source === 'champion' && (
+            <div className="skill-meta-card">
+              <dl className="kv">
+                <dt>Promoted in</dt><dd>{shortRun(champion?.runId || data.runId)}</dd>
+                <dt>Files</dt><dd>{files.length}</dd>
+                {data.packageType && <><dt>Package</dt><dd>{data.packageType}</dd></>}
+                {data.entrypoint && <><dt>Entrypoint</dt><dd>{data.entrypoint}</dd></>}
+                <dt>Fingerprint</dt><dd className="mono">{(data.hash || champion?.skillHash || '').slice(0, 12) || '–'}</dd>
+                <dt>Updated</dt><dd>{fmtTime(summary?.state?.updatedAt)}</dd>
+              </dl>
+            </div>
+          )}
           {data.validation && (
             <span className={`pill ${data.validation.valid ? 'success' : 'warning'}`}>
               {data.validation.valid ? <Check size={13} /> : <Flag size={13} />}

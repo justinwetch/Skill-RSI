@@ -1,7 +1,7 @@
 {
-  "name": "skill-rsi-local",
+  "name": "skill-rsi",
   "interface": {
-    "displayName": "Skill RSI Local"
+    "displayName": "Skill RSI"
   },
   "plugins": [
     {

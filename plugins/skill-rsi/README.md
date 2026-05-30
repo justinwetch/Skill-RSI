@@ -20,27 +20,40 @@ This plugin does not yet include:
 - Personal marketplace mutation.
 - Public marketplace packaging.
 
-## Install Locally
+## Install From A Local Checkout
 
-From the repository root:
+The plugin expects a local Skill RSI repository checkout because the MCP server opens and controls the local Skill RSI app.
 
-```bash
-codex plugin add skill-rsi@skill-rsi-local
+Agent-assisted setup prompt:
+
+```text
+Clone and set up Skill RSI from https://github.com/justinwetch/Skill-RSI. Install dependencies, build the UI, configure the Codex plugin, install it, run doctor, and open Skill RSI.
 ```
 
-This installs the local plugin so Codex can load the operator skill and declared MCP server.
-
-If the plugin is installed outside the repository layout, set `SKILL_RSI_ROOT` to the Skill RSI repository path so the MCP server can find the app services:
+Manual setup from a fresh checkout:
 
 ```bash
-SKILL_RSI_ROOT="/absolute/path/to/Skill RSI"
+git clone https://github.com/justinwetch/Skill-RSI.git
+cd Skill-RSI
+npm install
+npm run build:ui
+cp .env.example .env
+# Add OPENAI_API_KEY to .env
+npm run plugin:configure
+codex plugin marketplace add .
+codex plugin add skill-rsi@skill-rsi
 ```
+
+Start a new Codex thread after installing or updating the plugin so Codex picks up the latest skill and MCP tools.
+
+Skill RSI model-backed runs use the OpenAI API key in `.env` or the browser-local UI key field. A ChatGPT Plus/Pro subscription does not fund local Skill RSI API calls.
 
 ## Verify
 
 From the repository root:
 
 ```bash
+npm run plugin:configure -- --check
 npm run plugin:validate
 npm run plugin:smoke
 ```
@@ -101,14 +114,14 @@ During local development, update the repo files first, then rerun:
 
 ```bash
 npm run plugin:check
-codex plugin add skill-rsi@skill-rsi-local
+codex plugin add skill-rsi@skill-rsi
 ```
 
 This phase intentionally does not edit personal marketplace files. If Codex plugin publishing or marketplace cachebusting becomes required later, treat that as a separate distribution step and validate it against the current Codex plugin tooling.
 
 ## Troubleshooting
 
-- If Codex cannot find Skill RSI services, set `SKILL_RSI_ROOT` to the repository path.
+- If Codex cannot find Skill RSI services, run `npm run plugin:configure` from the repository root and reinstall with `codex plugin add skill-rsi@skill-rsi`.
 - If the local web app does not open, check whether `http://127.0.0.1:8765/api/capabilities` is reachable, then start `npm run server` from the repository root.
 - If `skill_rsi_cockpit` only shows text, the host likely does not render MCP-UI resources robustly yet; use the local web app.
 - If visual evidence is unavailable, run the main app's `doctor` command to check browser screenshot runner availability.

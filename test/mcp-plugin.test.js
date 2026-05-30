@@ -1,10 +1,15 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import fsSync from 'node:fs';
 import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
+import {
+  buildMcpConfig,
+  validateMcpConfig,
+} from '../scripts/skill-rsi-plugin-configure.mjs';
 import {
   buildEvidenceState,
   buildCockpitState,
@@ -17,11 +22,21 @@ import { renderCockpitHtml } from '../plugins/skill-rsi/mcp/ui/cockpit.html.js';
 
 const execFileAsync = promisify(execFile);
 const repoRoot = path.resolve('.');
-const pluginValidator = '/Users/justinwetch/.codex/skills/.system/plugin-creator/scripts/validate_plugin.py';
 
 test('Skill RSI plugin validates and registers expected MCP tools', async () => {
-  const validation = await execFileAsync('python3', [pluginValidator, 'plugins/skill-rsi'], { cwd: repoRoot });
-  assert.match(validation.stdout, /Plugin validation passed/);
+  const pluginValidator = findPluginValidator();
+  const tempPluginRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'skill-rsi-plugin-validate-'));
+  await fs.cp(path.join(repoRoot, 'plugins', 'skill-rsi'), tempPluginRoot, { recursive: true });
+  await fs.writeFile(
+    path.join(tempPluginRoot, '.mcp.json'),
+    `${JSON.stringify(buildMcpConfig(repoRoot), null, 2)}\n`,
+  );
+  try {
+    const validation = await execFileAsync('python3', [pluginValidator, tempPluginRoot], { cwd: repoRoot });
+    assert.match(validation.stdout, /Plugin validation passed/);
+  } finally {
+    await fs.rm(tempPluginRoot, { recursive: true, force: true });
+  }
 
   const { server } = await createSkillRsiMcpServer({
     services: stubServices(),
@@ -47,6 +62,18 @@ test('Skill RSI plugin validates and registers expected MCP tools', async () => 
   ].sort());
   assert.equal(server._registeredTools.skill_rsi_cockpit._meta.ui.resourceUri, 'ui://skill-rsi/cockpit.html');
   assert.ok(server._registeredResources['ui://skill-rsi/cockpit.html']);
+});
+
+test('plugin MCP config validation accepts current root and rejects stale local paths', () => {
+  const valid = validateMcpConfig(buildMcpConfig(repoRoot), repoRoot);
+  assert.equal(valid.ok, true);
+  assert.deepEqual(valid.issues, []);
+
+  const stale = buildMcpConfig('/tmp/not-this-repo');
+  const invalid = validateMcpConfig(stale, repoRoot);
+  assert.equal(invalid.ok, false);
+  assert.match(invalid.issues.join('\n'), /cwd must be/);
+  assert.ok(!JSON.stringify(buildMcpConfig('/tmp/portable-skill-rsi')).includes(['/Users', 'justinwetch'].join('/')));
 });
 
 test('skill_rsi_open returns only a local app launch URL without reading project state', async () => {
@@ -532,4 +559,14 @@ description: Use when testing MCP project creation and baseline import.
 
 # ${name}
 `;
+}
+
+function findPluginValidator() {
+  const candidates = [
+    process.env.SKILL_RSI_PLUGIN_VALIDATOR,
+    path.join(os.homedir(), '.codex', 'skills', '.system', 'plugin-creator', 'scripts', 'validate_plugin.py'),
+  ].filter(Boolean);
+  const found = candidates.find(candidate => Boolean(candidate) && fsSync.existsSync(candidate));
+  if (!found) throw new Error('Could not find the Codex plugin validator for plugin tests.');
+  return found;
 }

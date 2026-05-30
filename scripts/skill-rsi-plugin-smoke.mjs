@@ -6,6 +6,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { createSkillRsiMcpServer } from '../plugins/skill-rsi/mcp/server.mjs';
+import { validateMcpConfig } from './skill-rsi-plugin-configure.mjs';
 
 const expectedTools = [
   'skill_rsi_cockpit',
@@ -41,7 +42,17 @@ assert.equal(
 
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const pluginRoot = path.join(repoRoot, 'plugins', 'skill-rsi');
-const mcpConfig = JSON.parse(await fs.readFile(path.join(pluginRoot, '.mcp.json'), 'utf8'));
+let mcpConfig;
+try {
+  mcpConfig = JSON.parse(await fs.readFile(path.join(pluginRoot, '.mcp.json'), 'utf8'));
+} catch (error) {
+  if (error.code === 'ENOENT') {
+    throw new Error('plugins/skill-rsi/.mcp.json has not been generated. Run npm run plugin:configure.');
+  }
+  throw error;
+}
+const mcpValidation = validateMcpConfig(mcpConfig, repoRoot);
+assert.deepEqual(mcpValidation.issues, []);
 const skillRsiMcp = mcpConfig.mcpServers?.['skill-rsi'] || {};
 const mcpArgs = skillRsiMcp.args || [];
 assert.equal(skillRsiMcp.command, 'node');

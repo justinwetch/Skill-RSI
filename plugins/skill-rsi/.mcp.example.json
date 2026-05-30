@@ -5,9 +5,9 @@
       "args": [
         "plugins/skill-rsi/mcp/server.mjs"
       ],
-      "cwd": "/Users/justinwetch/Documents/ClaudeCode/Skill RSI",
+      "cwd": "/absolute/path/to/Skill-RSI",
       "env": {
-        "SKILL_RSI_ROOT": "/Users/justinwetch/Documents/ClaudeCode/Skill RSI"
+        "SKILL_RSI_ROOT": "/absolute/path/to/Skill-RSI"
       }
     }
   }

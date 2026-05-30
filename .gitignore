@@ -4,6 +4,7 @@ ui/dist/
 .env
 .env.*
 !.env.example
+plugins/skill-rsi/.mcp.json
 .gh-config/
 .DS_Store
 .claude/

@@ -20,6 +20,7 @@ The local app remains the full evidence console and the default Codex desktop UI
 From the repository root:
 
 ```bash
+npm run plugin:configure -- --check
 npm run plugin:validate
 npm run plugin:smoke
 npm test
@@ -35,6 +36,7 @@ npm run plugin:check
 
 Expected results:
 
+- generated MCP config is present and points at this checkout
 - plugin validation passes
 - MCP smoke reports the expected tool count
 - repo tests pass
@@ -46,22 +48,20 @@ Expected results:
 Install from the repository root:
 
 ```bash
-codex plugin add skill-rsi@skill-rsi-local
+npm run plugin:configure
+codex plugin marketplace add .
+codex plugin add skill-rsi@skill-rsi
 ```
 
 Then verify in Codex:
 
-- the Skill RSI operator skill is discoverable
+- the Skill RSI operator skill is discoverable after starting a new Codex thread
 - asking "Open Skill RSI" opens the local web app in the Codex in-app browser/sidebar
 - `http://127.0.0.1:8765/api/capabilities` reports local readiness when the server is running
 - `skill_rsi_open` returns a focused local app launch URL without reading project state
 - hosts with robust MCP Apps/UI support can render the optional `skill_rsi_cockpit` console
 
-If the installed plugin cannot resolve the repository, set:
-
-```bash
-SKILL_RSI_ROOT="/absolute/path/to/Skill RSI"
-```
+If the installed plugin cannot resolve the repository, rerun `npm run plugin:configure` from the repository root and reinstall the plugin.
 
 If validation cannot find the Codex plugin validator, set:
 

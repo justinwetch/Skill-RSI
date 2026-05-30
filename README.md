@@ -168,18 +168,37 @@ Model choice is fixed at project creation for cleaner run history. API keys are 
 
 Skill RSI also ships a repo-tracked Codex Plugin at [plugins/skill-rsi](plugins/skill-rsi). The plugin teaches Codex to open the local Skill RSI web app in the Codex sidebar, use the MCP control plane for structured operations, and fall back to CLI commands when needed.
 
-Install it locally from the repository root:
+The plugin currently expects a local Skill RSI checkout. The easiest onboarding path is to ask Codex to set it up:
 
-```bash
-codex plugin add skill-rsi@skill-rsi-local
+```text
+Clone and set up Skill RSI from https://github.com/justinwetch/Skill-RSI. Install dependencies, build the UI, configure the Codex plugin, install it, run doctor, and open Skill RSI.
 ```
 
-Validate and smoke-check the plugin:
+Manual setup:
 
 ```bash
+git clone https://github.com/justinwetch/Skill-RSI.git
+cd Skill-RSI
+npm install
+npm run build:ui
+cp .env.example .env
+# Add OPENAI_API_KEY to .env
+npm run plugin:configure
+codex plugin marketplace add .
+codex plugin add skill-rsi@skill-rsi
+```
+
+After installing or updating the plugin, start a new Codex thread so Codex loads the latest plugin skill and MCP tools.
+
+Validate and smoke-check the plugin from the repository root:
+
+```bash
+npm run plugin:configure -- --check
 npm run plugin:validate
 npm run plugin:smoke
 ```
+
+Skill RSI model-backed runs use the OpenAI API key in `.env` or the browser-local UI key field. A ChatGPT Plus/Pro subscription does not fund local Skill RSI API calls.
 
 The plugin is a Codex-native operator surface. By default, it opens the local web app at `http://127.0.0.1:8765/` because that remains the most reliable guided console in Codex desktop. MCP tools can prepare fresh setup drafts, create or import projects when explicitly requested, return focused launch URLs, inspect existing projects only when explicitly requested, run bounded loops only when explicitly requested, export champions, and explicitly consume queued Codex context. The CLI remains the best surface for reproducible automation.
 

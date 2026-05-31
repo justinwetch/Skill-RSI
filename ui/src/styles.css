@@ -47,7 +47,7 @@
   --shadow-md: 0 6px 18px rgba(0, 0, 0, 0.30);
   --shadow-lg: 0 12px 36px rgba(0, 0, 0, 0.36);
 
-  --font-sans: -apple-system, BlinkMacSystemFont, 'SF Pro Text', 'Segoe UI', Roboto, sans-serif;
+  --font-sans: 'DM Sans', -apple-system, BlinkMacSystemFont, 'SF Pro Text', 'Segoe UI', Roboto, sans-serif;
   --font-mono: ui-monospace, SFMono-Regular, 'SF Mono', Menlo, Consolas, monospace;
 
   --radius-sm: 6px;

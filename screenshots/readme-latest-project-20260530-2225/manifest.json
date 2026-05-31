@@ -1,0 +1,108 @@
+{
+  "capturedAt": "2026-05-31T07:34:03.357Z",
+  "capturedAtLocal": "2026-05-30 23:34 America/Anchorage",
+  "sourceProject": "screenplay-writing",
+  "goal": "Help assist writers with comprehensive knowledge of screenplay writing from story to structure to character to dialogue and formatting.",
+  "repeatableViewport": {
+    "width": 1440,
+    "height": 1200
+  },
+  "screenshots": [
+    {
+      "file": "00-running-live.png",
+      "screen": "running iteration",
+      "source": "live Chrome tab",
+      "notes": "Captured during the evaluate stage of the in-progress run.",
+      "width": 1710,
+      "height": 1853
+    },
+    {
+      "file": "01-project-home.png",
+      "screen": "project home",
+      "source": "headless Chrome",
+      "width": 1440,
+      "height": 1200
+    },
+    {
+      "file": "02-history.png",
+      "screen": "history",
+      "source": "headless Chrome",
+      "width": 1440,
+      "height": 1200
+    },
+    {
+      "file": "03-evidence-summary.png",
+      "screen": "evidence summary",
+      "source": "headless Chrome",
+      "width": 1440,
+      "height": 1200
+    },
+    {
+      "file": "04-evidence-detailed-breakdown.png",
+      "screen": "evidence detailed breakdown",
+      "source": "headless Chrome",
+      "width": 1440,
+      "height": 1200
+    },
+    {
+      "file": "05-evidence-prompts.png",
+      "screen": "prompt evidence list",
+      "source": "headless Chrome",
+      "width": 1440,
+      "height": 1200
+    },
+    {
+      "file": "06-evidence-prompt-expanded.png",
+      "screen": "expanded prompt evidence",
+      "source": "headless Chrome",
+      "width": 1440,
+      "height": 1200
+    },
+    {
+      "file": "07-champion-skill.png",
+      "screen": "champion skill viewer",
+      "source": "headless Chrome",
+      "width": 1440,
+      "height": 1200
+    },
+    {
+      "file": "08-candidate-compare.png",
+      "screen": "candidate compare",
+      "source": "headless Chrome",
+      "width": 1440,
+      "height": 1200
+    },
+    {
+      "file": "09-codex-invoke.png",
+      "screen": "Codex prompt invocation",
+      "source": "manual Desktop screenshot",
+      "notes": "Shows the user invoking Skill RSI from the Codex composer.",
+      "width": 1744,
+      "height": 734
+    },
+    {
+      "file": "10-codex-setup-sidebar.png",
+      "screen": "Codex setup sidebar",
+      "source": "manual Desktop screenshot",
+      "notes": "Shows the setup handoff in the sidebar before model-backed work starts.",
+      "width": 3420,
+      "height": 1928
+    },
+    {
+      "file": "11-codex-result-sidebar.png",
+      "screen": "Codex result sidebar",
+      "source": "manual Desktop screenshot",
+      "notes": "Shows the project result, next-loop plan, and follow-up actions beside the chat.",
+      "width": 3420,
+      "height": 1918
+    },
+    {
+      "file": "12-codex-compare-sidebar.png",
+      "screen": "Codex compare sidebar",
+      "source": "manual Desktop screenshot",
+      "notes": "Shows candidate diff inspection beside the chat.",
+      "width": 3420,
+      "height": 1926
+    }
+  ]
+}

@@ -24,39 +24,57 @@ This is the sequel to SkillEval. SkillEval could tell you which of two skills wa
 
 For the origin story, see [Open Sourcing SkillEval](https://www.justinwetch.com/blog/skilleval).
 
-![Skill RSI project home](screenshots/readme-latest-project-20260528-1724/01-project-home.png)
+![Ask Codex to use Skill RSI](screenshots/readme-latest-project-20260530-2225/09-codex-invoke.png)
+
+From Codex, Skill RSI opens the local app and prepares the project without starting model-backed work in chat.
+
+![Codex Skill RSI setup handoff](screenshots/readme-latest-project-20260530-2225/10-codex-setup-sidebar.png)
+
+After an iteration, the sidebar keeps the result, next-loop plan, and follow-up actions visible beside the conversation.
+
+![Codex Skill RSI result sidebar](screenshots/readme-latest-project-20260530-2225/11-codex-result-sidebar.png)
+
+The same sidebar keeps evidence and skill diffs inspectable when you need to audit what changed.
+
+![Codex Skill RSI candidate diff](screenshots/readme-latest-project-20260530-2225/12-codex-compare-sidebar.png)
+
+![Skill RSI project home](screenshots/readme-latest-project-20260530-2225/01-project-home.png)
+
+During a run, the UI tracks the current stage and the evidence being produced.
+
+![Skill RSI run in progress](screenshots/readme-latest-project-20260530-2225/00-running-live.png)
 
 ## Evidence-Backed Decisions
 
 Every promotion decision links back to prompt-level evidence: the prompt, judge rationale, criterion scores, and both candidate outputs.
 
-![Prompt-level evaluation evidence](screenshots/readme-latest-project-20260528-1724/06-evidence-prompt-expanded.png)
+![Prompt-level evaluation evidence](screenshots/readme-latest-project-20260530-2225/06-evidence-prompt-expanded.png)
 
 Skill RSI also keeps the candidate packages inspectable, so every champion change stays traceable.
 
-![Candidate skill diff](screenshots/readme-latest-project-20260528-1724/08-candidate-compare.png)
+![Candidate skill diff](screenshots/readme-latest-project-20260530-2225/08-candidate-compare.png)
 
 ## UI Walkthrough
 
 The summary view shows the head-to-head result at a glance.
 
-![Evaluation summary](screenshots/readme-latest-project-20260528-1724/03-evidence-summary.png)
+![Evaluation summary](screenshots/readme-latest-project-20260530-2225/03-evidence-summary.png)
 
 The detailed breakdown explains where each candidate won across the criteria.
 
-![Detailed evaluation breakdown](screenshots/readme-latest-project-20260528-1724/04-evidence-detailed-breakdown.png)
+![Detailed evaluation breakdown](screenshots/readme-latest-project-20260530-2225/04-evidence-detailed-breakdown.png)
 
 The prompt list keeps every judgment inspectable.
 
-![Prompt evidence list](screenshots/readme-latest-project-20260528-1724/05-evidence-prompts.png)
+![Prompt evidence list](screenshots/readme-latest-project-20260530-2225/05-evidence-prompts.png)
 
 The champion skill can be opened directly from the UI.
 
-![Champion skill viewer](screenshots/readme-latest-project-20260528-1724/07-champion-skill.png)
+![Champion skill viewer](screenshots/readme-latest-project-20260530-2225/07-champion-skill.png)
 
 The history view records the improvement trajectory over time.
 
-![Improvement history](screenshots/readme-latest-project-20260528-1724/02-history.png)
+![Improvement history](screenshots/readme-latest-project-20260530-2225/02-history.png)
 
 ## How It Works
 

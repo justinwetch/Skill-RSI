@@ -1,5 +1,11 @@
 # Skill RSI
 
+Want Codex to install it for you? Paste this into a fresh Codex thread:
+
+```text
+Set up Skill RSI from https://github.com/justinwetch/Skill-RSI. Clone the repo, read AGENTS.md, install dependencies, build the UI, configure and install the Codex plugin, run the plugin smoke checks, and tell me when to start a fresh Codex thread. Do not start any model-backed Skill RSI run yet.
+```
+
 What if a skill could improve itself?
 
 Recursive self-improvement is the phrase AI researchers reach for when they describe systems that get better without us in the loop. Usually it's a thought experiment. This one runs on your laptop.
@@ -168,13 +174,7 @@ Model choice is fixed at project creation for cleaner run history. API keys are 
 
 Skill RSI also ships a repo-tracked Codex Plugin at [plugins/skill-rsi](plugins/skill-rsi). The plugin teaches Codex to open the local Skill RSI web app in the Codex sidebar, use the MCP control plane for structured operations, and fall back to CLI commands when needed.
 
-The plugin currently expects a local Skill RSI checkout. The easiest onboarding path is to ask Codex to set it up:
-
-```text
-Set up Skill RSI from https://github.com/justinwetch/Skill-RSI. Clone the repo, read AGENTS.md, install dependencies, build the UI, configure and install the Codex plugin, run the plugin smoke checks, and tell me when to start a fresh Codex thread. Do not start any model-backed Skill RSI run yet.
-```
-
-For agent-assisted setup details, see [AGENTS.md](AGENTS.md).
+The plugin currently expects a local Skill RSI checkout. Use the copy-paste Codex setup prompt at the top of this README, or see [AGENTS.md](AGENTS.md) for the agent-facing setup guide.
 
 Manual setup:
 

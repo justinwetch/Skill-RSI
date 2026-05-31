@@ -1,6 +1,7 @@
 {
   "capturedAt": "2026-05-31T07:34:03.357Z",
   "capturedAtLocal": "2026-05-30 23:34 America/Anchorage",
+  "recapturedAtLocal": "2026-05-31 10:22 America/Anchorage",
   "sourceProject": "screenplay-writing",
   "goal": "Help assist writers with comprehensive knowledge of screenplay writing from story to structure to character to dialogue and formatting.",
   "repeatableViewport": {
@@ -20,6 +21,7 @@
       "file": "01-project-home.png",
       "screen": "project home",
       "source": "headless Chrome",
+      "notes": "Recaptured after champion-card design update.",
       "width": 1440,
       "height": 1200
     },
@@ -89,20 +91,20 @@
       "height": 1928
     },
     {
-      "file": "11-codex-result-sidebar.png",
-      "screen": "Codex result sidebar",
-      "source": "manual Desktop screenshot",
-      "notes": "Shows the project result, next-loop plan, and follow-up actions beside the chat.",
-      "width": 3420,
-      "height": 1918
-    },
-    {
       "file": "12-codex-compare-sidebar.png",
       "screen": "Codex compare sidebar",
       "source": "manual Desktop screenshot",
       "notes": "Shows candidate diff inspection beside the chat.",
       "width": 3420,
       "height": 1926
+    },
+    {
+      "file": "13-project-home-dark.png",
+      "screen": "project home, dark mode",
+      "source": "headless Chrome",
+      "notes": "Fresh dark-mode capture after champion-card design update.",
+      "width": 1440,
+      "height": 1200
     }
   ]
 }

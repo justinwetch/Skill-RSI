@@ -1623,6 +1623,14 @@ function LoopResultCard({ result, summary, onEvidence, onViewSkill }) {
           </div>
         </div>
 
+        {result.overallProgress?.percent ? (
+          <div className="overall-progress">
+            <TrendingUp size={14} />
+            <strong>+{result.overallProgress.percent}%</strong>
+            <span>{result.overallProgress.label}</span>
+          </div>
+        ) : null}
+
         {visibleEdges.length > 0 && (
           <div className="result-insights">
             <div className="edge-list">
@@ -1684,12 +1692,12 @@ function buildScoreMeta({ result, sideATotal, sideBTotal, deltaLabel }) {
   const sideB = result.labels?.sideB || 'B';
   const sideAScore = sideATotal == null ? 'n/a' : formatCompact(sideATotal);
   const sideBScore = sideBTotal == null ? 'n/a' : formatCompact(sideBTotal);
-  return [
+  const items = [
     { label: `${sideB} ${sideBScore}`, tone: resultSideTone('sideB', resultPolicyWinnerSide(result)) },
     { label: `${sideA} ${sideAScore}`, tone: resultSideTone('sideA', resultPolicyWinnerSide(result)) },
     { label: `${deltaLabel} edge`, tone: 'muted' },
-    { label: `${result.promptWins?.ties ?? 0} ties`, tone: 'muted' },
   ];
+  return items;
 }
 
 function loopResultStatus(result) {

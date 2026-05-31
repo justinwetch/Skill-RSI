@@ -420,6 +420,7 @@ async function buildLatestLoopResult({ paths, state, history }) {
     };
   const trajectory = Array.isArray(history?.trajectory) ? history.trajectory : [];
   const latestHistory = trajectory.find(item => item.runId === runId) || trajectory.at(-1) || null;
+  const overallProgress = await buildOverallProgress({ paths, history });
 
   if (!evalRun) {
     return {
@@ -441,6 +442,7 @@ async function buildLatestLoopResult({ paths, state, history }) {
       promptWins: { sideA: 0, sideB: 0, ties: 0, failed: 0, total: 0 },
       promptOutcomes: [],
       topCriterionEdges: [],
+      overallProgress,
       policyChips: buildPolicyChips({ recommendation, evalRun: null }),
       blockers: extractPromotionBlockers(recommendation),
       reasons: summarizeResultReasons({ recommendation, latestHistory }),
@@ -479,12 +481,73 @@ async function buildLatestLoopResult({ paths, state, history }) {
     },
     promptOutcomes,
     topCriterionEdges: summarizeCriterionEdges(evalRun),
+    overallProgress,
     policyChips: buildPolicyChips({ recommendation, evalRun }),
     blockers: extractPromotionBlockers(recommendation),
     reasons: summarizeResultReasons({ recommendation, latestHistory }),
     nextLoopNote: firstNextLoopNote(history),
     visual: summarizeVisualResult(evalRun),
   };
+}
+
+async function buildOverallProgress({ paths, history }) {
+  const promotedChallengeRuns = normalizeArray(history?.trajectory).filter(
+    entry => entry?.decision === 'promote' && entry?.winner === 'challenger' && entry?.runId
+  );
+  if (!promotedChallengeRuns.length) return null;
+
+  const gains = [];
+  for (const entry of promotedChallengeRuns) {
+    const gain = await readStablePromotionGain(paths, entry.runId);
+    if (!gain) return null;
+    gains.push(gain);
+  }
+
+  const factor = gains.reduce((product, gain) => product * gain.factor, 1);
+  const percent = Math.round((factor - 1) * 100);
+  if (!Number.isFinite(percent) || percent <= 0) return null;
+
+  return {
+    percent,
+    label: 'over v1 (stable prompts)',
+    display: `+${percent}% over v1 (stable prompts)`,
+    basis: 'stable_prompts',
+    comparisonCount: gains.length,
+    promptCount: gains.reduce((sum, gain) => sum + gain.promptCount, 0),
+  };
+}
+
+async function readStablePromotionGain(paths, runId) {
+  const runPaths = getRunPaths(paths, runId);
+  const challenge = await readJson(runPaths.challengeJson, null);
+  const evaluations = normalizeArray(challenge?.evaluations);
+  let challengerTotal = 0;
+  let championTotal = 0;
+  let promptCount = 0;
+
+  for (const evaluation of evaluations) {
+    if (!isComparableStableEvaluation(evaluation)) continue;
+    const challengerScore = Number(evaluation?.judge?.scoreA);
+    const championScore = Number(evaluation?.judge?.scoreB);
+    if (!Number.isFinite(challengerScore) || !Number.isFinite(championScore) || championScore <= 0) continue;
+    challengerTotal += challengerScore;
+    championTotal += championScore;
+    promptCount += 1;
+  }
+
+  if (promptCount === 0 || championTotal <= 0 || challengerTotal <= championTotal) return null;
+  return {
+    factor: challengerTotal / championTotal,
+    challengerTotal,
+    championTotal,
+    promptCount,
+  };
+}
+
+function isComparableStableEvaluation(evaluation) {
+  if (evaluation?.prompt?.bucket !== 'stable') return false;
+  const status = evaluation?.status || evaluation?.judge?.status || 'complete';
+  return !['failed', 'error', 'invalid', 'skipped'].includes(String(status).toLowerCase());
 }
 
 function classifyLoopOutcome({ competitionMode, decision, recommendation, evalRun, run }) {

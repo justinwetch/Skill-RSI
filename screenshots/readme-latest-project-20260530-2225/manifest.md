@@ -1,6 +1,6 @@
 # README Screenshot Set
 
-- Captured: 2026-05-30 23:34 America/Anchorage
+- Captured: 2026-05-30 23:34 America/Anchorage; champion-card recapture 2026-05-31 10:22 America/Anchorage
 - Source project: `screenplay-writing`
 - Viewport: `1440x1200` for repeatable captures
 - Live Chrome capture: `00-running-live.png`
@@ -18,5 +18,5 @@
 | `08-candidate-compare.png` | Candidate compare | Candidate A/B diff for the cold-start duel. |
 | `09-codex-invoke.png` | Codex prompt invocation | Manual screenshot of invoking Skill RSI from the Codex composer. |
 | `10-codex-setup-sidebar.png` | Codex setup sidebar | Manual screenshot of Codex handing off to the Skill RSI setup screen. |
-| `11-codex-result-sidebar.png` | Codex result sidebar | Manual screenshot of the project result and next-loop plan beside the chat. |
 | `12-codex-compare-sidebar.png` | Codex compare sidebar | Manual screenshot of the candidate diff beside the chat. |
+| `13-project-home-dark.png` | Project home, dark mode | Fresh dark-mode capture of the updated champion result card. |

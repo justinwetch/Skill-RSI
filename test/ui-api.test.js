@@ -21,6 +21,49 @@ import {
 } from '../src/lib/ui-api.js';
 import { recordHookEvent } from '../src/lib/hooks.js';
 
+async function patchHistory(historyPath, updater) {
+  const history = JSON.parse(await fs.readFile(historyPath, 'utf8'));
+  await fs.writeFile(historyPath, `${JSON.stringify(updater(history), null, 2)}\n`);
+}
+
+async function writeChallengeScores({ cwd, projectName, runId, scoreA, scoreB, bucket }) {
+  const detail = await readRunDetail({ cwd, projectName, runId });
+  const challenge = JSON.parse(await fs.readFile(detail.artifacts.challengeJson, 'utf8'));
+  for (const evaluation of challenge.evaluations || []) {
+    evaluation.status = 'complete';
+    evaluation.prompt = { ...(evaluation.prompt || {}), bucket };
+    evaluation.judge = {
+      ...(evaluation.judge || {}),
+      status: 'complete',
+      scoreA,
+      scoreB,
+      winner: scoreA > scoreB ? 'skillA' : scoreB > scoreA ? 'skillB' : 'tie',
+    };
+  }
+  const totalEvals = challenge.evaluations?.length || 0;
+  challenge.stats = {
+    ...(challenge.stats || {}),
+    totalEvals,
+    totalScoreA: scoreA * totalEvals,
+    totalScoreB: scoreB * totalEvals,
+    scoreDelta: Math.abs(scoreA - scoreB) * totalEvals,
+    winner: scoreA > scoreB ? 'skillA' : scoreB > scoreA ? 'skillB' : 'tie',
+    skillAWins: scoreA > scoreB ? totalEvals : 0,
+    skillBWins: scoreB > scoreA ? totalEvals : 0,
+    ties: scoreA === scoreB ? totalEvals : 0,
+    failedEvals: 0,
+  };
+  await fs.writeFile(detail.artifacts.challengeJson, `${JSON.stringify(challenge, null, 2)}\n`);
+}
+
+async function setRecommendationDecision({ cwd, projectName, runId, decision, candidateId }) {
+  const detail = await readRunDetail({ cwd, projectName, runId });
+  const recommendation = JSON.parse(await fs.readFile(detail.artifacts.recommendationJson, 'utf8'));
+  recommendation.decision = decision;
+  recommendation.recommendedChampionCandidateId = candidateId;
+  await fs.writeFile(detail.artifacts.recommendationJson, `${JSON.stringify(recommendation, null, 2)}\n`);
+}
+
 test('ui api exposes stable project and run detail surfaces', async () => {
   const cwd = await fs.mkdtemp(path.join(os.tmpdir(), 'skill-rsi-ui-api-'));
   const result = await runProject({
@@ -139,6 +182,7 @@ test('ui api derives latest loop result for a cold-start champion', async () => 
   assert.ok(Number.isFinite(summary.latestLoopResult.sides.sideA.totalScore));
   assert.ok(Number.isFinite(summary.latestLoopResult.sides.sideB.totalScore));
   assert.ok(summary.latestLoopResult.policyChips.some(chip => /confidence/.test(chip.kind)));
+  assert.equal(summary.latestLoopResult.overallProgress, null);
 });
 
 test('ui api derives latest loop result for champion challenge and policy gates', async () => {
@@ -170,6 +214,12 @@ test('ui api derives latest loop result for champion challenge and policy gates'
   };
   await fs.writeFile(detail.artifacts.challengeJson, `${JSON.stringify(challenge, null, 2)}\n`);
   await fs.writeFile(detail.artifacts.recommendationJson, `${JSON.stringify(recommendation, null, 2)}\n`);
+  await patchHistory(result.paths.historyIndex, history => ({
+    ...history,
+    trajectory: history.trajectory.map(entry => (
+      entry.runId === runId ? { ...entry, decision: 'keep_current', winner: 'current' } : entry
+    )),
+  }));
 
   const summary = await readProjectSummary({ cwd, projectName: 'Loop Result Challenge' });
   assert.equal(summary.latestLoopResult.competitionMode, 'champion_challenge');
@@ -181,6 +231,91 @@ test('ui api derives latest loop result for champion challenge and policy gates'
   assert.equal(summary.latestLoopResult.sides.sideB.totalScore, 30);
   assert.ok(summary.latestLoopResult.policyChips.some(chip => chip.kind === 'regression'));
   assert.ok(summary.latestLoopResult.blockers.some(blocker => /stable-prompt regression/i.test(blocker)));
+  assert.equal(summary.latestLoopResult.overallProgress, null);
+});
+
+test('ui api compounds overall progress from promoted stable-prompt challenge evidence', async () => {
+  const cwd = await fs.mkdtemp(path.join(os.tmpdir(), 'skill-rsi-ui-overall-progress-'));
+  const result = await runProject({
+    cwd,
+    projectName: 'Overall Progress',
+    goal: 'Expose cumulative improvement across promoted challengers.',
+    loops: 3,
+    mode: 'mock',
+  });
+  const run2 = result.completedRuns[1].runId;
+  const run3 = result.completedRuns[2].runId;
+  await writeChallengeScores({ cwd, projectName: 'Overall Progress', runId: run2, scoreA: 11, scoreB: 10, bucket: 'stable' });
+  await writeChallengeScores({ cwd, projectName: 'Overall Progress', runId: run3, scoreA: 21, scoreB: 20, bucket: 'stable' });
+  await setRecommendationDecision({ cwd, projectName: 'Overall Progress', runId: run2, decision: 'promote', candidateId: 'challenger' });
+  await setRecommendationDecision({ cwd, projectName: 'Overall Progress', runId: run3, decision: 'promote', candidateId: 'challenger' });
+  await patchHistory(result.paths.historyIndex, history => ({
+    ...history,
+    trajectory: history.trajectory.map(entry => (
+      entry.runId === run2 || entry.runId === run3
+        ? { ...entry, decision: 'promote', winner: 'challenger' }
+        : entry
+    )),
+  }));
+
+  const summary = await readProjectSummary({ cwd, projectName: 'Overall Progress' });
+  assert.equal(summary.latestLoopResult.overallProgress.percent, 16);
+  assert.equal(summary.latestLoopResult.overallProgress.display, '+16% over v1 (stable prompts)');
+  assert.equal(summary.latestLoopResult.overallProgress.label, 'over v1 (stable prompts)');
+  assert.equal(summary.latestLoopResult.overallProgress.comparisonCount, 2);
+});
+
+test('ui api keeps prior overall progress visible when latest challenger is kept', async () => {
+  const cwd = await fs.mkdtemp(path.join(os.tmpdir(), 'skill-rsi-ui-overall-progress-kept-'));
+  const result = await runProject({
+    cwd,
+    projectName: 'Overall Progress Kept',
+    goal: 'Keep cumulative improvement visible through non-promoting loops.',
+    loops: 3,
+    mode: 'mock',
+  });
+  const run2 = result.completedRuns[1].runId;
+  const run3 = result.completedRuns[2].runId;
+  await writeChallengeScores({ cwd, projectName: 'Overall Progress Kept', runId: run2, scoreA: 12, scoreB: 10, bucket: 'stable' });
+  await writeChallengeScores({ cwd, projectName: 'Overall Progress Kept', runId: run3, scoreA: 9, scoreB: 10, bucket: 'stable' });
+  await setRecommendationDecision({ cwd, projectName: 'Overall Progress Kept', runId: run2, decision: 'promote', candidateId: 'challenger' });
+  await setRecommendationDecision({ cwd, projectName: 'Overall Progress Kept', runId: run3, decision: 'keep_current', candidateId: null });
+  await patchHistory(result.paths.historyIndex, history => ({
+    ...history,
+    trajectory: history.trajectory.map(entry => {
+      if (entry.runId === run2) return { ...entry, decision: 'promote', winner: 'challenger' };
+      if (entry.runId === run3) return { ...entry, decision: 'keep_current', winner: 'current' };
+      return entry;
+    }),
+  }));
+
+  const summary = await readProjectSummary({ cwd, projectName: 'Overall Progress Kept' });
+  assert.equal(summary.latestLoopResult.outcome, 'kept');
+  assert.equal(summary.latestLoopResult.overallProgress.percent, 20);
+  assert.equal(summary.latestLoopResult.overallProgress.display, '+20% over v1 (stable prompts)');
+});
+
+test('ui api hides overall progress when promoted evidence is not stable-prompt comparable', async () => {
+  const cwd = await fs.mkdtemp(path.join(os.tmpdir(), 'skill-rsi-ui-overall-progress-missing-'));
+  const result = await runProject({
+    cwd,
+    projectName: 'Overall Progress Missing',
+    goal: 'Hide unsupported cumulative progress.',
+    loops: 2,
+    mode: 'mock',
+  });
+  const run2 = result.completedRuns[1].runId;
+  await writeChallengeScores({ cwd, projectName: 'Overall Progress Missing', runId: run2, scoreA: 12, scoreB: 10, bucket: 'exploration' });
+  await setRecommendationDecision({ cwd, projectName: 'Overall Progress Missing', runId: run2, decision: 'promote', candidateId: 'challenger' });
+  await patchHistory(result.paths.historyIndex, history => ({
+    ...history,
+    trajectory: history.trajectory.map(entry => (
+      entry.runId === run2 ? { ...entry, decision: 'promote', winner: 'challenger' } : entry
+    )),
+  }));
+
+  const summary = await readProjectSummary({ cwd, projectName: 'Overall Progress Missing' });
+  assert.equal(summary.latestLoopResult.overallProgress, null);
 });
 
 test('ui api includes visual metadata in latest loop result', async () => {

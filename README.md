@@ -30,15 +30,15 @@ From Codex, Skill RSI opens the local app and prepares the project without start
 
 ![Codex Skill RSI setup handoff](screenshots/readme-latest-project-20260530-2225/10-codex-setup-sidebar.png)
 
-After an iteration, the sidebar keeps the result, next-loop plan, and follow-up actions visible beside the conversation.
-
-![Codex Skill RSI result sidebar](screenshots/readme-latest-project-20260530-2225/11-codex-result-sidebar.png)
-
-The same sidebar keeps evidence and skill diffs inspectable when you need to audit what changed.
+The sidebar keeps evidence and skill diffs inspectable when you need to audit what changed.
 
 ![Codex Skill RSI candidate diff](screenshots/readme-latest-project-20260530-2225/12-codex-compare-sidebar.png)
 
 ![Skill RSI project home](screenshots/readme-latest-project-20260530-2225/01-project-home.png)
+
+The result card also carries the same decision in dark mode.
+
+![Skill RSI dark mode project home](screenshots/readme-latest-project-20260530-2225/13-project-home-dark.png)
 
 During a run, the UI tracks the current stage and the evidence being produced.
 

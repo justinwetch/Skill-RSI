@@ -30,9 +30,9 @@ From Codex, Skill RSI opens the local app and prepares the project without start
 
 ![Codex Skill RSI setup handoff](screenshots/readme-latest-project-20260530-2225/10-codex-setup-sidebar.png)
 
-The sidebar keeps evidence and skill diffs inspectable when you need to audit what changed.
+The sidebar keeps the result and next-loop controls visible beside the conversation.
 
-![Codex Skill RSI candidate diff](screenshots/readme-latest-project-20260530-2225/12-codex-compare-sidebar.png)
+![Codex Skill RSI dark result sidebar](screenshots/readme-latest-project-20260530-2225/11-codex-result-sidebar-dark.png)
 
 ![Skill RSI project home](screenshots/readme-latest-project-20260530-2225/01-project-home.png)
 

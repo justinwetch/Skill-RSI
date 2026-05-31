@@ -18,5 +18,5 @@
 | `08-candidate-compare.png` | Candidate compare | Candidate A/B diff for the cold-start duel. |
 | `09-codex-invoke.png` | Codex prompt invocation | Manual screenshot of invoking Skill RSI from the Codex composer. |
 | `10-codex-setup-sidebar.png` | Codex setup sidebar | Manual screenshot of Codex handing off to the Skill RSI setup screen. |
-| `12-codex-compare-sidebar.png` | Codex compare sidebar | Manual screenshot of the candidate diff beside the chat. |
+| `11-codex-result-sidebar-dark.png` | Codex result sidebar, dark mode | Manual screenshot of the updated champion result card beside the chat. |
 | `13-project-home-dark.png` | Project home, dark mode | Fresh dark-mode capture of the updated champion result card. |

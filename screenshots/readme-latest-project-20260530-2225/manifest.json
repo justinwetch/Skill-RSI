@@ -91,12 +91,12 @@
       "height": 1928
     },
     {
-      "file": "12-codex-compare-sidebar.png",
-      "screen": "Codex compare sidebar",
+      "file": "11-codex-result-sidebar-dark.png",
+      "screen": "Codex result sidebar, dark mode",
       "source": "manual Desktop screenshot",
-      "notes": "Shows candidate diff inspection beside the chat.",
-      "width": 3420,
-      "height": 1926
+      "notes": "Shows the updated champion result card and next-loop controls beside the chat.",
+      "width": 3416,
+      "height": 1934
     },
     {
       "file": "13-project-home-dark.png",

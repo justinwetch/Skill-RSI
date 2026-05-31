@@ -18,14 +18,6 @@
       "height": 1853
     },
     {
-      "file": "01-project-home.png",
-      "screen": "project home",
-      "source": "headless Chrome",
-      "notes": "Recaptured after champion-card design update.",
-      "width": 1440,
-      "height": 1200
-    },
-    {
       "file": "02-history.png",
       "screen": "history",
       "source": "headless Chrome",
@@ -97,14 +89,6 @@
       "notes": "Shows the updated champion result card and next-loop controls beside the chat.",
       "width": 3416,
       "height": 1934
-    },
-    {
-      "file": "13-project-home-dark.png",
-      "screen": "project home, dark mode",
-      "source": "headless Chrome",
-      "notes": "Fresh dark-mode capture after champion-card design update.",
-      "width": 1440,
-      "height": 1200
     }
   ]
 }

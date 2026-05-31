@@ -8,7 +8,6 @@
 | File | Screen | Notes |
 | --- | --- | --- |
 | `00-running-live.png` | Running iteration | Captured from the user's live Chrome tab during the evaluate stage. |
-| `01-project-home.png` | Project home | First completed iteration and champion result. |
 | `02-history.png` | History | Improvement trajectory for the latest project. |
 | `03-evidence-summary.png` | Evidence summary | Candidate A/B prompt-level summary. |
 | `04-evidence-detailed-breakdown.png` | Evidence detailed breakdown | Per-criterion comparison. |
@@ -19,4 +18,3 @@
 | `09-codex-invoke.png` | Codex prompt invocation | Manual screenshot of invoking Skill RSI from the Codex composer. |
 | `10-codex-setup-sidebar.png` | Codex setup sidebar | Manual screenshot of Codex handing off to the Skill RSI setup screen. |
 | `11-codex-result-sidebar-dark.png` | Codex result sidebar, dark mode | Manual screenshot of the updated champion result card beside the chat. |
-| `13-project-home-dark.png` | Project home, dark mode | Fresh dark-mode capture of the updated champion result card. |

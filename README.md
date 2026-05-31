@@ -34,12 +34,6 @@ The sidebar keeps the result and next-loop controls visible beside the conversat
 
 ![Codex Skill RSI dark result sidebar](screenshots/readme-latest-project-20260530-2225/11-codex-result-sidebar-dark.png)
 
-![Skill RSI project home](screenshots/readme-latest-project-20260530-2225/01-project-home.png)
-
-The result card also carries the same decision in dark mode.
-
-![Skill RSI dark mode project home](screenshots/readme-latest-project-20260530-2225/13-project-home-dark.png)
-
 During a run, the UI tracks the current stage and the evidence being produced.
 
 ![Skill RSI run in progress](screenshots/readme-latest-project-20260530-2225/00-running-live.png)

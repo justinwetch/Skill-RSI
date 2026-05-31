@@ -27,8 +27,10 @@ The plugin expects a local Skill RSI repository checkout because the MCP server 
 Agent-assisted setup prompt:
 
 ```text
-Clone and set up Skill RSI from https://github.com/justinwetch/Skill-RSI. Install dependencies, build the UI, configure the Codex plugin, install it, run doctor, and open Skill RSI.
+Set up Skill RSI from https://github.com/justinwetch/Skill-RSI. Clone the repo, read AGENTS.md, install dependencies, build the UI, configure and install the Codex plugin, run the plugin smoke checks, and tell me when to start a fresh Codex thread. Do not start any model-backed Skill RSI run yet.
 ```
+
+The root [AGENTS.md](../../AGENTS.md) file is the source of truth for agent-assisted install behavior. It tells setup agents to install the plugin, avoid manual target-skill edits, and stop before model-backed RSI work begins.
 
 Manual setup from a fresh checkout:
 

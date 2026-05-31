@@ -171,8 +171,10 @@ Skill RSI also ships a repo-tracked Codex Plugin at [plugins/skill-rsi](plugins/
 The plugin currently expects a local Skill RSI checkout. The easiest onboarding path is to ask Codex to set it up:
 
 ```text
-Clone and set up Skill RSI from https://github.com/justinwetch/Skill-RSI. Install dependencies, build the UI, configure the Codex plugin, install it, run doctor, and open Skill RSI.
+Set up Skill RSI from https://github.com/justinwetch/Skill-RSI. Clone the repo, read AGENTS.md, install dependencies, build the UI, configure and install the Codex plugin, run the plugin smoke checks, and tell me when to start a fresh Codex thread. Do not start any model-backed Skill RSI run yet.
 ```
+
+For agent-assisted setup details, see [AGENTS.md](AGENTS.md).
 
 Manual setup:
 

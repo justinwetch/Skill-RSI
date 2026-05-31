@@ -94,6 +94,7 @@ Acceptable references should be historical, explicitly future-scoped, or absent.
 
 - no public marketplace publishing is included
 - no personal marketplace mutation is performed
+- `AGENTS.md` matches the README setup prompt and does not imply setup starts a model-backed run
 - MCP-UI host support varies and text fallback is always available
 - Codex desktop defaults to the local web app rather than MCP-UI
 - hooks queue context only

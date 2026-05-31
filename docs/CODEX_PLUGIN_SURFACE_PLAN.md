@@ -326,7 +326,7 @@ The planner should receive this as hook context and decide whether it changes th
 
 ## Visual evidence
 
-For code + visuals projects, MCP-UI can show screenshot thumbnails, render status, prompt-level summaries, and full-size embedded image inspection. The local app remains useful for longer evidence sessions, but ordinary screenshot inspection should not require leaving the plugin console.
+For code + visuals projects, the local web app is the canonical screenshot and evidence console. MCP-UI can show screenshot thumbnails, render status, prompt-level summaries, and full-size embedded image inspection where host/resource support is reliable, but it should not be treated as the only or default visual inspection path in Codex desktop.
 
 MCP-UI visual evidence should include:
 
@@ -440,7 +440,7 @@ Goal: a clean install path for users outside this development checkout.
 - Hook script queues context only.
 - Missing project env fails closed.
 - Queued context appears in MCP cockpit.
-- Hook-triggered autorun, if implemented, uses normal queue/lock/budget machinery.
+- Hook-informed autorun, if implemented, uses normal queue/lock/budget machinery.
 
 ### Regression
 

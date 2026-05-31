@@ -160,14 +160,20 @@ Compact history keeps the next loop practical. It records the current state, rec
 
 The next loop plan is the bridge between runs. If the analyst says "preserve the champion's package structure, investigate prompt coverage, try a narrower activation-boundary mutation," the manager should see that premise before planning the next challenger.
 
-## UI and CLI surfaces
+## UI, CLI, and Codex plugin surfaces
 
-The UI and CLI run the same underlying loop.
+The UI, CLI, and Codex plugin run the same underlying loop.
 
 The UI is optimized for watching the process: project setup, live run progress, next loop plan, history, detailed eval data, rendered screenshots, and skill inspection.
 
 The CLI is optimized for reproducible local control: project creation, baseline import, run commands, progress checks, skill export, standalone evaluation, scheduling, and hook-informed automation.
 
+The Codex plugin is the Codex-native operator surface. It installs an operator skill plus MCP tools, then opens the local Skill RSI web app in Codex by default. That is the reliable guided surface for creating projects, watching runs, inspecting evidence, and exporting champions. The plugin also exposes explicit tools for state inspection, setup drafts, bounded run actions, hook-context consumption, and champion export.
+
+The plugin has one strict rule: it must operate Skill RSI, not manually rewrite target skills in chat. If a user asks to improve a skill, Codex should create or open a Skill RSI project, import the skill as a baseline when relevant, inspect state, and run a bounded loop only after explicit intent. Manual edits to the referenced `SKILL.md` are not the product.
+
+MCP-UI is available as an optional cockpit where the host renders MCP Apps/UI resources reliably. It is not the default Codex desktop path. All MCP tools should still return readable text or JSON fallback content.
+
 The UI Automation panel reports observed run state, pending Codex hook context, and copyable cron/LaunchAgent and Codex hook commands. It does not install or manage operating-system scheduler jobs. Codex hooks only queue context; a later manual or scheduled run consumes that context and decides whether to spend model budget.
 
-Both surfaces should tell the same story. Skill RSI researches the domain, maps the current artifact, plans one focused experiment, creates a challenger, evaluates it against the champion, and records what the next loop should know.
+All surfaces should tell the same story. Skill RSI researches the domain, maps the current artifact, plans one focused experiment, creates a challenger, evaluates it against the champion, and records what the next loop should know.

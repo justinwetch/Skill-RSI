@@ -8,6 +8,8 @@ For a concise product and architecture explanation, see [docs/HOW_IT_WORKS.md](d
 
 Current v0 note: the implemented competition model is now **cold-start duel, then champion challenge**. The first scratch run may generate Candidate A and Candidate B to crown an initial champion. Once a champion exists, each later loop generates one focused challenger and evaluates it directly against the current champion. Baseline uploads count as an existing champion and start with deconstruction/challenge rather than ontology/cold-start generation.
 
+Codex plugin note: the current plugin is a thin local operator surface around the same Skill RSI engine. It opens the local web app in Codex by default, exposes explicit MCP tools for inspection and bounded actions, and treats Codex hooks as queued context rather than inline loop execution. MCP-UI remains optional because host support varies.
+
 ## 1. Goal
 
 Skill RSI is a system that repeatedly improves Agent Skill packages by generating a focused challenger, evaluating it with a headless SkillEval-style harness, interpreting the results, and promoting the challenger only when it clearly beats the current champion.
@@ -17,14 +19,14 @@ SkillEval answers "which of these two skills performed better?" Skill RSI answer
 The product should support three operating modes:
 
 1. Manual: run one improvement loop on demand.
-2. Scheduled: run a loop on a cron-like cadence.
-3. Hook-triggered: run a loop after an external event, such as a skill edit, a failed eval, a merged PR, or a new batch of human feedback.
+2. Scheduled: run bounded loops on a cron-like cadence through the normal CLI/run machinery.
+3. Hook-informed: enqueue external context, such as Codex session metadata or changed files, so the next manual or scheduled run can consume it as planning signal.
 
 The core output of every loop is one of:
 
 1. Keep current champion: no challenger has enough evidence to replace it.
 2. Promote challenger: the challenger becomes the new champion skill.
-3. Edit champion: make a small targeted edit instead of replacing the whole skill.
+3. Plan a surgical challenger: record a small targeted edit direction for the next controlled challenge.
 4. Request new experiment: evaluation was inconclusive or exposed a missing test dimension.
 
 The system must preserve a long-running experiment history without forcing every future agent invocation to read every prior artifact.
@@ -73,6 +75,20 @@ skill-rsi/
 ```
 
 MVP can be a single package if speed matters, but keep internal module boundaries aligned with the package list above so the project can split cleanly later.
+
+Current v0 repo shape is still a single Node/React codebase rather than the package split above:
+
+```text
+skill-rsi/
+├── src/                  # Loop engine, CLI, agents, storage, eval, hooks, server
+├── ui/                   # Local React app
+├── plugins/skill-rsi/    # Codex plugin, operator skill, MCP server, assets
+├── scripts/              # Local runner and hook helpers
+├── docs/                 # Product, implementation, scheduling, plugin docs
+└── .skill-rsi/           # Local project state, ignored by git
+```
+
+The package sketch remains the intended modular boundary, not the current filesystem layout.
 
 ## 4. Core Workflow
 
@@ -673,12 +689,15 @@ SkillEval's useful logic should become a headless library.
 Proposed CLI:
 
 ```bash
-skill-rsi init --name ux-design --goal "Help agents design better UX"
-skill-rsi run ux-design --batch 10
-skill-rsi evaluate ux-design --a path/to/skill-a --b path/to/skill-b
-skill-rsi decide ux-design --decision annotate --note "Reviewed."
-skill-rsi history ux-design
-skill-rsi daemon ux-design
+skill-rsi init ux-design --goal "Help agents design better UX" --output text --target-iterations 3
+skill-rsi init frontend --goal "Help agents write production-ready UI code" --output code_visual --baseline ./frontend-skill.zip
+skill-rsi run ux-design --agentic --real-eval
+skill-rsi continuous ux-design --max-runs 20 --max-new-runs 1 --consume-hooks
+skill-rsi progress ux-design
+skill-rsi skill ux-design --source champion
+skill-rsi export-skill ux-design --source champion --out ./exported-skill
+skill-rsi evaluate --a path/to/skill-a --b path/to/skill-b --output code
+skill-rsi doctor
 ```
 
 ## 10. Promotion Logic
@@ -863,9 +882,9 @@ Example:
 0 2 * * * skill-rsi run ux-design --scheduled
 ```
 
-### Hook
+### Hook-informed
 
-Hooks should enqueue a run request with metadata:
+Hooks should enqueue compact context with metadata:
 
 - Source event.
 - Changed files.
@@ -875,13 +894,47 @@ Hooks should enqueue a run request with metadata:
 Potential hook sources:
 
 - Skill package file changed.
-- New human feedback added.
 - New eval prompt added.
 - Champion promoted.
 - GitHub PR merged.
 - External benchmark failed.
 
-## 14. Safety, Security, And Reproducibility
+Hooks do not run RSI loops inline. A later manual, scheduled, or explicit hook-informed action consumes queued context through the normal project lock, budget, and run-recording path.
+
+## 14. Codex Plugin Surface
+
+The Codex plugin is the Codex-native control surface for Skill RSI, not a separate engine.
+
+Current package path:
+
+```text
+plugins/skill-rsi/
+  .codex-plugin/plugin.json
+  skills/skill-rsi/SKILL.md
+  mcp/server.mjs
+  hooks/codex-stop-hook.example.json
+  assets/
+```
+
+Its responsibilities:
+
+- Teach Codex to operate Skill RSI instead of hand-editing target skills.
+- Open the local Skill RSI web app in Codex by default.
+- Expose explicit MCP tools for setup drafts, project creation, inspection, bounded runs, hook-context consumption, and champion export.
+- Provide an optional MCP-UI cockpit for hosts that render MCP Apps/UI resources reliably.
+- Queue Codex hook context without running RSI loops inside hook processes.
+
+Distribution is local-checkout based in v0. Users clone the repository, install dependencies, build the UI, create `.env`, run `npm run plugin:configure`, add the repo marketplace, and install `skill-rsi@skill-rsi`. The generated `plugins/skill-rsi/.mcp.json` is machine-local and ignored by git; tracked docs and templates must not contain maintainer-specific absolute paths.
+
+Plugin behavior rules:
+
+- Plain "improve this skill" requests should prepare or open a Skill RSI project, not rewrite the referenced `SKILL.md` in chat.
+- Model-backed runs must be explicit and bounded.
+- MCP read tools should return compact fallbacks as well as richer data where supported.
+- MCP-UI is optional; the local web app remains the reliable full console for setup, live runs, evidence, screenshots, automation state, and skill package inspection.
+- ChatGPT Plus or Pro does not fund local Skill RSI runs. Runs use OpenAI API credits from `OPENAI_API_KEY`.
+
+## 15. Safety, Security, And Reproducibility
 
 Skill RSI will generate executable-looking artifacts. Treat that seriously.
 
@@ -907,7 +960,7 @@ Spec validation should check:
 - No obviously unsafe path references.
 - `SKILL.md` stays under project-defined line/token limits.
 
-## 15. MVP Scope
+## 16. MVP Scope
 
 Build the smallest useful version first:
 
@@ -933,7 +986,7 @@ Still outside current v0 scope:
 - Long-term hosted database.
 - Cross-agent benchmark runners beyond SkillEval's model-call pattern.
 
-## 16. Implementation Milestones
+## 17. Implementation Milestones
 
 ### Vertical Slice First
 
@@ -1027,7 +1080,7 @@ Acceptance criteria:
 
 - First run can create 10 prompts and 4-6 criteria.
 - Later runs reuse stable prompts and add exploration prompts.
-- Parameter-targeted runs produce prompts that can plausibly observe the planned difference between A and B.
+- Parameter-targeted runs produce prompts that can plausibly observe the planned difference between the current champion and challenger.
 - Analyst can recommend prompt promotion or retirement.
 
 ### Milestone 6: Analyst And Promotion Gate
@@ -1042,7 +1095,7 @@ Tasks:
 
 Acceptance criteria:
 
-- Run ends with promote, keep, edit, or request-new-experiment.
+- Run ends with promote, keep, inconclusive, or request-new-experiment, with any surgical edit direction recorded as next-loop guidance.
 - Promotion cannot occur if policy blocks it.
 - `history/current-summary.md` updates after every completed run.
 
@@ -1050,16 +1103,16 @@ Acceptance criteria:
 
 Tasks:
 
-- Add `skill-rsi daemon` or document cron integration.
-- Add hook input format.
+- Document cron/LaunchAgent integration around bounded `continuous` runs.
+- Add hook queue input format.
 - Add lock file to prevent overlapping runs.
 - Add budget and stop-rule enforcement.
 - Add run timeline logs for observability before any full dashboard work.
 
 Acceptance criteria:
 
-- Scheduled run can execute unattended.
-- Hook-triggered run records source event metadata.
+- Scheduled run can execute unattended within configured run and budget ceilings.
+- Hook-informed run records consumed source event metadata.
 - Concurrent invocations do not corrupt state.
 - A user can inspect a run timeline and see each agent step, artifact path, model used, and failure reason.
 

@@ -46,7 +46,9 @@ codex plugin marketplace add .
 codex plugin add skill-rsi@skill-rsi
 ```
 
-Start a new Codex thread after installing or updating the plugin so Codex picks up the latest skill and MCP tools.
+If your Codex version cannot auto-install plugins from the CLI, install from the Codex UI instead: open Plugins in the sidebar, click Built by OpenAI, select Skill RSI, open the Skill RSI plugin page, then click Add to Codex.
+
+Start a new Codex thread after installing or updating the plugin so Codex picks up the latest skill and MCP tools. You can start from the Skill RSI plugin page or one of its starter prompts, or mention `@Skill RSI` from chat.
 
 Skill RSI model-backed runs use the OpenAI API key in `.env` or the browser-local UI key field. A ChatGPT Plus/Pro subscription does not fund local Skill RSI API calls.
 
@@ -124,6 +126,7 @@ This phase intentionally does not edit personal marketplace files. If Codex plug
 ## Troubleshooting
 
 - If Codex cannot find Skill RSI services, run `npm run plugin:configure` from the repository root and reinstall with `codex plugin add skill-rsi@skill-rsi`.
+- If Codex says it cannot auto-install the plugin, use the Plugins sidebar fallback: Built by OpenAI -> Skill RSI -> Add to Codex.
 - If the local web app does not open, check whether `http://127.0.0.1:8765/api/capabilities` is reachable, then start `npm run server` from the repository root.
 - If `skill_rsi_cockpit` only shows text, the host likely does not render MCP-UI resources robustly yet; use the local web app.
 - If visual evidence is unavailable, run the main app's `doctor` command to check browser screenshot runner availability.

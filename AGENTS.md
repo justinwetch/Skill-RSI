@@ -44,7 +44,15 @@ codex plugin marketplace add .
 codex plugin add skill-rsi@skill-rsi
 ```
 
-After plugin installation, tell the user to start a fresh Codex thread so Codex loads the latest Skill RSI operator skill and MCP tools.
+If the user's Codex version does not support CLI/plugin auto-install, give them the manual UI fallback:
+
+1. Open the Codex sidebar.
+2. Open the Plugins section.
+3. Click Built by OpenAI.
+4. Select Skill RSI.
+5. Click Skill RSI, then Add to Codex.
+
+After plugin installation, tell the user to start a fresh Codex thread so Codex loads the latest Skill RSI operator skill and MCP tools. They can start from the Skill RSI plugin page or one of its starter prompts, or mention `@Skill RSI` from chat.
 
 ## Opening Skill RSI
 
@@ -76,6 +84,6 @@ End setup by telling the user:
 - whether dependencies installed
 - whether the UI built
 - whether plugin configuration, validation, and smoke checks passed
-- whether the plugin was installed as `skill-rsi@skill-rsi`
-- that they should start a fresh Codex thread and say "Open Skill RSI"
+- whether the plugin was installed as `skill-rsi@skill-rsi`, or whether they need to use the manual Plugins UI fallback
+- that they should start a fresh Codex thread and open Skill RSI from the plugin page/starter prompts or by mentioning `@Skill RSI` from chat
 - that no model-backed Skill RSI run has started

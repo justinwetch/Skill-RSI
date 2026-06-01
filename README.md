@@ -214,7 +214,9 @@ codex plugin marketplace add .
 codex plugin add skill-rsi@skill-rsi
 ```
 
-After installing or updating the plugin, start a new Codex thread so Codex loads the latest plugin skill and MCP tools.
+If your Codex version cannot auto-install plugins from the CLI, install from the Codex UI instead: open Plugins in the sidebar, click Built by OpenAI, select Skill RSI, open the Skill RSI plugin page, then click Add to Codex.
+
+After installing or updating the plugin, start a new Codex thread so Codex loads the latest plugin skill and MCP tools. You can start from the Skill RSI plugin page or one of its starter prompts, or mention `@Skill RSI` from chat.
 
 Validate and smoke-check the plugin from the repository root:
 

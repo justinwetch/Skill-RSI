@@ -1,7 +1,7 @@
 {
   "name": "product-videos",
   "version": "1.0.0",
-  "description": "My Remotion video",
+  "description": "Procedural product videos for Skill RSI",
   "repository": {},
   "license": "UNLICENSED",
   "private": true,
@@ -9,9 +9,7 @@
     "@remotion/cli": "4.0.470",
     "react": "19.2.3",
     "react-dom": "19.2.3",
-    "remotion": "4.0.470",
-    "@remotion/tailwind-v4": "4.0.470",
-    "tailwindcss": "4.0.0"
+    "remotion": "4.0.470"
   },
   "devDependencies": {
     "@remotion/eslint-config-flat": "4.0.470",
@@ -24,6 +22,16 @@
   "scripts": {
     "dev": "remotion studio",
     "build": "remotion bundle",
+    "render:opener": "remotion render OpeningTitleBlack out/assets/00-opening-title-black.mp4",
+    "render:landscape": "remotion render ProductTourLandscape out/product-tour-landscape.mp4",
+    "render:square": "remotion render ProductTourSquare out/product-tour-square.mp4",
+    "render:assets": "node scripts/render-assets.mjs render",
+    "render:assets:light": "node scripts/render-assets.mjs render light",
+    "still:opener": "remotion still OpeningTitleBlack out/assets/stills/00-opening-title-black.png --frame=76",
+    "still:landscape": "remotion still ProductTourLandscape out/product-tour-landscape-frame.png --frame=144",
+    "still:square": "remotion still ProductTourSquare out/product-tour-square-frame.png --frame=120",
+    "still:assets": "node scripts/render-assets.mjs still",
+    "still:assets:light": "node scripts/render-assets.mjs still light",
     "upgrade": "remotion upgrade",
     "lint": "eslint src && tsc"
   },

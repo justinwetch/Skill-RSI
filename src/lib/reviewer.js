@@ -1,6 +1,6 @@
 import { loadSkillPackage } from './skill-package.js';
 import { validateAdversarialReview } from './schema.js';
-import { callModel } from './model-client.js';
+import { callModel, createModelAttemptError, withModelRetry } from './model-client.js';
 
 const UNSAFE_SCRIPT_PATTERNS = [
   { pattern: /\brm\s+-rf\b/, message: 'script contains rm -rf' },
@@ -436,19 +436,29 @@ async function modelAdversarialReview({ skillPackage, candidate, experimentPlan,
   if (!entrypoint) return null;
   const manifest = skillPackage.files.map(file => `- ${file.path} (${file.role})`).join('\n');
   const call = modelClient || callModel;
-  try {
-    const raw = await call({
-      model,
-      apiKeys,
-      jsonMode: true,
-      maxTokens: 1800,
-      systemPrompt: 'You are an exacting adversarial reviewer of Agent Skills. Output strict JSON only.',
-      messages: [{ role: 'user', content: buildReviewPrompt({ goal, experimentPlan, candidate, entrypoint, manifest, agentSkillsStandard }) }],
-    });
-    return parseReviewJson(raw);
-  } catch {
-    return null;
-  }
+  const response = await withModelRetry({
+    phase: 'candidate_review',
+    model,
+    operation: async () => {
+      const raw = await call({
+        model,
+        apiKeys,
+        jsonMode: true,
+        maxTokens: 1800,
+        systemPrompt: 'You are an exacting adversarial reviewer of Agent Skills. Output strict JSON only.',
+        messages: [{ role: 'user', content: buildReviewPrompt({ goal, experimentPlan, candidate, entrypoint, manifest, agentSkillsStandard }) }],
+      });
+      const parsed = parseReviewJson(raw);
+      if (!parsed) {
+        throw createModelAttemptError('Reviewer returned invalid JSON.', {
+          failureKind: 'invalid_json',
+          rawResponse: raw,
+        });
+      }
+      return parsed;
+    },
+  });
+  return response.ok ? response.value : null;
 }
 
 function buildReviewPrompt({ goal, experimentPlan, candidate, entrypoint, manifest, agentSkillsStandard }) {

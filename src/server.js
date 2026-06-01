@@ -87,6 +87,8 @@ async function handleApi(request, response, url) {
       visualRunner: await checkVisualRunnerAvailability(),
       openai: {
         keyConfigured: Boolean(process.env.OPENAI_API_KEY),
+        serverKeyConfigured: Boolean(process.env.OPENAI_API_KEY),
+        uiKeySupported: true,
         models: UI_OPENAI_MODELS,
         defaultModel: DEFAULT_MODEL,
       },
@@ -252,6 +254,7 @@ async function handleApi(request, response, url) {
         stopRules: body.stopRules || {},
         triggerMode: claimedHookEvents.length ? 'hook' : body.triggerMode || 'manual',
         hookContext: summarizeHookEvents(claimedHookEvents),
+        clientDiagnostics: body.clientDiagnostics || null,
       });
       if (claimedHookEvents.length) {
         if (result.completedRuns.length > 0) {

@@ -38,7 +38,8 @@ export const DEFAULT_PROJECT_CONFIG = {
     retryPolicy: {
       generationMaxAttempts: 2,
       judgeMaxAttempts: 2,
-      backoffMs: 0,
+      authoringMaxAttempts: 3,
+      backoffMs: 250,
     },
   },
   research: {
@@ -173,6 +174,10 @@ function normalizeRetryPolicy(raw) {
     judgeMaxAttempts: normalizePositiveInt(
       retryPolicy.judgeMaxAttempts,
       DEFAULT_PROJECT_CONFIG.eval.retryPolicy.judgeMaxAttempts,
+    ),
+    authoringMaxAttempts: normalizePositiveInt(
+      retryPolicy.authoringMaxAttempts,
+      DEFAULT_PROJECT_CONFIG.eval.retryPolicy.authoringMaxAttempts,
     ),
     backoffMs: normalizeNonNegativeNumber(retryPolicy.backoffMs, DEFAULT_PROJECT_CONFIG.eval.retryPolicy.backoffMs),
   };

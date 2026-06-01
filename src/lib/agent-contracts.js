@@ -9,7 +9,7 @@ import {
   validateParameterization,
   validateRecommendation,
 } from './schema.js';
-import { callModel } from './model-client.js';
+import { callModel, createModelAttemptError, summarizeModelAttempts, withModelRetry } from './model-client.js';
 import {
   createStubExperimentPlan,
   createStubOntology,
@@ -109,32 +109,61 @@ export async function runAgentContract({
     createdAt: new Date().toISOString(),
     prompt,
     rawModelText: realResult.rawModelText,
+    attempts: realResult.attempts || [],
+    attemptCount: realResult.attemptCount || (realResult.attempts?.length ? realResult.attempts.length + 1 : null),
     artifact: realResult.artifact,
   };
 }
 
 async function createRealArtifact({ agentName, context, prompt, model, apiKeys, modelClient, maxTokens }) {
-  const text = await modelClient({
+  const response = await withModelRetry({
+    phase: `agent_${agentName}`,
     model,
-    apiKeys,
-    systemPrompt: 'You are a Skill RSI subagent. Return only valid JSON matching the requested contract.',
-    messages: [{ role: 'user', content: prompt }],
-    maxTokens: resolveAgentMaxTokens(agentName, maxTokens),
-    jsonMode: true,
+    maxAttempts: context.projectConfig?.eval?.retryPolicy?.authoringMaxAttempts,
+    backoffMs: context.projectConfig?.eval?.retryPolicy?.backoffMs,
+    operation: async () => {
+      const text = await modelClient({
+        model,
+        apiKeys,
+        systemPrompt: 'You are a Skill RSI subagent. Return only valid JSON matching the requested contract.',
+        messages: [{ role: 'user', content: prompt }],
+        maxTokens: resolveAgentMaxTokens(agentName, maxTokens),
+        jsonMode: true,
+      });
+      let artifact;
+      try {
+        artifact = parseJson(text);
+      } catch (error) {
+        throw createModelAttemptError(`Invalid ${agentName} JSON: ${error.message}`, {
+          failureKind: 'invalid_json',
+          rawResponse: text,
+        });
+      }
+      try {
+        return { artifact: validateAgentArtifact(agentName, artifact, context), rawModelText: text };
+      } catch (error) {
+        const wrapped = createModelAttemptError(`${agentName} artifact failed validation: ${error.message}`, {
+          failureKind: 'validation_error',
+          rawResponse: text,
+        });
+        wrapped.rawArtifact = artifact;
+        throw wrapped;
+      }
+    },
   });
-  let artifact;
-  try {
-    artifact = parseJson(text);
-  } catch (error) {
-    annotateContractError(error, { agentName, context, rawModelText: text });
-    throw error;
-  }
-  try {
-    return { artifact: validateAgentArtifact(agentName, artifact, context), rawModelText: text };
-  } catch (error) {
-    annotateContractError(error, { agentName, context, rawModelText: text, rawArtifact: artifact });
-    throw error;
-  }
+  if (response.ok) return { ...response.value, attempts: response.attempts, attemptCount: response.attemptCount };
+  const summary = summarizeModelAttempts(response.attempts);
+  const error = new Error(`${agentName} artifact generation failed after ${summary.attemptCount} attempts: ${summary.lastError?.message || 'model output did not satisfy the contract'}`);
+  annotateContractError(error, {
+    agentName,
+    context,
+    rawModelText: summary.lastError?.rawResponse || null,
+    rawArtifact: response.attempts.find(attempt => attempt.rawArtifact)?.rawArtifact || null,
+  });
+  error.attempts = summary.attempts;
+  error.failureKind = summary.failureKind;
+  error.lastError = summary.lastError;
+  throw error;
 }
 
 async function createMockArtifact({ agentName, context }) {

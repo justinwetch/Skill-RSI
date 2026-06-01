@@ -134,6 +134,28 @@ function createRunModelMetadata({ agentModel, generationModel, judgeModel, model
   };
 }
 
+function createRunDiagnostics(clientDiagnostics) {
+  const client = sanitizeClientDiagnostics(clientDiagnostics);
+  return client ? { client } : null;
+}
+
+function sanitizeClientDiagnostics(value) {
+  if (!value || typeof value !== 'object') return null;
+  const openai = value.openai && typeof value.openai === 'object' ? value.openai : null;
+  if (!openai) return null;
+  const keySource = ['ui', 'server', 'none', 'multiple'].includes(openai.keySource)
+    ? openai.keySource
+    : 'none';
+  return {
+    openai: {
+      serverKeyConfigured: Boolean(openai.serverKeyConfigured),
+      uiKeyConfigured: Boolean(openai.uiKeyConfigured),
+      effectiveKeyConfigured: Boolean(openai.effectiveKeyConfigured),
+      keySource,
+    },
+  };
+}
+
 function summarizeTriggerContext(triggerContext = {}) {
   return {
     mode: normalizeRunTrigger(triggerContext.mode),
@@ -210,6 +232,7 @@ async function prepareResearchPacket({
   agentClient,
   maxTokens,
   researchConfig,
+  retryPolicy = null,
 }) {
   const existing = await readJson(runPaths.researchPacketJson, null);
   if (existing) return validateResearchPacket(existing);
@@ -219,7 +242,7 @@ async function prepareResearchPacket({
     model: agentModel,
     apiKeys,
     modelClient: agentClient,
-    config: researchConfig,
+    config: { ...researchConfig, retryPolicy },
     maxTokens,
   });
   await persistResearchPacket({
@@ -451,6 +474,7 @@ export async function runProject({
   stopRules = {},
   triggerMode = null,
   hookContext = null,
+  clientDiagnostics = null,
 }) {
   if (!['stub', 'mock', 'agentic'].includes(mode)) {
     throw new Error('Run mode must be stub, mock, or agentic');
@@ -536,12 +560,17 @@ export async function runProject({
             hook: hookContext,
             hookFocusFields: config.trigger.hookFocusFields,
           },
+          clientDiagnostics: sanitizeClientDiagnostics(clientDiagnostics),
           resuming,
         });
       } catch (error) {
         await appendTimeline(runPaths.timelineJsonl, 'run.failed', {
           name: error.name,
           message: error.message,
+          attempts: error.attempts || error.provenance?.attempts || [],
+          attemptCount: error.attempts?.length || error.provenance?.modelAttemptCount || 0,
+          lastError: error.lastError || error.provenance?.lastError || null,
+          failureKind: error.failureKind || error.provenance?.failureReason || error.lastError?.failureKind || null,
         });
         await markRunFailed({ runPaths, runId, runNumber, mode, error });
         throw error;
@@ -580,6 +609,7 @@ async function runStubLoop({
   promotion = null,
   budgetEstimate = null,
   triggerContext = { mode: 'manual', hook: null },
+  clientDiagnostics = null,
 }) {
   await ensureDir(runPaths.runDir);
   await ensureDir(runPaths.evalRawDir);
@@ -603,6 +633,7 @@ async function runStubLoop({
     },
     promotionPolicy: promotion,
     models: createRunModelMetadata({ agentModel, generationModel, judgeModel, modelParameters }),
+    diagnostics: createRunDiagnostics(clientDiagnostics),
     budgetEstimate,
   };
   await writeJson(runPaths.runJson, runRecord);
@@ -821,6 +852,7 @@ async function runAgenticLoop({
   qualityGateConfig = {},
   budgetEstimate = null,
   triggerContext = { mode: 'manual', hook: null },
+  clientDiagnostics = null,
   resuming = false,
 }) {
   await ensureDir(runPaths.runDir);
@@ -858,6 +890,7 @@ async function runAgenticLoop({
     models: createRunModelMetadata({ agentModel, generationModel, judgeModel, modelParameters }),
     researchPolicy: researchConfig,
     qualityGatePolicy: qualityGateConfig,
+    diagnostics: createRunDiagnostics(clientDiagnostics),
     budgetEstimate,
   };
   await writeJson(runPaths.runJson, runRecord);
@@ -883,6 +916,7 @@ async function runAgenticLoop({
       agentClient,
       maxTokens: modelParameters.agentMaxTokens,
       researchConfig,
+      retryPolicy: evalRetryPolicy,
     });
     const ontologyResult = await runAgentContract({
       cwd: path.dirname(paths.rootDir),
@@ -935,6 +969,7 @@ async function runAgenticLoop({
       agentClient,
       maxTokens: modelParameters.agentMaxTokens,
       researchConfig,
+      retryPolicy: evalRetryPolicy,
     });
     const refreshed = await runAgentContract({
       cwd: path.dirname(paths.rootDir),
@@ -1192,7 +1227,7 @@ async function runAgenticLoop({
       : [];
     let coreCriteria = null;
     if (!lockedCore.length) {
-      coreCriteria = await generateEvalCriteria({
+      const criteriaResult = await generateEvalCriteria({
         goal,
         candidateA: coldStart ? candidateA : challenger,
         candidateB: coldStart ? candidateB : championComparable,
@@ -1201,18 +1236,29 @@ async function runAgenticLoop({
         modelClient: agentClient,
         outputType: evalOutputType,
         taskContract,
+        retryPolicy: evalRetryPolicy,
+        returnDiagnostics: true,
       });
+      coreCriteria = criteriaResult.criteria;
       if (coreCriteria) {
         await appendTimeline(runPaths.timelineJsonl, 'criteria.generated', {
-          mode: 'real', model: judgeModel || agentModel, count: coreCriteria.length,
+          mode: 'real',
+          model: judgeModel || agentModel,
+          count: coreCriteria.length,
+          attemptCount: criteriaResult.diagnostics?.attemptCount || 1,
         });
       } else {
         await appendTimeline(runPaths.timelineJsonl, 'criteria.fallback', {
           mode: evalMode === 'real' ? 'failed' : 'deterministic',
           reason: 'model_criteria_generation_failed_or_unavailable',
+          artifactPhase: criteriaResult.diagnostics?.artifactPhase || 'eval_criteria',
+          attempts: criteriaResult.diagnostics?.attempts || [],
+          attemptCount: criteriaResult.diagnostics?.attemptCount || 0,
+          lastError: criteriaResult.diagnostics?.lastError || null,
+          failureKind: criteriaResult.diagnostics?.failureKind || null,
         });
         if (evalMode === 'real') {
-          throw new Error('Criteria authoring failed: model criteria generation is required for real eval runs.');
+          throw new Error(formatCriteriaAuthoringFailure(criteriaResult.diagnostics));
         }
       }
     } else {
@@ -1248,6 +1294,7 @@ async function runAgenticLoop({
         outputType: evalOutputType,
         taskContract,
         strict: evalMode === 'real',
+        retryPolicy: evalRetryPolicy,
       });
     } catch (error) {
       await appendTimeline(runPaths.timelineJsonl, 'eval_prompts.failed', {
@@ -1255,6 +1302,11 @@ async function runAgenticLoop({
         model: judgeModel || agentModel,
         reason: error.message,
         provenance: error.provenance || null,
+        attempts: error.provenance?.attempts || [],
+        attemptCount: error.provenance?.modelAttemptCount || 0,
+        lastError: error.provenance?.lastError || null,
+        failureKind: error.provenance?.failureReason || error.provenance?.lastError?.failureKind || null,
+        artifactPhase: 'eval_prompts',
       });
       throw error;
     }
@@ -1571,6 +1623,7 @@ async function createAndMaterializeCandidate({
   const artifactPath = path.join(candidateDir, 'creator-artifact.json');
   let artifact = await readJson(artifactPath, null);
   let revision = null;
+  let recoveredWithinModelRetry = false;
 
   for (let attempt = 1; attempt <= MAX_CREATOR_CONTRACT_ATTEMPTS; attempt += 1) {
     try {
@@ -1593,6 +1646,16 @@ async function createAndMaterializeCandidate({
         artifact = creatorResult.artifact;
         await writeJson(path.join(candidateDir, `creator-contract-${String(attempt).padStart(3, '0')}.json`), creatorResult);
         await writeJson(path.join(candidateDir, 'creator-contract.json'), creatorResult);
+        if (attempt === 1 && Array.isArray(creatorResult.attempts) && creatorResult.attempts.length) {
+          recoveredWithinModelRetry = true;
+          await persistRecoveredCreatorAttemptFailures({
+            runPaths,
+            candidateDir,
+            candidateId,
+            experimentArm,
+            attempts: creatorResult.attempts,
+          });
+        }
         const attemptPath = attempt === 1
           ? artifactPath
           : path.join(candidateDir, `creator-artifact-retry-${String(attempt - 1).padStart(3, '0')}.json`);
@@ -1601,10 +1664,11 @@ async function createAndMaterializeCandidate({
       }
 
       const candidate = validateCandidate(await materializeCreatorArtifact({ artifact, candidateDir }));
-      if (attempt > 1) {
+      if (attempt > 1 || recoveredWithinModelRetry) {
         await appendTimeline(runPaths.timelineJsonl, 'creator_contract.recovered', {
           candidateId,
           attempt,
+          recoveredWithinModelRetry,
         });
       }
       return { artifact, candidate };
@@ -1665,13 +1729,49 @@ async function persistCreatorContractFailure({
     contractRunId: error.contractRunId || null,
     rawArtifact: error.rawArtifact || null,
     rawModelText: truncateText(error.rawModelText, 50000),
+    attempts: error.attempts || [],
+    failureKind: error.failureKind || error.lastError?.failureKind || null,
   });
   await appendTimeline(runPaths.timelineJsonl, 'creator_contract.failed', {
     candidateId,
     attempt,
     message: error.message,
+    attempts: error.attempts || [],
+    failureKind: error.failureKind || error.lastError?.failureKind || null,
+    lastError: error.lastError || null,
+    artifactPhase: 'creator_contract',
     path: failurePath,
   });
+}
+
+async function persistRecoveredCreatorAttemptFailures({
+  runPaths,
+  candidateDir,
+  candidateId,
+  experimentArm,
+  attempts,
+}) {
+  for (const attemptRecord of attempts) {
+    const error = new Error(attemptRecord.message || 'Creator artifact attempt failed.');
+    error.name = attemptRecord.name || 'Error';
+    error.rawModelText = attemptRecord.rawResponse || null;
+    error.rawArtifact = attemptRecord.rawArtifact || null;
+    error.failureKind = attemptRecord.failureKind || null;
+    error.lastError = attemptRecord;
+    await persistCreatorContractFailure({
+      runPaths,
+      candidateDir,
+      candidateId,
+      experimentArm,
+      attempt: attemptRecord.attempt,
+      error,
+    });
+    await appendTimeline(runPaths.timelineJsonl, 'creator_contract.retrying', {
+      candidateId,
+      nextAttempt: attemptRecord.attempt + 1,
+      recoveredWithinModelRetry: true,
+    });
+  }
 }
 
 function createCreatorContractRevision({ candidateId, attempt, artifact, error }) {
@@ -1706,6 +1806,17 @@ function wrapCreatorContractError({ candidateId, error }) {
   return wrapped;
 }
 
+function formatCriteriaAuthoringFailure(diagnostics = {}) {
+  const count = diagnostics?.attemptCount || diagnostics?.attempts?.length || 0;
+  const last = diagnostics?.lastError;
+  const detail = last?.failureKind === 'invalid_json'
+    ? 'model returned invalid JSON'
+    : last?.failureKind === 'empty_response'
+      ? 'model returned an empty response'
+      : last?.message || 'model criteria generation was unavailable';
+  return `Eval criteria authoring failed after ${count || 'all'} attempts: ${detail}.`;
+}
+
 async function runMockLoop({
   paths,
   runPaths,
@@ -1729,6 +1840,7 @@ async function runMockLoop({
   evalRetryPolicy = {},
   budgetEstimate = null,
   triggerContext = { mode: 'manual', hook: null },
+  clientDiagnostics = null,
 }) {
   await ensureDir(runPaths.runDir);
   await ensureDir(runPaths.evalRawDir);
@@ -1761,6 +1873,7 @@ async function runMockLoop({
     },
     promotionPolicy: promotion,
     models: createRunModelMetadata({ agentModel, generationModel, judgeModel, modelParameters }),
+    diagnostics: createRunDiagnostics(clientDiagnostics),
     budgetEstimate,
   };
   await writeJson(runPaths.runJson, runRecord);
@@ -2447,6 +2560,10 @@ async function markRunFailed({ runPaths, runId, runNumber, mode, error }) {
     error: {
       name: error.name,
       message: error.message,
+      attempts: error.attempts || error.provenance?.attempts || [],
+      attemptCount: error.attempts?.length || error.provenance?.modelAttemptCount || 0,
+      lastError: error.lastError || error.provenance?.lastError || null,
+      failureKind: error.failureKind || error.provenance?.failureReason || error.lastError?.failureKind || null,
     },
   });
 }

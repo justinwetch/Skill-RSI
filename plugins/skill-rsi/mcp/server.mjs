@@ -233,6 +233,8 @@ export function createSkillRsiToolHandlers(services) {
         pluginPhase: 'mcp-control-plane',
         openai: {
           keyConfigured: Boolean(services.env.OPENAI_API_KEY),
+          serverKeyConfigured: Boolean(services.env.OPENAI_API_KEY),
+          uiKeySupported: false,
           models: services.uiApi.UI_OPENAI_MODELS || SUPPORTED_MODELS,
           defaultModel: DEFAULT_MODEL,
         },

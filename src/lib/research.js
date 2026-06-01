@@ -1,4 +1,4 @@
-import { callModel, inferProvider } from './model-client.js';
+import { callModel, createModelAttemptError, summarizeModelAttempts, withModelRetry, inferProvider } from './model-client.js';
 import { validateQualityReport, validateResearchPacket } from './schema.js';
 
 const GENERIC_TERMS = new Set([
@@ -49,18 +49,44 @@ export async function buildResearchPacket({
   }
 
   try {
-    const modelResponse = await modelClient({
+    const retryResponse = await withModelRetry({
+      phase: 'research',
       model,
-      apiKeys,
-      systemPrompt: 'You are the Skill RSI research agent. Use web search before making domain or authority claims. Return only valid JSON.',
-      messages: [{ role: 'user', content: buildResearchPrompt({ runId, goal }) }],
-      maxTokens,
-      jsonMode: false,
-      tools: [{ type: 'web_search' }],
-      toolChoice: 'auto',
-      include: ['web_search_call.action.sources'],
-      returnMetadata: true,
+      maxAttempts: config.retryPolicy?.authoringMaxAttempts,
+      backoffMs: config.retryPolicy?.backoffMs,
+      operation: async () => {
+        const modelResponse = await modelClient({
+          model,
+          apiKeys,
+          systemPrompt: 'You are the Skill RSI research agent. Use web search before making domain or authority claims. Return only valid JSON.',
+          messages: [{ role: 'user', content: buildResearchPrompt({ runId, goal }) }],
+          maxTokens,
+          jsonMode: false,
+          tools: [{ type: 'web_search' }],
+          toolChoice: 'auto',
+          include: ['web_search_call.action.sources'],
+          returnMetadata: true,
+        });
+        const rawModelText = typeof modelResponse === 'string' ? modelResponse : modelResponse.text;
+        try {
+          parseJson(rawModelText);
+        } catch (error) {
+          throw createModelAttemptError(`Research returned invalid JSON: ${error.message}`, {
+            failureKind: 'invalid_json',
+            rawResponse: rawModelText,
+          });
+        }
+        return modelResponse;
+      },
     });
+    if (!retryResponse.ok) {
+      const summary = summarizeModelAttempts(retryResponse.attempts);
+      throw createModelAttemptError(`research failed after ${summary.attemptCount} attempts: ${summary.lastError?.message || 'model output was invalid'}`, {
+        failureKind: summary.failureKind || 'model_error',
+        rawResponse: summary.lastError?.rawResponse || null,
+      });
+    }
+    const modelResponse = retryResponse.value;
     const rawModelText = typeof modelResponse === 'string' ? modelResponse : modelResponse.text;
     const diagnostics = createResearchDiagnostics({ provider, modelResponse });
     if (!diagnostics.used) {

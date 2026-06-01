@@ -246,6 +246,38 @@ test('naturalized prompts receive output contract instructions', async () => {
   assert.equal(design.bank.promptAuthoring.fallbackPromptCount, 0);
 });
 
+test('prompt naturalization retries unparseable model output', async () => {
+  const design = designEvalBatch({
+    runId: 'run-naturalized-retry',
+    goal: 'Help agents write support replies.',
+    ontology: { qualityAxes: ['specificity'], targetTasks: ['write a reply'] },
+    parameterization: { parameters: [{ id: 'p01', surface: 'missing-context behavior' }] },
+    experimentPlan: { focusParameterIds: ['p01'] },
+    stablePromptCount: 1,
+    explorationPromptCount: 0,
+  });
+  let calls = 0;
+
+  const provenance = await naturalizeEvalPrompts({
+    design,
+    goal: 'Help agents write support replies.',
+    model: 'fake-judge-model',
+    retryPolicy: { authoringMaxAttempts: 2, backoffMs: 0 },
+    modelClient: async () => {
+      calls += 1;
+      return calls === 1
+        ? 'not json'
+        : JSON.stringify({ prompts: ['Please write a clear support reply for a customer whose delivery is two days late and wants a refund.'] });
+    },
+  });
+
+  assert.equal(calls, 2);
+  assert.equal(provenance.modelAttemptCount, 2);
+  assert.equal(provenance.attempts.length, 1);
+  assert.equal(provenance.attempts[0].failureKind, 'invalid_json');
+  assert.match(design.prompts[0].text, /support reply/);
+});
+
 test('invalid naturalized prompts get one repair attempt before fallback', async () => {
   const design = designEvalBatch({
     runId: 'run-naturalized-repair',
@@ -328,13 +360,16 @@ test('strict prompt naturalization fails instead of using deterministic fallback
       goal: 'Help agents implement code artifacts.',
       model: 'fake-judge-model',
       outputType: 'code',
+      retryPolicy: { authoringMaxAttempts: 1, backoffMs: 0 },
       strict: true,
       modelClient: async () => JSON.stringify({ prompts: ['Update the existing app to add search.'] }),
     }),
     error => {
       assert.equal(error.name, 'PromptAuthoringError');
+      assert.match(error.message, /Eval prompt authoring failed after 2 attempts/);
       assert.equal(error.provenance.fallbackPromptCount, 1);
       assert.equal(error.provenance.invalidPromptDetails[0].text, 'Update the existing app to add search.');
+      assert.equal(error.provenance.failureReason, 'model_prompt_generation_remained_contract_invalid_after_repair');
       return true;
     },
   );

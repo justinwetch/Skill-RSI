@@ -121,6 +121,7 @@ test('run loop persists configured eval retry and promotion reliability policy',
   assert.deepEqual(evalConfig.retryPolicy, {
     generationMaxAttempts: 3,
     judgeMaxAttempts: 4,
+    authoringMaxAttempts: 3,
     backoffMs: 0,
   });
   assert.equal(duel.modelMetadata.retryPolicy.generationMaxAttempts, 3);
@@ -681,13 +682,14 @@ test('agentic real eval fails when prompt authoring remains contract-invalid', a
         throw new Error(`Unexpected prompt: ${prompt.slice(0, 80)}`);
       },
     }),
-    /Prompt authoring failed/,
+    /Eval prompt authoring failed/,
   );
 
   const paths = getProjectPaths(cwd, 'UX Design Prompt Failure');
   const runIds = await fs.readdir(paths.runsDir);
   const timeline = await fs.readFile(path.join(paths.runsDir, runIds[0], 'timeline.jsonl'), 'utf8');
   assert.match(timeline, /eval_prompts\.failed/);
+  assert.match(timeline, /"attemptCount":2/);
   assert.match(timeline, /run\.failed/);
 });
 
@@ -716,13 +718,14 @@ test('agentic real eval fails when first-run criteria authoring fails', async ()
         throw new Error(`Unexpected prompt: ${prompt.slice(0, 80)}`);
       },
     }),
-    /Criteria authoring failed/,
+    /Eval criteria authoring failed/,
   );
 
   const paths = getProjectPaths(cwd, 'UX Design Criteria Failure');
   const runIds = await fs.readdir(paths.runsDir);
   const timeline = await fs.readFile(path.join(paths.runsDir, runIds[0], 'timeline.jsonl'), 'utf8');
   assert.match(timeline, /criteria\.fallback/);
+  assert.match(timeline, /"attemptCount":3/);
   assert.match(timeline, /run\.failed/);
 });
 

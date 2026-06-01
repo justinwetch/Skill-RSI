@@ -5,7 +5,7 @@ import { createRunId } from './paths.js';
 import { loadSkillPackage } from './skill-package.js';
 import { writeJson } from './store.js';
 import { validateHeadlessEvalRun } from './schema.js';
-import { callModel, inferProvider } from './model-client.js';
+import { callModel, createModelAttemptError, withModelRetry, inferProvider } from './model-client.js';
 import { normalizeTaskContract, taskContractSummary } from './task-contracts.js';
 import { checkVisualRunnerAvailability, imageFileToDataUrl, renderVisualArtifact } from './visual-runner.js';
 
@@ -289,8 +289,9 @@ async function evaluateRealPrompts({
 
 async function generateSkillOutput({ skill, prompt, model, apiKeys, modelClient, maxTokens, retryPolicy }) {
   const startedAt = Date.now();
-  const response = await withRetry({
+  const response = await withModelRetry({
     phase: 'generation',
+    model,
     maxAttempts: retryPolicy.generationMaxAttempts,
     backoffMs: retryPolicy.backoffMs,
     operation: () => modelClient({
@@ -326,15 +327,16 @@ async function generateSkillOutput({ skill, prompt, model, apiKeys, modelClient,
     content: response.value,
     contentHash: hashText(response.value),
     elapsedMs: Date.now() - startedAt,
-    attempts: response.attempts.length + 1,
+    attempts: response.attemptCount,
     failures: response.attempts,
   };
 }
 
 async function judgeRealOutputs({ prompt, criteria, resultA, resultB, model, apiKeys, modelClient, maxTokens, blindLabels, retryPolicy, taskContract = null, visual = null }) {
   const startedAt = Date.now();
-  const response = await withRetry({
+  const response = await withModelRetry({
     phase: 'judging',
+    model,
     maxAttempts: retryPolicy.judgeMaxAttempts,
     backoffMs: retryPolicy.backoffMs,
     operation: async () => {
@@ -358,8 +360,10 @@ async function judgeRealOutputs({ prompt, criteria, resultA, resultB, model, api
       try {
         return { text, parsed: parseJudgeJson(text) };
       } catch (error) {
-        error.rawResponse = text;
-        throw error;
+        throw createModelAttemptError(error.message, {
+          failureKind: 'invalid_json',
+          rawResponse: text,
+        });
       }
     },
   });
@@ -388,7 +392,7 @@ async function judgeRealOutputs({ prompt, criteria, resultA, resultB, model, api
     rawResponse: text,
     parsedScores: parsed,
     elapsedMs: Date.now() - startedAt,
-    attempts: response.attempts.length + 1,
+    attempts: response.attemptCount,
     failures: response.attempts,
   };
 }

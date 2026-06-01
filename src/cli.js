@@ -173,7 +173,7 @@ function renderDoctor(result) {
   return [
     'Skill RSI doctor',
     `Node: ${result.node}`,
-    `OpenAI key: ${result.openai.keyConfigured ? 'configured' : 'not configured'}`,
+    `Server OpenAI key: ${result.openai.serverKeyConfigured ? 'configured' : 'not configured'}`,
     `Models: ${result.openai.models.join(', ')} (default ${result.openai.defaultModel})`,
     `Visual runner: ${result.visualRunner.available ? `available (${result.visualRunner.browser})` : 'unavailable'}`,
     result.visualRunner.available ? null : `Visual runner error: ${result.visualRunner.error}`,
@@ -229,6 +229,8 @@ async function main() {
       node: process.version,
       openai: {
         keyConfigured: Boolean(process.env.OPENAI_API_KEY),
+        serverKeyConfigured: Boolean(process.env.OPENAI_API_KEY),
+        uiKeySupported: false,
         models: UI_OPENAI_MODELS,
         defaultModel: DEFAULT_TEST_MODEL,
       },

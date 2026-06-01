@@ -13,6 +13,11 @@ const PROVIDERS = {
   },
 };
 
+export const DEFAULT_MODEL_AUTHORING_RETRY_POLICY = {
+  maxAttempts: 3,
+  backoffMs: 250,
+};
+
 export function inferProvider(model) {
   if (!model) return null;
   if (model.startsWith('claude-')) return 'anthropic';
@@ -27,6 +32,77 @@ export function resolveApiKey({ provider, apiKey, apiKeys = {} }) {
     throw new Error(`${provider} API key is required`);
   }
   return key;
+}
+
+export function createModelAttemptError(message, {
+  failureKind = 'model_error',
+  rawResponse = null,
+  status = null,
+  statusClass = null,
+} = {}) {
+  const error = new Error(message);
+  error.name = 'ModelAttemptError';
+  error.failureKind = failureKind;
+  error.rawResponse = rawResponse;
+  error.status = status;
+  error.statusClass = statusClass;
+  return error;
+}
+
+export async function withModelRetry({
+  phase,
+  model,
+  provider = inferProvider(model),
+  maxAttempts = DEFAULT_MODEL_AUTHORING_RETRY_POLICY.maxAttempts,
+  backoffMs = DEFAULT_MODEL_AUTHORING_RETRY_POLICY.backoffMs,
+  operation,
+}) {
+  const attempts = [];
+  const attemptLimit = normalizePositiveInt(maxAttempts, DEFAULT_MODEL_AUTHORING_RETRY_POLICY.maxAttempts);
+  const delayMs = normalizeNonNegativeInt(backoffMs, DEFAULT_MODEL_AUTHORING_RETRY_POLICY.backoffMs);
+
+  for (let attempt = 1; attempt <= attemptLimit; attempt += 1) {
+    const startedAt = Date.now();
+    try {
+      const value = await operation({ attempt });
+      if (typeof value === 'string' && !value.trim()) {
+        throw createModelAttemptError('Model returned an empty response.', { failureKind: 'empty_response' });
+      }
+      return { ok: true, value, attempts, attemptCount: attempt };
+    } catch (error) {
+      const attemptRecord = createAttemptRecord({
+        phase,
+        model,
+        provider,
+        attempt,
+        error,
+        elapsedMs: Date.now() - startedAt,
+      });
+      attempts.push(attemptRecord);
+      if (!shouldRetryAttempt(attemptRecord)) break;
+      if (attempt < attemptLimit && delayMs > 0) {
+        await sleep(delayMs + Math.floor(Math.random() * Math.min(100, delayMs)));
+      }
+    }
+  }
+
+  return {
+    ok: false,
+    attempts,
+    attemptCount: attempts.length,
+    lastError: attempts[attempts.length - 1] || null,
+  };
+}
+
+export function summarizeModelAttempts(attempts = []) {
+  const safeAttempts = Array.isArray(attempts) ? attempts : [];
+  const lastError = safeAttempts[safeAttempts.length - 1] || null;
+  return {
+    attempts: safeAttempts,
+    attemptCount: safeAttempts.length,
+    lastError,
+    failureKind: lastError?.failureKind || null,
+  };
 }
 
 export async function callModel({
@@ -144,7 +220,15 @@ async function callGemini({ apiKey, model, systemPrompt, messages, maxTokens, js
 async function parseResponse(response) {
   const data = await response.json().catch(() => ({}));
   if (!response.ok) {
-    throw new Error(data.error?.message || data.message || `Model request failed with status ${response.status}`);
+    throw createModelAttemptError(
+      data.error?.message || data.message || `Model request failed with status ${response.status}`,
+      {
+        failureKind: classifyHttpStatus(response.status),
+        status: response.status,
+        statusClass: `${Math.floor(response.status / 100)}xx`,
+        rawResponse: typeof data === 'object' ? JSON.stringify(data) : String(data || ''),
+      },
+    );
   }
   return data;
 }
@@ -223,4 +307,83 @@ function extractOpenAICitations(data) {
 
 function extractGeminiText(data) {
   return data.candidates?.[0]?.content?.parts?.map(part => part.text || '').join('') || '';
+}
+
+function createAttemptRecord({ phase, model, provider, attempt, error, elapsedMs }) {
+  return {
+    phase,
+    attempt,
+    model: model || null,
+    provider: provider || null,
+    name: error?.name || 'Error',
+    message: sanitizeDiagnosticText(error?.message || String(error || 'Unknown model error')),
+    failureKind: error?.failureKind || classifyError(error),
+    status: error?.status || null,
+    statusClass: error?.statusClass || null,
+    rawResponse: truncateDiagnosticText(sanitizeDiagnosticText(error?.rawResponse || null), 20000),
+    rawArtifact: sanitizeDiagnosticValue(error?.rawArtifact || null),
+    elapsedMs,
+  };
+}
+
+function shouldRetryAttempt(attempt) {
+  return !['auth_error', 'api_request_error'].includes(attempt?.failureKind);
+}
+
+function classifyHttpStatus(status) {
+  if (status === 401 || status === 403) return 'auth_error';
+  if (status === 408 || status === 409 || status === 425) return 'transient_http_error';
+  if (status === 429) return 'rate_limit';
+  if (status >= 500) return 'transient_http_error';
+  if (status >= 400) return 'api_request_error';
+  return 'api_error';
+}
+
+function classifyError(error) {
+  const message = String(error?.message || '').toLowerCase();
+  if (message.includes('json')) return 'invalid_json';
+  if (message.includes('empty response')) return 'empty_response';
+  if (message.includes('api key') || message.includes('unauthorized') || message.includes('forbidden')) return 'auth_error';
+  if (message.includes('rate limit') || message.includes('429')) return 'rate_limit';
+  if (message.includes('fetch') || message.includes('network') || message.includes('timeout')) return 'transport_error';
+  if (message.includes('schema') || message.includes('contract') || message.includes('valid')) return 'validation_error';
+  return 'model_error';
+}
+
+function sanitizeDiagnosticText(value) {
+  if (value === null || value === undefined) return null;
+  return String(value)
+    .replace(/sk-[A-Za-z0-9_-]{8,}/g, 'sk-***')
+    .replace(/Bearer\s+[A-Za-z0-9._~+/=-]+/gi, 'Bearer ***')
+    .replace(/"api[_-]?key"\s*:\s*"[^"]+"/gi, '"apiKey":"***"')
+    .replace(/"authorization"\s*:\s*"[^"]+"/gi, '"authorization":"***"');
+}
+
+function sanitizeDiagnosticValue(value) {
+  if (value === null || value === undefined) return null;
+  if (typeof value === 'string') return sanitizeDiagnosticText(value);
+  try {
+    return JSON.parse(sanitizeDiagnosticText(JSON.stringify(value)));
+  } catch {
+    return null;
+  }
+}
+
+function truncateDiagnosticText(value, maxLength) {
+  if (typeof value !== 'string' || value.length <= maxLength) return value;
+  return `${value.slice(0, maxLength)}\n...[truncated ${value.length - maxLength} chars]`;
+}
+
+function normalizePositiveInt(value, fallback) {
+  const parsed = Number.parseInt(value, 10);
+  return Number.isInteger(parsed) && parsed > 0 ? parsed : fallback;
+}
+
+function normalizeNonNegativeInt(value, fallback) {
+  const parsed = Number.parseInt(value, 10);
+  return Number.isInteger(parsed) && parsed >= 0 ? parsed : fallback;
+}
+
+function sleep(ms) {
+  return new Promise(resolve => setTimeout(resolve, ms));
 }

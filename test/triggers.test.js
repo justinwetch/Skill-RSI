@@ -144,6 +144,8 @@ test('doctor, progress, skill, export-skill, and delete commands work from CLI',
   const doctorJson = JSON.parse(doctor.stdout);
   assert.equal(doctorJson.schemaVersion, 1);
   assert.equal(typeof doctorJson.openai.keyConfigured, 'boolean');
+  assert.equal(doctorJson.openai.serverKeyConfigured, doctorJson.openai.keyConfigured);
+  assert.equal(doctorJson.openai.uiKeySupported, false);
   assert.ok(!doctor.stdout.includes(process.env.OPENAI_API_KEY || 'sk-'));
 
   await execFileAsync('node', [

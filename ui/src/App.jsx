@@ -12,6 +12,7 @@ import {
   updateProjectSettings, exportChampion,
 } from './api.js';
 import { resolveInitialRoute } from './routing.js';
+import { createOpenAiDiagnosticMetadata, getOpenAiKeyStatus } from './key-status.js';
 
 const STAGES = [
   {
@@ -254,7 +255,7 @@ export default function App() {
   async function handleStart(count) {
     if (!selectedId || busy) return;
     let runtimeCapabilities = capabilities;
-    if (!openAiKey.trim() && !runtimeCapabilities?.openai?.keyConfigured) {
+    if (!getOpenAiKeyStatus(runtimeCapabilities, openAiKey).keyConfigured) {
       try {
         runtimeCapabilities = await fetchCapabilities();
         setCapabilities(runtimeCapabilities);
@@ -262,7 +263,7 @@ export default function App() {
         runtimeCapabilities = null;
       }
     }
-    if (!openAiKey.trim() && !runtimeCapabilities?.openai?.keyConfigured) {
+    if (!getOpenAiKeyStatus(runtimeCapabilities, openAiKey).keyConfigured) {
       setError('Add an OpenAI API key before running real loops.');
       return;
     }
@@ -300,6 +301,9 @@ export default function App() {
         evalMode: 'real',
         maxRuns: null,
         openAiApiKey: openAiKey.trim() || null,
+        clientDiagnostics: {
+          openai: createOpenAiDiagnosticMetadata(runtimeCapabilities, openAiKey),
+        },
       });
       clearTimers();
       await loadProjectData(selectedId);
@@ -802,7 +806,8 @@ function CreateView({
   const setMode = mode => setDraft(d => mode === 'scratch'
     ? ({ ...d, mode, serverDraftId: null, serverBaseline: null, baselineZip: null, baselineFiles: [], baselineMarkdown: null })
     : ({ ...d, mode }));
-  const serverKeyConfigured = Boolean(capabilities?.openai?.keyConfigured);
+  const keyStatus = getOpenAiKeyStatus(capabilities, openAiKey);
+  const serverKeyConfigured = keyStatus.serverKeyConfigured;
   useEffect(() => {
     if (!capabilities) fetchCapabilities().then(setCapabilities).catch(() => {});
   }, [capabilities, setCapabilities]);
@@ -942,8 +947,8 @@ function CreateView({
           placeholder={serverKeyConfigured ? 'Using server environment key' : 'Paste key'}
           onChange={e => setOpenAiKey(e.target.value)}
           autoComplete="off" />
-        <p className={`field-hint ${!openAiKey.trim() && !serverKeyConfigured ? 'warning-text' : ''}`}>
-          {openAiKey.trim()
+        <p className={`field-hint ${!keyStatus.keyConfigured ? 'warning-text' : ''}`}>
+          {keyStatus.uiKeyConfigured
             ? 'OpenAI key saved locally in this browser.'
             : serverKeyConfigured
               ? 'OpenAI key available from local server environment.'

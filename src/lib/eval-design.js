@@ -1,5 +1,10 @@
 import { validateEvalDesign } from './schema.js';
-import { callModel } from './model-client.js';
+import {
+  callModel,
+  createModelAttemptError,
+  summarizeModelAttempts,
+  withModelRetry,
+} from './model-client.js';
 import { loadSkillPackage } from './skill-package.js';
 import { isPromptContractValid, normalizeTaskContract, taskContractSummary } from './task-contracts.js';
 
@@ -129,30 +134,71 @@ function parseCriteriaJson(raw) {
   return cleaned.length >= 3 ? cleaned.slice(0, 6) : null;
 }
 
-export async function generateEvalCriteria({ goal, candidateA, candidateB, model, apiKeys = {}, modelClient = null, outputType = 'text', taskContract = null }) {
-  if (!model) return null;
+export async function generateEvalCriteria({
+  goal,
+  candidateA,
+  candidateB,
+  model,
+  apiKeys = {},
+  modelClient = null,
+  outputType = 'text',
+  taskContract = null,
+  retryPolicy = {},
+  returnDiagnostics = false,
+}) {
+  const failure = (message, extra = {}) => {
+    const diagnostics = {
+      artifactPhase: 'eval_criteria',
+      failureKind: extra.failureKind || 'setup_error',
+      lastError: extra.lastError || { message },
+      attempts: extra.attempts || [],
+      attemptCount: extra.attemptCount || 0,
+    };
+    return returnDiagnostics ? { criteria: null, diagnostics } : null;
+  };
+  if (!model) return failure('Eval criteria authoring requires a model.', { failureKind: 'missing_model' });
   let aText = '';
   let bText = '';
   try {
     const [pa, pb] = await Promise.all([loadSkillPackage(candidateA.skillPath), loadSkillPackage(candidateB.skillPath)]);
     aText = (pa.files.find(f => f.path === 'SKILL.md') || pa.files[0])?.content || '';
     bText = (pb.files.find(f => f.path === 'SKILL.md') || pb.files[0])?.content || '';
-  } catch { return null; }
-  if (!aText || !bText) return null;
-  try {
-    const call = modelClient || callModel;
-    const raw = await call({
-      model,
-      apiKeys,
-      jsonMode: true,
-      maxTokens: 2400,
-      systemPrompt: CRITERIA_SYSTEM_PROMPT,
-      messages: [{ role: 'user', content: buildCriteriaInstruction(goal, aText, bText, outputType, taskContract) }],
-    });
-    return parseCriteriaJson(raw);
-  } catch {
-    return null;
+  } catch (error) {
+    return failure(`Could not load candidate skills for criteria authoring: ${error.message}`, { failureKind: 'input_error' });
   }
+  if (!aText || !bText) return failure('Candidate SKILL.md content was empty.', { failureKind: 'input_error' });
+  const call = modelClient || callModel;
+  const response = await withModelRetry({
+    phase: 'eval_criteria',
+    model,
+    maxAttempts: retryPolicy.authoringMaxAttempts,
+    backoffMs: retryPolicy.backoffMs,
+    operation: async () => {
+      const raw = await call({
+        model,
+        apiKeys,
+        jsonMode: true,
+        maxTokens: 2400,
+        systemPrompt: CRITERIA_SYSTEM_PROMPT,
+        messages: [{ role: 'user', content: buildCriteriaInstruction(goal, aText, bText, outputType, taskContract) }],
+      });
+      const criteria = parseCriteriaJson(raw);
+      if (!criteria) {
+        throw createModelAttemptError('Model returned invalid eval criteria JSON.', {
+          failureKind: 'invalid_json',
+          rawResponse: raw,
+        });
+      }
+      return criteria;
+    },
+  });
+  if (response.ok) {
+    return returnDiagnostics
+      ? { criteria: response.value, diagnostics: { artifactPhase: 'eval_criteria', attempts: response.attempts, attemptCount: response.attemptCount, lastError: null, failureKind: null } }
+      : response.value;
+  }
+  const summary = summarizeModelAttempts(response.attempts);
+  return failure(`Eval criteria authoring failed after ${summary.attemptCount} attempts.`, summary);
 }
 
 export async function naturalizeEvalPrompts({
@@ -164,6 +210,7 @@ export async function naturalizeEvalPrompts({
   outputType = 'text',
   taskContract = null,
   strict = false,
+  retryPolicy = {},
 }) {
   if (!design) return null;
   if (!model) {
@@ -199,7 +246,7 @@ export async function naturalizeEvalPrompts({
   }));
 
   const call = modelClient || callModel;
-  const firstTexts = await requestNaturalizedPromptTexts({
+  const firstResult = await requestNaturalizedPromptTexts({
     call,
     model,
     apiKeys,
@@ -208,19 +255,30 @@ export async function naturalizeEvalPrompts({
     outputType,
     contract,
     count: targets.length,
+    retryPolicy,
+    phase: 'eval_prompts',
   });
+  const firstTexts = firstResult.texts;
   if (!firstTexts) {
     const fallbackIds = new Set(targets.map(prompt => prompt.id));
+    const attemptsSummary = summarizeModelAttempts(firstResult.attempts);
     const provenance = createPromptAuthoringProvenance({
       source: 'deterministic_fallback',
       attemptedModel: true,
       model,
       totalPrompts: design.prompts.length,
-      modelAttemptCount: 1,
+      modelAttemptCount: attemptsSummary.attemptCount,
+      attempts: attemptsSummary.attempts,
+      lastError: attemptsSummary.lastError,
       fallbackPromptIds: targets.map(prompt => prompt.id),
-      failureReason: 'model_prompt_generation_failed_or_unparseable',
+      failureReason: attemptsSummary.failureKind || 'model_prompt_generation_failed_or_unparseable',
     });
-    if (strict) throw createPromptAuthoringError('Prompt authoring failed: model output was unavailable or unparseable.', provenance);
+    if (strict) {
+      throw createPromptAuthoringError(
+        `Eval prompt authoring failed after ${attemptsSummary.attemptCount} attempts: ${formatAttemptFailure(attemptsSummary.lastError)}.`,
+        provenance,
+      );
+    }
     applyPromptAuthoringProvenance(design, provenance, fallbackIds, fallbackIds);
     return provenance;
   }
@@ -228,8 +286,9 @@ export async function naturalizeEvalPrompts({
   let selectedTexts = firstTexts;
   const initialInvalidIndexes = getInvalidPromptIndexes({ targets, texts: selectedTexts, contract });
   let invalidIndexes = initialInvalidIndexes;
+  let repairResult = { texts: null, attempts: [], attemptCount: 0, lastError: null };
   if (initialInvalidIndexes.length > 0) {
-    const repairedTexts = await requestNaturalizedPromptTexts({
+    repairResult = await requestNaturalizedPromptTexts({
       call,
       model,
       apiKeys,
@@ -238,12 +297,15 @@ export async function naturalizeEvalPrompts({
       outputType,
       contract,
       count: targets.length,
+      retryPolicy,
+      phase: 'eval_prompts_repair',
       repairHint: [
         'The previous draft violated the task contract for one or more prompts.',
         `Rejected prompt numbers: ${invalidIndexes.map(index => index + 1).join(', ')}`,
         'Regenerate all prompts. Every prompt must satisfy the required context and invalid-prompt rules exactly.',
       ].join('\n'),
     });
+    const repairedTexts = repairResult.texts;
     if (repairedTexts) {
       selectedTexts = repairedTexts;
       invalidIndexes = getInvalidPromptIndexes({ targets, texts: selectedTexts, contract });
@@ -265,12 +327,19 @@ export async function naturalizeEvalPrompts({
       },
     });
   });
+  const allAttempts = [
+    ...(firstResult.attempts || []),
+    ...(repairResult.attempts || []),
+  ];
+  const lastAttempt = allAttempts[allAttempts.length - 1] || null;
   const provenance = createPromptAuthoringProvenance({
     source: fallbackIds.size === targets.length ? 'deterministic_fallback' : fallbackIds.size ? 'mixed' : 'model_naturalized',
     attemptedModel: true,
     model,
     totalPrompts: design.prompts.length,
-    modelAttemptCount: initialInvalidIndexes.length > 0 ? 2 : 1,
+    modelAttemptCount: (firstResult.attemptCount || 0) + (repairResult.attemptCount || 0),
+    attempts: allAttempts,
+    lastError: fallbackIds.size ? lastAttempt : null,
     initialInvalidPromptIds: initialInvalidIndexes.map(index => targets[index].id),
     fallbackPromptIds: [...fallbackIds],
     repairedPromptIds: initialInvalidIndexes
@@ -284,7 +353,10 @@ export async function naturalizeEvalPrompts({
     failureReason: fallbackIds.size ? 'model_prompt_generation_remained_contract_invalid_after_repair' : null,
   });
   if (strict && fallbackIds.size > 0) {
-    throw createPromptAuthoringError('Prompt authoring failed: generated prompts remained contract-invalid after repair.', provenance);
+    throw createPromptAuthoringError(
+      `Eval prompt authoring failed after ${provenance.modelAttemptCount} attempts: generated prompts remained contract-invalid after repair.`,
+      provenance,
+    );
   }
   const apply = list => (Array.isArray(list)
     ? list.map(prompt => (replacement.has(prompt.id) ? { ...prompt, ...replacement.get(prompt.id) } : prompt))
@@ -307,26 +379,43 @@ function createPromptAuthoringError(message, provenance) {
   return error;
 }
 
-async function requestNaturalizedPromptTexts({ call, model, apiKeys, goal, slots, outputType, contract, count, repairHint = '' }) {
-  try {
-    const raw = await call({
-      model,
-      apiKeys,
-      jsonMode: true,
-      maxTokens: 2400,
-      systemPrompt: 'You generate realistic, high-quality evaluation prompts for AI skills. Output strict JSON only.',
-      messages: [{
-        role: 'user',
-        content: [
-          buildPromptGenInstruction(goal, slots, outputType, contract),
-          repairHint,
-        ].filter(Boolean).join('\n\n'),
-      }],
-    });
-    return parsePromptArray(raw, count);
-  } catch {
-    return null;
-  }
+async function requestNaturalizedPromptTexts({ call, model, apiKeys, goal, slots, outputType, contract, count, retryPolicy = {}, phase, repairHint = '' }) {
+  const response = await withModelRetry({
+    phase,
+    model,
+    maxAttempts: retryPolicy.authoringMaxAttempts,
+    backoffMs: retryPolicy.backoffMs,
+    operation: async () => {
+      const raw = await call({
+        model,
+        apiKeys,
+        jsonMode: true,
+        maxTokens: 2400,
+        systemPrompt: 'You generate realistic, high-quality evaluation prompts for AI skills. Output strict JSON only.',
+        messages: [{
+          role: 'user',
+          content: [
+            buildPromptGenInstruction(goal, slots, outputType, contract),
+            repairHint,
+          ].filter(Boolean).join('\n\n'),
+        }],
+      });
+      const texts = parsePromptArray(raw, count);
+      if (!texts) {
+        throw createModelAttemptError('Model returned invalid eval prompt JSON.', {
+          failureKind: 'invalid_json',
+          rawResponse: raw,
+        });
+      }
+      return texts;
+    },
+  });
+  return {
+    texts: response.ok ? response.value : null,
+    attempts: response.attempts || [],
+    attemptCount: response.ok ? response.attemptCount : response.attemptCount || response.attempts?.length || 0,
+    lastError: response.lastError || null,
+  };
 }
 
 function getInvalidPromptIndexes({ targets, texts, contract }) {
@@ -348,6 +437,8 @@ function createPromptAuthoringProvenance({
   repairedPromptIds = [],
   fallbackPromptIds = [],
   invalidPromptDetails = [],
+  attempts = [],
+  lastError = null,
   failureReason = null,
 }) {
   return {
@@ -361,8 +452,20 @@ function createPromptAuthoringProvenance({
     fallbackPromptIds,
     fallbackPromptCount: fallbackPromptIds.length,
     invalidPromptDetails,
+    attempts,
+    lastError,
     failureReason,
   };
+}
+
+function formatAttemptFailure(lastError) {
+  if (!lastError) return 'model output was unavailable or unparseable';
+  if (lastError.failureKind === 'invalid_json') return 'model returned invalid JSON';
+  if (lastError.failureKind === 'empty_response') return 'model returned an empty response';
+  if (lastError.failureKind === 'auth_error') return 'the API key was rejected';
+  if (lastError.failureKind === 'rate_limit') return 'the model provider rate-limited the request';
+  if (lastError.message) return lastError.message;
+  return lastError.failureKind || 'model output was unavailable or unparseable';
 }
 
 function applyPromptAuthoringProvenance(design, provenance, fallbackIds, overrideIds = new Set()) {

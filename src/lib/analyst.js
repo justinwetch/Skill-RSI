@@ -1,5 +1,5 @@
 import { validateRecommendation } from './schema.js';
-import { callModel } from './model-client.js';
+import { callModel, createModelAttemptError, summarizeModelAttempts, withModelRetry } from './model-client.js';
 
 const ALLOWED_DECISIONS = ['promote', 'keep_current', 'request_new_experiment'];
 const ALLOWED_CONFIDENCE = ['low', 'medium', 'high'];
@@ -54,39 +54,60 @@ export async function analyzeRun({
   if (mode !== 'real') return policy;
   if (!model) throw new Error('Real analyst requires a model');
 
-  const text = await modelClient({
+  const response = await withModelRetry({
+    phase: 'analyst',
     model,
-    apiKeys,
-    systemPrompt: 'You are the Skill RSI analyst. Return only valid JSON matching AnalystRecommendation.',
-    messages: [{
-      role: 'user',
-      content: buildAnalystPrompt({
-        runId,
-        goal,
-        state,
-        history,
-        ontology,
-        parameterization,
-        experimentPlan,
-        candidateA,
-        candidateB,
-        challenger,
-        candidateDuel,
-        challenge,
-        policy,
-      }),
-    }],
-    maxTokens: 8192,
-    jsonMode: true,
+    operation: async () => {
+      const text = await modelClient({
+        model,
+        apiKeys,
+        systemPrompt: 'You are the Skill RSI analyst. Return only valid JSON matching AnalystRecommendation.',
+        messages: [{
+          role: 'user',
+          content: buildAnalystPrompt({
+            runId,
+            goal,
+            state,
+            history,
+            ontology,
+            parameterization,
+            experimentPlan,
+            candidateA,
+            candidateB,
+            challenger,
+            candidateDuel,
+            challenge,
+            policy,
+          }),
+        }],
+        maxTokens: 8192,
+        jsonMode: true,
+      });
+      try {
+        return normalizeAnalystRecommendation(parseJson(text), {
+          runId,
+          policy,
+          candidateA,
+          candidateB,
+          challenger,
+        });
+      } catch (error) {
+        throw createModelAttemptError(`Analyst returned invalid recommendation JSON: ${error.message}`, {
+          failureKind: 'invalid_json',
+          rawResponse: text,
+        });
+      }
+    },
   });
-
-  const analyst = normalizeAnalystRecommendation(parseJson(text), {
-    runId,
-    policy,
-    candidateA,
-    candidateB,
-    challenger,
-  });
+  if (!response.ok) {
+    const summary = summarizeModelAttempts(response.attempts);
+    const error = new Error(`Analyst generation failed after ${summary.attemptCount} attempts: ${summary.lastError?.message || 'model output was invalid'}`);
+    error.attempts = summary.attempts;
+    error.failureKind = summary.failureKind;
+    error.lastError = summary.lastError;
+    throw error;
+  }
+  const analyst = response.value;
   return mergePolicyAndAnalyst({ policy, analyst });
 }
 

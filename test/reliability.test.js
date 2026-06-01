@@ -140,7 +140,7 @@ test('runProject records failed runs in the timeline before rethrowing', async (
   assert.match(timeline, /run.failed/);
   assert.match(timeline, /Injected model failure/);
   assert.equal(run.status, 'failed');
-  assert.equal(run.error.message, 'Injected model failure');
+  assert.match(run.error.message, /ontology artifact generation failed after 3 attempts: Injected model failure/);
 });
 
 test('runProject retries malformed creator artifacts with candidate-specific diagnostics', async () => {
@@ -207,6 +207,7 @@ test('runProject retries malformed creator artifacts with candidate-specific dia
   assert.match(timeline, /creator_contract.retrying/);
   assert.match(timeline, /creator_contract.recovered/);
   assert.match(failure.message, /SKILL\.md/);
+  assert.ok(failure.rawArtifact);
   assert.ok(result.history.failedStrategyLog.some(item => (
     item.source === 'creator_contract'
     && item.candidateId === 'candidate-b'
@@ -216,6 +217,45 @@ test('runProject retries malformed creator artifacts with candidate-specific dia
     await fs.readFile(path.join(projectDir, 'history', 'current-summary.md'), 'utf8'),
     /Failed or recovered strategies:/,
   );
+});
+
+test('runProject records sanitized client diagnostics in run records', async () => {
+  const cwd = await fs.mkdtemp(path.join(os.tmpdir(), 'skill-rsi-client-diagnostics-'));
+  const result = await runProject({
+    cwd,
+    projectName: 'Client Diagnostics Project',
+    goal: 'Test client diagnostic metadata.',
+    loops: 1,
+    mode: 'mock',
+    clientDiagnostics: {
+      openai: {
+        serverKeyConfigured: false,
+        uiKeyConfigured: true,
+        effectiveKeyConfigured: true,
+        keySource: 'ui',
+        apiKey: 'sk-test-secret-value',
+      },
+    },
+  });
+
+  const runId = result.completedRuns[0].runId;
+  const run = JSON.parse(await fs.readFile(path.join(
+    cwd,
+    '.skill-rsi',
+    'projects',
+    'client-diagnostics-project',
+    'runs',
+    runId,
+    'run.json',
+  ), 'utf8'));
+
+  assert.deepEqual(run.diagnostics.client.openai, {
+    serverKeyConfigured: false,
+    uiKeyConfigured: true,
+    effectiveKeyConfigured: true,
+    keySource: 'ui',
+  });
+  assert.ok(!JSON.stringify(run).includes('sk-test-secret-value'));
 });
 
 function fakeOntology() {

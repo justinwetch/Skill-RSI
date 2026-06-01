@@ -798,32 +798,43 @@ function CreateView({
 }) {
   const existing = draft.mode === 'existing';
   const hasBaseline = Boolean(draft.serverBaseline || draft.baselineZip || draft.baselineFiles?.length || draft.baselineMarkdown);
+  const [visualRunnerNotice, setVisualRunnerNotice] = useState('');
   const setMode = mode => setDraft(d => mode === 'scratch'
     ? ({ ...d, mode, serverDraftId: null, serverBaseline: null, baselineZip: null, baselineFiles: [], baselineMarkdown: null })
     : ({ ...d, mode }));
-  const visualRunner = capabilities?.visualRunner || null;
-  const visualUnavailable = visualRunner && !visualRunner.available;
   const serverKeyConfigured = Boolean(capabilities?.openai?.keyConfigured);
   useEffect(() => {
     if (!capabilities) fetchCapabilities().then(setCapabilities).catch(() => {});
   }, [capabilities, setCapabilities]);
   async function setOutputType(outputType) {
+    if (outputType !== 'code_visual') {
+      setVisualRunnerNotice('');
+      setDraft(d => ({ ...d, outputType }));
+      return;
+    }
+
     if (outputType === 'code_visual') {
       try {
         const nextCapabilities = await fetchCapabilities();
         setCapabilities(nextCapabilities);
-        if (!nextCapabilities.visualRunner?.available) return;
+        if (!nextCapabilities.visualRunner?.available) {
+          setVisualRunnerNotice(formatVisualRunnerNotice(nextCapabilities.visualRunner));
+          return;
+        }
       } catch {
-        setCapabilities({
+        const fallbackCapabilities = {
           visualRunner: {
             available: false,
             error: 'Could not check local visual runner.',
-            installHint: 'Start or restart the Skill RSI server, then try again.',
+            installHint: 'Start or restart the Skill RSI server, then try Code + visuals again.',
           },
-        });
+        };
+        setCapabilities(fallbackCapabilities);
+        setVisualRunnerNotice(formatVisualRunnerNotice(fallbackCapabilities.visualRunner));
         return;
       }
     }
+    setVisualRunnerNotice('');
     setDraft(d => ({ ...d, outputType }));
   }
   const outputTypes = [
@@ -900,10 +911,9 @@ function CreateView({
             );
           })}
         </div>
-        {visualUnavailable && (
+        {visualRunnerNotice && (
           <p className="field-hint warning-text">
-            Code + visuals needs a local browser renderer. {visualRunner.error ? `${visualRunner.error} ` : ''}
-            {visualRunner.installHint || 'Run npx playwright install chromium, or install Google Chrome/Chromium locally.'}
+            {visualRunnerNotice}
           </p>
         )}
         <p className="field-hint">This controls the artifact Skill RSI expects candidate skills to produce.</p>
@@ -1384,6 +1394,11 @@ function formatTaskContract(taskContract) {
     default:
       return 'text output';
   }
+}
+
+function formatVisualRunnerNotice(visualRunner = {}) {
+  const detail = visualRunner.error ? ` Current check: ${visualRunner.error}` : '';
+  return `Code + visuals needs a local browser so Skill RSI can render candidates before judging them. Ask your agent to install Playwright Chromium for this repo, or install Chrome/Chromium locally, then try Code + visuals again.${detail}`;
 }
 
 /* ---------------- running loop ---------------- */

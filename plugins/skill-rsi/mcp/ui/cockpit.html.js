@@ -463,7 +463,7 @@ export function renderCockpitHtml(state) {
         '<button class="secondary" onclick="recordContext()">Record visible context</button>' +
         '</div>' +
         (state.contextRunAction?.disabledReason ? '<p class="muted">' + esc(state.contextRunAction.disabledReason) + '</p>' : '<p class="muted">This starts one model-backed loop and consumes the queued context as the next run premise.</p>') +
-        '<h3>Schedule command</h3><pre>' + esc(automation.commands?.cron || '') + '</pre><h3>Codex hook command</h3><pre>' + esc(automation.commands?.codexHook || '') + '</pre>';
+        '<h3>Schedule command</h3><pre>' + esc(automation.commands?.cron || '') + '</pre><h3>Schedule command (PowerShell)</h3><pre>' + esc(automation.commands?.powershell?.cron || '') + '</pre><h3>Codex hook command</h3><pre>' + esc(automation.commands?.codexHook || '') + '</pre><h3>Codex hook command (PowerShell)</h3><pre>' + esc(automation.commands?.powershell?.codexHook || '') + '</pre>';
     }
     function hookContextDetailHtml(inbox) {
       const latest = inbox.latest || null;

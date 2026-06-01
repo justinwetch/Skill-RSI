@@ -310,14 +310,20 @@ export async function materializeCreatorArtifact({ artifact, candidateDir }) {
 }
 
 function validateRelativePackagePath(filePath) {
-  if (typeof filePath !== 'string' || !filePath.trim()) {
+  const rawPath = typeof filePath === 'string' ? filePath.trim() : '';
+  if (!rawPath) {
     throw new Error('Creator file path must be a non-empty string');
   }
-  if (path.isAbsolute(filePath)) {
+  if (
+    path.isAbsolute(rawPath)
+    || /^[A-Za-z]:/.test(rawPath)
+    || rawPath.startsWith('\\\\')
+    || rawPath.startsWith('//')
+  ) {
     throw new Error(`Creator file path must be relative: ${filePath}`);
   }
-  const normalized = path.normalize(filePath);
-  if (normalized === '..' || normalized.startsWith(`..${path.sep}`)) {
+  const normalized = path.posix.normalize(rawPath.replaceAll('\\', '/'));
+  if (normalized === '.' || normalized === '..' || normalized.startsWith('../')) {
     throw new Error(`Creator file path cannot leave the skill package: ${filePath}`);
   }
   return normalized;

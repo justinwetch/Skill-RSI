@@ -799,7 +799,7 @@ async function runStubLoop({
   });
 
   const completedRunRecord = {
-    ...runRecord,
+    ...withoutCurrentError(runRecord),
     status: 'completed',
     completedAt: new Date().toISOString(),
     competitionMode: experimentPlan.competitionMode,
@@ -1573,7 +1573,7 @@ async function runAgenticLoop({
   });
 
   const completedRunRecord = {
-    ...runRecord,
+    ...withoutCurrentError(runRecord),
     status: 'completed',
     completedAt: new Date().toISOString(),
     competitionMode: experimentPlan.competitionMode,
@@ -2075,7 +2075,7 @@ async function runMockLoop({
   });
 
   const completedRunRecord = {
-    ...runRecord,
+    ...withoutCurrentError(runRecord),
     status: 'completed',
     completedAt: new Date().toISOString(),
     competitionMode: experimentPlan.competitionMode,
@@ -2192,7 +2192,7 @@ async function completeReviewBlockedRun({
   }, budgetEstimate));
 
   const completedRunRecord = {
-    ...runRecord,
+    ...withoutCurrentError(runRecord),
     status: 'completed',
     completedAt: new Date().toISOString(),
     competitionMode: experimentPlan.competitionMode,
@@ -2566,6 +2566,11 @@ async function markRunFailed({ runPaths, runId, runNumber, mode, error }) {
       failureKind: error.failureKind || error.provenance?.failureReason || error.lastError?.failureKind || null,
     },
   });
+}
+
+function withoutCurrentError(runRecord) {
+  const { error: _error, ...rest } = runRecord || {};
+  return rest;
 }
 
 function truncateText(value, maxChars) {

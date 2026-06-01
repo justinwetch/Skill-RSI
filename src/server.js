@@ -316,7 +316,7 @@ function writeJson(response, statusCode, value) {
 async function serveStatic(response, requestPath) {
   const relativePath = requestPath === '/' ? 'index.html' : requestPath.replace(/^\/+/, '');
   const candidatePath = path.resolve(appDist, relativePath);
-  if (!candidatePath.startsWith(appDist)) throw notFound();
+  if (!isPathInside(candidatePath, appDist)) throw notFound();
 
   try {
     const stat = await fs.stat(candidatePath);
@@ -339,7 +339,7 @@ async function serveArtifact(response, requestedPath) {
     fs.realpath(artifactPath),
     fs.realpath(artifactRoot),
   ]);
-  if (!realArtifactPath.startsWith(`${realArtifactRoot}${path.sep}`)) {
+  if (!isPathInside(realArtifactPath, realArtifactRoot)) {
     throw badRequest('artifact path is outside Skill RSI artifacts');
   }
   const allowed = new Set(['.png', '.jpg', '.jpeg', '.webp', '.html', '.json']);
@@ -348,6 +348,11 @@ async function serveArtifact(response, requestedPath) {
   }
   response.writeHead(200, { 'Content-Type': contentType(realArtifactPath) });
   response.end(await fs.readFile(realArtifactPath));
+}
+
+function isPathInside(candidatePath, rootPath) {
+  const relative = path.relative(path.resolve(rootPath), path.resolve(candidatePath));
+  return relative === '' || (!relative.startsWith('..') && !path.isAbsolute(relative));
 }
 
 function contentType(filePath) {

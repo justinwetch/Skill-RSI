@@ -642,6 +642,84 @@ test('agentic mode runs real agent contracts with an injected model client', asy
   assert.equal(plan.arms.candidateB.strategyName, 'Embedded boundary policy');
 });
 
+test('agentic resumed completion clears stale top-level run error', async () => {
+  const cwd = await fs.mkdtemp(path.join(os.tmpdir(), 'skill-rsi-agentic-resume-error-'));
+  let ontologyFailures = 3;
+
+  const modelClient = async request => {
+    const prompt = request.messages[0].content;
+    if (prompt.includes('Ontology Agent')) {
+      if (ontologyFailures > 0) {
+        ontologyFailures -= 1;
+        throw new TypeError('fetch failed');
+      }
+      return JSON.stringify(fakeOntology());
+    }
+    if (prompt.includes('Parameterization Agent')) return JSON.stringify(fakeParameterization());
+    if (prompt.includes('Experiment Planner')) return JSON.stringify(fakeExperimentPlan());
+    if (prompt.includes('Assigned experiment arm: candidateB')) return JSON.stringify(fakeCreator('candidate-b', 'candidateB', 'Embedded boundary policy'));
+    if (prompt.includes('Assigned experiment arm: candidateA')) return JSON.stringify(fakeCreator('candidate-a', 'candidateA', 'Description-only tightening'));
+    if (prompt.includes('Interpret this Skill RSI run')) return JSON.stringify({
+      runId: 'analyst',
+      decision: 'promote',
+      recommendedChampionCandidateId: 'candidate-a',
+      confidence: 'medium',
+      reasoning: 'Injected analyst accepts the resumed winner.',
+      observations: ['Resumed run completed.'],
+      nextRoundGuidance: {
+        vary: 'next parameter',
+        preserve: 'candidate-a strategy',
+        investigate: 'resume durability',
+      },
+    });
+    if (prompt.includes('adversarial reviewer')) return JSON.stringify({ blockingIssues: [], recommendedEdits: [], nonIssues: ['stub review'], overfittingRisk: 'low' });
+    throw new Error(`Unexpected prompt: ${prompt.slice(0, 80)}`);
+  };
+
+  await assert.rejects(
+    runProject({
+      cwd,
+      projectName: 'UX Design Resume Error',
+      goal: 'Help agents design better UX.',
+      loops: 1,
+      mode: 'agentic',
+      evalMode: 'mock',
+      generationModel: 'fake-gen-model',
+      judgeModel: 'fake-judge-model',
+      agentModel: 'fake-agent-model',
+      modelClient,
+    }),
+    /ontology artifact generation failed after 3 attempts: fetch failed/,
+  );
+
+  const result = await runProject({
+    cwd,
+    projectName: 'UX Design Resume Error',
+    goal: 'Help agents design better UX.',
+    loops: 1,
+    mode: 'agentic',
+    evalMode: 'mock',
+    generationModel: 'fake-gen-model',
+    judgeModel: 'fake-judge-model',
+    agentModel: 'fake-agent-model',
+    modelClient,
+  });
+
+  assert.equal(result.completedRuns.length, 1);
+  assert.equal(result.completedRuns[0].status, 'completed');
+  assert.equal(result.completedRuns[0].error, undefined);
+
+  const runId = result.completedRuns[0].runId;
+  const persistedRun = JSON.parse(await fs.readFile(path.join(result.paths.runsDir, runId, 'run.json'), 'utf8'));
+  assert.equal(persistedRun.status, 'completed');
+  assert.equal(persistedRun.error, undefined);
+
+  const timeline = await fs.readFile(path.join(result.paths.runsDir, runId, 'timeline.jsonl'), 'utf8');
+  assert.match(timeline, /run\.failed/);
+  assert.match(timeline, /run\.resumed/);
+  assert.match(timeline, /run\.completed/);
+});
+
 test('agentic real eval fails when prompt authoring remains contract-invalid', async () => {
   const cwd = await fs.mkdtemp(path.join(os.tmpdir(), 'skill-rsi-agentic-prompt-fail-'));
   await createProjectForUi({

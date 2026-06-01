@@ -41,6 +41,12 @@ Set the project name explicitly. The Codex adapter fails closed when `SKILL_RSI_
 }
 ```
 
+PowerShell command variant for Windows hook configuration:
+
+```text
+$env:SKILL_RSI_PROJECT='ux-design'; node 'C:\path\to\Skill RSI\scripts\codex-skill-rsi-hook.mjs'
+```
+
 The Codex adapter reads the Codex hook payload from stdin, adds changed files from the payload or local git diff when available, sanitizes it, and writes one JSON file to:
 
 ```text
@@ -56,6 +62,13 @@ Use `hook-record` when testing without Codex:
 ```bash
 printf '{"hook_event_name":"Stop","changedFiles":["SKILL.md"],"transcript_path":"/tmp/codex.jsonl"}' \
   | node src/cli.js hook-record ux-design --event -
+```
+
+PowerShell:
+
+```powershell
+'{"hook_event_name":"Stop","changedFiles":["SKILL.md"],"transcript_path":"C:/Temp/codex.jsonl"}' |
+  node src/cli.js hook-record ux-design --event -
 ```
 
 The normalized event keeps `transcriptPath` only as audit context and stores `rawPayloadSha256` instead of the raw payload.

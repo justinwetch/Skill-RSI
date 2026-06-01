@@ -349,6 +349,9 @@ test('creator artifacts can be materialized into candidate skill packages', asyn
       files: [{
         path: 'SKILL.md',
         content: '---\nname: ux-design\n---\n\n# UX Design\n',
+      }, {
+        path: 'references\\notes.md',
+        content: '# Notes\n',
       }],
       rationale: 'Adds a validation rubric.',
       expectedAdvantages: ['more reliable validation'],
@@ -361,6 +364,10 @@ test('creator artifacts can be materialized into candidate skill packages', asyn
   assert.equal(
     await fs.readFile(path.join(candidate.skillPath, 'SKILL.md'), 'utf8'),
     '---\nname: ux-design\n---\n\n# UX Design\n',
+  );
+  assert.equal(
+    await fs.readFile(path.join(candidate.skillPath, 'references', 'notes.md'), 'utf8'),
+    '# Notes\n',
   );
   await assert.rejects(
     materializeCreatorArtifact({
@@ -382,6 +389,48 @@ test('creator artifacts can be materialized into candidate skill packages', asyn
       },
     }),
     /cannot leave/,
+  );
+  await assert.rejects(
+    materializeCreatorArtifact({
+      candidateDir: path.join(cwd, 'bad-windows-absolute'),
+      artifact: {
+        runId: 'bad-windows',
+        candidateId: 'candidate-c',
+        experimentArm: 'candidateA',
+        strategy: 'Bad Windows path',
+        changedParameterIds: ['p01'],
+        files: [
+          { path: 'SKILL.md', content: '---\nname: bad\n---\n' },
+          { path: 'C:\\outside\\SKILL.md', content: 'nope' },
+        ],
+        rationale: 'Invalid package.',
+        expectedAdvantages: [],
+        expectedRisks: [],
+        selfCritique: [],
+      },
+    }),
+    /must be relative/,
+  );
+  await assert.rejects(
+    materializeCreatorArtifact({
+      candidateDir: path.join(cwd, 'bad-windows-drive-relative'),
+      artifact: {
+        runId: 'bad-windows-drive-relative',
+        candidateId: 'candidate-d',
+        experimentArm: 'candidateA',
+        strategy: 'Bad Windows drive path',
+        changedParameterIds: ['p01'],
+        files: [
+          { path: 'SKILL.md', content: '---\nname: bad\n---\n' },
+          { path: 'C:outside\\SKILL.md', content: 'nope' },
+        ],
+        rationale: 'Invalid package.',
+        expectedAdvantages: [],
+        expectedRisks: [],
+        selfCritique: [],
+      },
+    }),
+    /must be relative/,
   );
 });
 

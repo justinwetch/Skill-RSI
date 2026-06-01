@@ -177,13 +177,33 @@ function uiToolResult(data, uiResource, summary = null) {
 }
 
 function safeExportPath(rootDir, filePath) {
+  if (isUnsafePackagePath(filePath)) {
+    throw new Error(`Refusing to export unsafe path: ${filePath}`);
+  }
   const destination = path.resolve(rootDir, filePath);
-  const root = path.resolve(rootDir);
-  const rootWithSep = `${root}${path.sep}`;
-  if (destination !== root && !destination.startsWith(rootWithSep)) {
+  if (!isPathInside(destination, rootDir)) {
     throw new Error(`Refusing to export unsafe path: ${filePath}`);
   }
   return destination;
+}
+
+function isPathInside(candidatePath, rootPath) {
+  const relative = path.relative(path.resolve(rootPath), path.resolve(candidatePath));
+  return relative === '' || (!relative.startsWith('..') && !path.isAbsolute(relative));
+}
+
+function isUnsafePackagePath(filePath) {
+  const text = String(filePath || '').trim();
+  const normalized = text.replaceAll('\\', '/');
+  return !text
+    || path.isAbsolute(text)
+    || /^[A-Za-z]:/.test(text)
+    || text.startsWith('\\\\')
+    || text.startsWith('//')
+    || normalized === '.'
+    || normalized === '..'
+    || normalized.startsWith('../')
+    || normalized.includes('/../');
 }
 
 async function exportSkillFiles(skill, outDir) {
@@ -1061,7 +1081,7 @@ async function safeImageDataUrl({ services, filePath }) {
       fs.realpath(path.resolve(filePath)),
       fs.realpath(artifactRoot),
     ]);
-    if (!realArtifactPath.startsWith(`${realArtifactRoot}${path.sep}`)) {
+    if (!isPathInside(realArtifactPath, realArtifactRoot)) {
       return { available: false, reason: 'outside-artifact-root' };
     }
     const stat = await fs.stat(realArtifactPath);

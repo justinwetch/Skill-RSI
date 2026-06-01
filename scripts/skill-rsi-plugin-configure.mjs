@@ -7,10 +7,10 @@ import { fileURLToPath } from 'node:url';
 export const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 export const pluginRoot = path.join(repoRoot, 'plugins', 'skill-rsi');
 export const mcpConfigPath = path.join(pluginRoot, '.mcp.json');
-export const mcpServerRelativePath = path.join('plugins', 'skill-rsi', 'mcp', 'server.mjs');
+export const mcpServerRelativePath = path.posix.join('plugins', 'skill-rsi', 'mcp', 'server.mjs');
 
-export function buildMcpConfig(root = repoRoot) {
-  const resolvedRoot = path.resolve(root);
+export function buildMcpConfig(root = repoRoot, { pathModule = path } = {}) {
+  const resolvedRoot = pathModule.resolve(root);
   return {
     mcpServers: {
       'skill-rsi': {

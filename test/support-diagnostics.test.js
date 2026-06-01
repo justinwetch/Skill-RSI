@@ -54,15 +54,31 @@ test('support diagnostics creates a sanitized portable zip bundle', async () => 
   assert.match(joined, /keep this note/);
 });
 
-test('support prompt is copy-pasteable and avoids asking for secrets', () => {
+test('support prompt is copy-pasteable from the repo root and avoids asking for secrets', () => {
   const prompt = createSupportPrompt({
-    cwd: 'C:\\Users\\justi\\Skill-RSI',
+    cwd: '/repo/Skill-RSI',
+    repoRoot: '/repo/Skill-RSI',
     projectName: 'Resume Writer',
   });
 
+  assert.match(prompt, /From the Skill RSI repo root \(\/repo\/Skill-RSI\)/);
   assert.match(prompt, /node src\/cli\.js diagnose "Resume Writer"/);
   assert.match(prompt, /justinwetch@me\.com/);
-  assert.match(prompt, /Do not paste API keys/);
+  assert.match(prompt, /may contain your run data/);
+  assert.match(prompt, /should not contain API keys/);
+  assert.match(prompt, /ask your agent to audit/);
+});
+
+test('support prompt distinguishes project workspace from repo root', () => {
+  const prompt = createSupportPrompt({
+    cwd: '/tmp/release-project',
+    repoRoot: '/repo/Skill RSI',
+    projectName: 'Resume Writer',
+  });
+
+  assert.match(prompt, /From the project\/workspace directory \(\/tmp\/release-project\)/);
+  assert.match(prompt, /Skill RSI repo root: \/repo\/Skill RSI/);
+  assert.match(prompt, /node "\/repo\/Skill RSI\/src\/cli\.js" diagnose "Resume Writer"/);
 });
 
 test('support diagnostics sanitizer redacts common key shapes', () => {

@@ -3,12 +3,14 @@ import path from 'node:path';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import { Buffer } from 'node:buffer';
+import { fileURLToPath } from 'node:url';
 import { getProjectPaths, getRunPaths } from './paths.js';
 import { readJson, ensureDir, pathExists } from './store.js';
 import { readTimeline } from './timeline.js';
 import { checkVisualRunnerAvailability } from './visual-runner.js';
 
 const execFileAsync = promisify(execFile);
+const MODULE_REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
 const SUPPORT_EMAIL = 'justinwetch@me.com';
 const DEFAULT_MAX_FILE_BYTES = 2 * 1024 * 1024;
 const DEFAULT_MAX_TOTAL_BYTES = 24 * 1024 * 1024;
@@ -28,21 +30,29 @@ const TEXT_EXTENSIONS = new Set([
   '.yml',
 ]);
 
-export function createSupportPrompt({ command = 'node src/cli.js diagnose', projectName = null, cwd = process.cwd() } = {}) {
+export function createSupportPrompt({
+  command = null,
+  projectName = null,
+  cwd = process.cwd(),
+  repoRoot = MODULE_REPO_ROOT,
+} = {}) {
   const projectArg = projectName ? ` ${quoteShellArg(projectName)}` : '';
+  const resolvedCommand = command || defaultDiagnoseCommand({ cwd, repoRoot });
+  const sameRoot = sameResolvedPath(cwd, repoRoot);
   return [
-    'Please diagnose this Skill RSI install without exposing secrets.',
+    'Use this optional command to generate a Skill RSI diagnostic zip.',
     '',
-    `From the Skill RSI repo root (${cwd}), run:`,
+    sameRoot
+      ? `From the Skill RSI repo root (${repoRoot}), run:`
+      : `From the project/workspace directory (${cwd}), run:`,
     '',
     '```bash',
-    `${command}${projectArg}`,
+    `${resolvedCommand}${projectArg}`,
     '```',
+    sameRoot ? null : `Skill RSI repo root: ${repoRoot}`,
     '',
-    'Then inspect the generated `.skill-rsi-diagnostics/*.zip` bundle, confirm it does not contain API key values, and email that zip to justinwetch@me.com with a short note describing what failed.',
-    '',
-    'Do not paste API keys, `.env` contents, or browser-local key values into chat.',
-  ].join('\n');
+    'The zip may contain your run data, but it should not contain API keys. You can ask your agent to audit what you are sending. If you are comfortable sharing it, email the zip to justinwetch@me.com with a short note describing what failed.',
+  ].filter(line => line !== null).join('\n');
 }
 
 export async function createSupportDiagnostics({
@@ -61,8 +71,10 @@ export async function createSupportDiagnostics({
   const bundleName = `skill-rsi-diagnostics-${safeProject}-${stamp}.zip`;
   const bundlePath = path.join(outDir, bundleName);
   const entries = [];
+  const repoRoot = MODULE_REPO_ROOT;
   const context = {
     cwd,
+    repoRoot,
     projectName,
     runId,
     createdAt,
@@ -82,7 +94,7 @@ export async function createSupportDiagnostics({
     addText(entryPath, `${JSON.stringify(value, null, 2)}\n`);
   };
 
-  const git = await collectGit(cwd);
+  const git = await collectGit(repoRoot);
   const npmVersion = await safeExec('npm', ['--version'], { cwd });
   const visualRunner = await safeVisualRunner();
   const serverCapabilities = await fetchServerCapabilities();
@@ -93,13 +105,14 @@ export async function createSupportDiagnostics({
   addText('README.txt', renderBundleReadme({
     createdAt,
     cwd,
+    repoRoot,
     projectName,
     requestedRunId: runId,
     projectEvidence,
     git,
     serverCapabilities,
   }));
-  addText('SUPPORT_PROMPT.md', createSupportPrompt({ projectName, cwd }));
+  addText('SUPPORT_PROMPT.md', createSupportPrompt({ projectName, cwd, repoRoot }));
   addJson('environment/runtime.json', {
     schemaVersion: 1,
     createdAt,
@@ -108,6 +121,7 @@ export async function createSupportDiagnostics({
     node: process.version,
     npm: npmVersion.ok ? npmVersion.stdout.trim() : null,
     cwd,
+    repoRoot,
     serverPort: process.env.SKILL_RSI_SERVER_PORT || '8765',
     openai: {
       serverKeyConfigured: Boolean(process.env.OPENAI_API_KEY),
@@ -121,7 +135,7 @@ export async function createSupportDiagnostics({
   addText('git/head-short.txt', git.headShort);
   addText('git/status-short.txt', git.statusShort);
   addText('git/working-tree-diff.patch', git.diff);
-  await addFileIfExists({ cwd, filePath: path.join(cwd, 'package.json'), entryPath: 'package.json', entries, context });
+  await addFileIfExists({ cwd, filePath: path.join(repoRoot, 'package.json'), entryPath: 'package.json', entries, context });
 
   for (const sourcePath of [
     'src/lib/eval-design.js',
@@ -136,7 +150,7 @@ export async function createSupportDiagnostics({
     'scripts/skill-rsi-plugin-validate.mjs',
     'plugins/skill-rsi/mcp/server.mjs',
   ]) {
-    await addFileIfExists({ cwd, filePath: path.join(cwd, sourcePath), entryPath: `source-current/${sourcePath}`, entries, context });
+    await addFileIfExists({ cwd, filePath: path.join(repoRoot, sourcePath), entryPath: `source-current/${sourcePath}`, entries, context });
   }
 
   addJson('manifest.json', {
@@ -159,17 +173,18 @@ export async function createSupportDiagnostics({
     fileCount: entries.length,
     redactionCount: context.redactionCount,
     omitted: context.omitted,
-    prompt: createSupportPrompt({ projectName, cwd }),
+    prompt: createSupportPrompt({ projectName, cwd, repoRoot }),
   };
 }
 
-function renderBundleReadme({ createdAt, cwd, projectName, requestedRunId, projectEvidence, git, serverCapabilities }) {
+function renderBundleReadme({ createdAt, cwd, repoRoot, projectName, requestedRunId, projectEvidence, git, serverCapabilities }) {
   const lines = [
     'Skill RSI support diagnostics',
     '=============================',
     '',
     `Created: ${createdAt}`,
-    `Repo: ${cwd}`,
+    `Repo: ${repoRoot}`,
+    `Project workspace: ${cwd}`,
     `Project: ${projectName || '(not specified)'}`,
     `Run: ${projectEvidence?.runId || requestedRunId || '(latest if available)'}`,
     `Branch: ${git.branch.trim() || '(unknown)'}`,
@@ -189,9 +204,19 @@ function renderBundleReadme({ createdAt, cwd, projectName, requestedRunId, proje
     '-------------------',
     serverCapabilities.ok === false ? `Unavailable: ${serverCapabilities.error}` : 'Captured from the local server.',
     '',
-    'Send this bundle to justinwetch@me.com with a short note describing the failure.',
+    'This bundle may contain run data, but it should not contain API keys. If you are comfortable sharing it, email it to justinwetch@me.com with a short note describing the failure.',
   ];
   return `${lines.join('\n')}\n`;
+}
+
+function defaultDiagnoseCommand({ cwd, repoRoot }) {
+  return sameResolvedPath(cwd, repoRoot)
+    ? 'node src/cli.js diagnose'
+    : `node ${quoteShellArg(path.join(repoRoot, 'src', 'cli.js'))} diagnose`;
+}
+
+function sameResolvedPath(a, b) {
+  return path.resolve(a) === path.resolve(b);
 }
 
 async function collectGit(cwd) {

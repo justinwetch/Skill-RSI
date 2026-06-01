@@ -16,7 +16,7 @@ The plugin includes:
 This plugin does not yet include:
 
 - Apps connector metadata.
-- Automatic hook-triggered RSI execution.
+- Automatic hook-triggered RSI execution. This is future/non-v1; v1 hooks queue context only.
 - Personal marketplace mutation.
 - Public marketplace packaging.
 

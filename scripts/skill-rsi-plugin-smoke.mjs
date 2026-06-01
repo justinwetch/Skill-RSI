@@ -4,7 +4,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 import { createSkillRsiMcpServer } from '../plugins/skill-rsi/mcp/server.mjs';
 import { validateMcpConfig } from './skill-rsi-plugin-configure.mjs';
 
@@ -63,7 +63,7 @@ await fs.access(path.resolve(mcpCwd, mcpArgs[0]));
 const cacheSimRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'skill-rsi-plugin-cache-'));
 try {
   await fs.cp(pluginRoot, cacheSimRoot, { recursive: true });
-  const cacheServer = await import(path.join(cacheSimRoot, 'mcp', 'server.mjs'));
+  const cacheServer = await import(pathToFileURL(path.join(cacheSimRoot, 'mcp', 'server.mjs')).href);
   const { server: cacheRegisteredServer } = await cacheServer.createSkillRsiMcpServer({
     services: { cwd: repoRoot },
   });

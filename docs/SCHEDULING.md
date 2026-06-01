@@ -20,6 +20,18 @@ node scripts/skill-rsi-cron-runner.mjs ux-design \
   --agent-model gpt-5.4-mini
 ```
 
+PowerShell:
+
+```powershell
+Set-Location 'C:\path\to\Skill RSI'
+node scripts/skill-rsi-cron-runner.mjs ux-design `
+  --agentic `
+  --real-eval `
+  --max-runs 20 `
+  --max-new-runs 1 `
+  --agent-model gpt-5.4-mini
+```
+
 Rules:
 
 - Always include `--max-runs`; it is the total project ceiling.
@@ -62,6 +74,14 @@ Drain queued Codex hook events without starting a loop:
 ```bash
 node src/cli.js continuous ux-design \
   --consume-hooks \
+  --max-runs 0
+```
+
+PowerShell:
+
+```powershell
+node src/cli.js continuous ux-design `
+  --consume-hooks `
   --max-runs 0
 ```
 
@@ -123,6 +143,16 @@ Unload it:
 ```bash
 launchctl unload ~/Library/LaunchAgents/com.local.skill-rsi.ux-design.plist
 ```
+
+## Windows Task Scheduler
+
+For Windows, configure Task Scheduler to run PowerShell with a bounded command:
+
+```text
+powershell.exe -NoProfile -ExecutionPolicy Bypass -Command "Set-Location 'C:\path\to\Skill RSI'; node scripts/skill-rsi-cron-runner.mjs ux-design --agentic --real-eval --max-runs 20 --max-new-runs 1 --agent-model gpt-5.4-mini"
+```
+
+Use the same ceiling rules as cron: keep `--max-runs` explicit, add `--max-new-runs 1` when each scheduled wakeup should start at most one new loop, and keep API keys in `.env` or the browser-local UI key field rather than in the scheduled command.
 
 ## Queue Lifecycle
 

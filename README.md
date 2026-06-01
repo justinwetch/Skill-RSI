@@ -164,6 +164,18 @@ npm run build:ui
 npm run server
 ```
 
+To use a non-default port:
+
+```bash
+SKILL_RSI_SERVER_PORT=8766 npm run server
+```
+
+PowerShell:
+
+```powershell
+$env:SKILL_RSI_SERVER_PORT=8766; npm run server
+```
+
 For hot-reload UI development, run these in separate terminals:
 
 ```bash
@@ -240,7 +252,7 @@ Queue hook context:
 node src/cli.js hook-record ux-design --event hook.json
 ```
 
-Codex hooks only queue context; the next manual or scheduled run consumes it. For cron or macOS LaunchAgent setup, see [docs/SCHEDULING.md](docs/SCHEDULING.md). For Codex hook setup, see [docs/CODEX_HOOKS.md](docs/CODEX_HOOKS.md).
+Codex hooks only queue context; the next manual or scheduled run consumes it. For cron, PowerShell, or macOS LaunchAgent setup, see [docs/SCHEDULING.md](docs/SCHEDULING.md). For Codex hook setup, see [docs/CODEX_HOOKS.md](docs/CODEX_HOOKS.md).
 
 ## What A Run Produces
 
@@ -338,7 +350,7 @@ node src/cli.js evaluate <project> \
 node src/cli.js decide <project> --decision annotate --note "Reviewed."
 ```
 
-`init --output code_visual` checks local screenshot runner availability before creating the project. Run `node src/cli.js doctor` for OpenAI key status, supported model names, and visual runner diagnostics. `node src/cli.js diagnose [project]` creates a sanitized support zip under `.skill-rsi-diagnostics/`; `node src/cli.js support-prompt [project]` prints a copy-paste prompt for Codex to collect that bundle without exposing API keys. Per-run model flags override project config and should be used intentionally because they make the run history less uniform.
+`init --output code_visual` checks local screenshot runner availability before creating the project. Run `node src/cli.js doctor` for OpenAI key status, supported model names, and visual runner diagnostics. `node src/cli.js diagnose [project]` optionally creates a support zip under `.skill-rsi-diagnostics/`; it may contain run data, but it should not contain API keys. `node src/cli.js support-prompt [project]` prints copy-paste instructions for Codex, including asking an agent to audit what you are sending. Per-run model flags override project config and should be used intentionally because they make the run history less uniform.
 
 ## Project Workspace
 

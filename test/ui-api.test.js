@@ -394,6 +394,10 @@ test('ui api exposes automation summary for manual, queued, locked, ceiling, and
   assert.match(manual.automation.commands.cron, /--real-eval/);
   assert.doesNotMatch(manual.automation.commands.cron, /--patience|--max-inconclusive/);
   assert.match(manual.automation.commands.codexHook, /SKILL_RSI_PROJECT=automation-manual/);
+  assert.match(manual.automation.commands.powershell.cron, /Set-Location/);
+  assert.match(manual.automation.commands.powershell.cron, /skill-rsi-cron-runner\.mjs/);
+  assert.match(manual.automation.commands.powershell.codexHook, /\$env:SKILL_RSI_PROJECT='automation-manual'/);
+  assert.match(manual.automation.commands.powershell.codexHook, /codex-skill-rsi-hook\.mjs/);
 
   await recordHookEvent({
     cwd,
@@ -491,6 +495,7 @@ test('ui api updates project model before the first iteration only', async () =>
     goal: 'Change model before running.',
   });
   assert.match(created.automation.commands.cron, /--agent-model gpt-5\.4-mini/);
+  assert.match(created.automation.commands.powershell.cron, /--agent-model 'gpt-5\.4-mini'/);
 
   const updated = await updateProjectModelForUi({
     cwd,
@@ -501,6 +506,7 @@ test('ui api updates project model before the first iteration only', async () =>
   assert.equal(updated.config.models.generation, 'gpt-5.5');
   assert.equal(updated.config.models.judge, 'gpt-5.5');
   assert.match(updated.automation.commands.cron, /--agent-model gpt-5\.5/);
+  assert.match(updated.automation.commands.powershell.cron, /--agent-model 'gpt-5\.5'/);
 
   await runProject({
     cwd,

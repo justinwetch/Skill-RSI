@@ -823,6 +823,10 @@ async function readAutomationSummary({ cwd, paths, state, config }) {
     commands: {
       cron: buildCronCommand({ cwd, projectId: paths.projectId, maxRuns: generatedMaxRuns, model }),
       codexHook: buildCodexHookCommand({ cwd, projectId: paths.projectId }),
+      powershell: {
+        cron: buildPowerShellCronCommand({ cwd, projectId: paths.projectId, maxRuns: generatedMaxRuns, model }),
+        codexHook: buildPowerShellCodexHookCommand({ cwd, projectId: paths.projectId }),
+      },
     },
   };
 }
@@ -928,10 +932,29 @@ function buildCodexHookCommand({ cwd, projectId }) {
   ].join(' ');
 }
 
+function buildPowerShellCronCommand({ cwd, projectId, maxRuns, model }) {
+  return [
+    `Set-Location ${powerShellQuote(cwd)}`,
+    `node ${powerShellQuote(path.join('scripts', 'skill-rsi-cron-runner.mjs'))} ${powerShellQuote(projectId)} --agentic --real-eval --max-runs ${String(maxRuns)} --max-new-runs 1 --agent-model ${powerShellQuote(model)}`,
+  ].join('; ');
+}
+
+function buildPowerShellCodexHookCommand({ cwd, projectId }) {
+  return [
+    `$env:SKILL_RSI_PROJECT=${powerShellQuote(projectId)}`,
+    `Set-Location ${powerShellQuote(cwd)}`,
+    `node ${powerShellQuote(path.join('scripts', 'codex-skill-rsi-hook.mjs'))}`,
+  ].join('; ');
+}
+
 function shellQuote(value) {
   const text = String(value);
   if (/^[A-Za-z0-9_./:=@+-]+$/.test(text)) return text;
   return `'${text.replaceAll("'", "'\\''")}'`;
+}
+
+function powerShellQuote(value) {
+  return `'${String(value).replaceAll("'", "''")}'`;
 }
 
 function normalizeRunPolicy(runPolicy) {
@@ -1444,23 +1467,44 @@ export async function exportChampionForUi({ cwd, projectName, outDir }) {
 
 function resolveWorkspaceExportDir(cwd, outDir) {
   const destination = path.resolve(cwd, outDir);
-  const root = path.resolve(cwd);
-  if (destination !== root && !destination.startsWith(`${root}${path.sep}`)) {
+  if (!isPathInside(destination, cwd)) {
     throw badRequest('Export path must stay inside the Skill RSI workspace');
   }
   return destination;
 }
 
 function safeExportFilePath(rootDir, filePath) {
+  if (isUnsafePackagePath(filePath)) {
+    throw badRequest(`Refusing to export unsafe file path: ${filePath}`);
+  }
   const normalized = path.normalize(String(filePath || '')).replace(/^(\.\.(\/|\\|$))+/, '');
   if (!normalized || path.isAbsolute(normalized) || normalized.startsWith('..')) {
     throw badRequest(`Refusing to export unsafe file path: ${filePath}`);
   }
   const destination = path.resolve(rootDir, normalized);
-  if (!destination.startsWith(`${rootDir}${path.sep}`)) {
+  if (!isPathInside(destination, rootDir)) {
     throw badRequest(`Refusing to export unsafe file path: ${filePath}`);
   }
   return destination;
+}
+
+function isPathInside(candidatePath, rootPath) {
+  const relative = path.relative(path.resolve(rootPath), path.resolve(candidatePath));
+  return relative === '' || (!relative.startsWith('..') && !path.isAbsolute(relative));
+}
+
+function isUnsafePackagePath(filePath) {
+  const text = String(filePath || '').trim();
+  const normalized = text.replaceAll('\\', '/');
+  return !text
+    || path.isAbsolute(text)
+    || /^[A-Za-z]:/.test(text)
+    || text.startsWith('\\\\')
+    || text.startsWith('//')
+    || normalized === '.'
+    || normalized === '..'
+    || normalized.startsWith('../')
+    || normalized.includes('/../');
 }
 
 export async function recordHumanDecision({

@@ -151,12 +151,33 @@ function printJsonOrHuman(value, options, humanRenderer) {
 }
 
 function safeExportPath(rootDir, filePath) {
+  if (isUnsafePackagePath(filePath)) {
+    throw new Error(`Refusing to export unsafe path: ${filePath}`);
+  }
   const destination = path.resolve(rootDir, filePath);
-  const rootWithSep = `${path.resolve(rootDir)}${path.sep}`;
-  if (destination !== path.resolve(rootDir) && !destination.startsWith(rootWithSep)) {
+  if (!isPathInside(destination, rootDir)) {
     throw new Error(`Refusing to export unsafe path: ${filePath}`);
   }
   return destination;
+}
+
+function isPathInside(candidatePath, rootPath) {
+  const relative = path.relative(path.resolve(rootPath), path.resolve(candidatePath));
+  return relative === '' || (!relative.startsWith('..') && !path.isAbsolute(relative));
+}
+
+function isUnsafePackagePath(filePath) {
+  const text = String(filePath || '').trim();
+  const normalized = text.replaceAll('\\', '/');
+  return !text
+    || path.isAbsolute(text)
+    || /^[A-Za-z]:/.test(text)
+    || text.startsWith('\\\\')
+    || text.startsWith('//')
+    || normalized === '.'
+    || normalized === '..'
+    || normalized.startsWith('../')
+    || normalized.includes('/../');
 }
 
 function renderInitSummary(summary) {
@@ -260,7 +281,8 @@ async function main() {
       `Files: ${diagnostics.fileCount}`,
       `Redactions: ${diagnostics.redactionCount}`,
       diagnostics.omitted.length ? `Omitted: ${diagnostics.omitted.length} file(s) due to size or limits` : null,
-      `Email this zip to ${diagnostics.supportEmail} with a short note describing what failed.`,
+      'This zip may contain run data, but it should not contain API keys.',
+      `If you are comfortable sharing it, email it to ${diagnostics.supportEmail} with a short note describing what failed.`,
       '',
       'Copy-paste support prompt:',
       diagnostics.prompt,

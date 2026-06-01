@@ -10,6 +10,7 @@ import {
   buildMcpConfig,
   validateMcpConfig,
 } from '../scripts/skill-rsi-plugin-configure.mjs';
+import { resolvePythonCommand } from '../scripts/skill-rsi-plugin-validate.mjs';
 import {
   buildEvidenceState,
   buildCockpitState,
@@ -32,7 +33,13 @@ test('Skill RSI plugin validates and registers expected MCP tools', async () => 
     `${JSON.stringify(buildMcpConfig(repoRoot), null, 2)}\n`,
   );
   try {
-    const validation = await execFileAsync('python3', [pluginValidator, tempPluginRoot], { cwd: repoRoot });
+    const python = resolvePythonCommand();
+    assert.ok(python, 'Python is required to run the Codex plugin validator');
+    const validation = await execFileAsync(
+      python.command,
+      [...python.args, pluginValidator, tempPluginRoot],
+      { cwd: repoRoot },
+    );
     assert.match(validation.stdout, /Plugin validation passed/);
   } finally {
     await fs.rm(tempPluginRoot, { recursive: true, force: true });
@@ -68,6 +75,13 @@ test('plugin MCP config validation accepts current root and rejects stale local 
   const valid = validateMcpConfig(buildMcpConfig(repoRoot), repoRoot);
   assert.equal(valid.ok, true);
   assert.deepEqual(valid.issues, []);
+
+  const windowsRoot = 'C:\\Users\\justi\\Skill-RSI';
+  const portable = buildMcpConfig(windowsRoot, { pathModule: path.win32 }).mcpServers['skill-rsi'];
+  assert.equal(portable.args[0], 'plugins/skill-rsi/mcp/server.mjs');
+  assert.doesNotMatch(portable.args[0], /\\/);
+  assert.equal(portable.cwd, 'C:\\Users\\justi\\Skill-RSI');
+  assert.equal(portable.env.SKILL_RSI_ROOT, 'C:\\Users\\justi\\Skill-RSI');
 
   const stale = buildMcpConfig('/tmp/not-this-repo');
   const invalid = validateMcpConfig(stale, repoRoot);

@@ -1325,11 +1325,15 @@ function AutomationPanel({ automation }) {
             <div className="automation-setup-title"><Clock size={15} /> On a schedule</div>
             <p>Install this in cron or a LaunchAgent to wake Skill RSI on your schedule. The cron runner consumes queued Codex context by default.</p>
             <CommandBlock command={automation?.commands?.cron || ''} />
+            <p>PowerShell:</p>
+            <CommandBlock command={automation?.commands?.powershell?.cron || ''} />
           </div>
           <div className="automation-setup-block">
             <div className="automation-setup-title"><Terminal size={15} /> From Codex</div>
             <p>Add this to a Codex Stop hook. It records context only; it never starts RSI or spends model budget.</p>
             <CommandBlock command={automation?.commands?.codexHook || ''} />
+            <p>PowerShell:</p>
+            <CommandBlock command={automation?.commands?.powershell?.codexHook || ''} />
           </div>
         </div>
       </details>

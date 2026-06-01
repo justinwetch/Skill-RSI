@@ -570,6 +570,49 @@ test('real creator contract normalizes common SKILL.md file aliases', async () =
   assert.match(result.artifact.files[0].content, /description:/);
 });
 
+test('real creator contract parses JSON with fenced examples inside SKILL.md content', async () => {
+  const cwd = await fs.mkdtemp(path.join(os.tmpdir(), 'skill-rsi-creator-nested-fence-'));
+  await initProject({ cwd, projectName: 'Screenplay Writing', goal: 'Help agents write screenplay scenes.' });
+
+  const result = await runAgentContract({
+    cwd,
+    projectName: 'screenplay-writing',
+    agentName: 'creator',
+    runId: 'creator-nested-fence',
+    mode: 'real',
+    model: 'fake-agent-model',
+    experimentArm: 'candidateA',
+    modelClient: async () => JSON.stringify({
+      strategy: 'Screenplay examples',
+      changedParameterIds: ['p07'],
+      files: [{
+        path: 'SKILL.md',
+        content: [
+          '---',
+          'name: screenplay-writing',
+          'description: Use when writing screenplay scenes.',
+          '---',
+          '',
+          '# Screenplay Writing',
+          '',
+          '```text',
+          'MONTAGE - TRAINING',
+          '',
+          '-- She sprints stairs at dawn.',
+          '',
+          'END MONTAGE',
+          '```',
+        ].join('\n'),
+      }],
+      expectedAdvantages: ['clear examples'],
+      expectedRisks: ['example overfit'],
+    }),
+  });
+
+  assert.equal(result.artifact.files[0].path, 'SKILL.md');
+  assert.match(result.artifact.files[0].content, /MONTAGE - TRAINING/);
+});
+
 test('real creator contract strips invented AI authorship metadata', async () => {
   const cwd = await fs.mkdtemp(path.join(os.tmpdir(), 'skill-rsi-creator-ai-author-'));
   await initProject({ cwd, projectName: 'Frontend Design', goal: 'Help agents design better frontend UI.' });

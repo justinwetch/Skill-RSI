@@ -496,8 +496,16 @@ function chooseColdStartBootstrapWinner(evalRun) {
 }
 
 function parseJson(text) {
-  const match = String(text || '').match(/```(?:json)?\s*([\s\S]*?)```/);
-  return JSON.parse((match ? match[1] : text).trim());
+  const raw = String(text || '').trim();
+  try {
+    return JSON.parse(raw);
+  } catch (error) {
+    const fullFence = raw.match(/^```(?:json)?\s*([\s\S]*?)```\s*$/i);
+    const jsonFence = raw.match(/```json\s*([\s\S]*?)```/i);
+    const fenced = fullFence || jsonFence;
+    if (!fenced) throw error;
+    return JSON.parse(fenced[1].trim());
+  }
 }
 
 function normalizeArray(value, fallback = []) {

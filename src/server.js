@@ -34,7 +34,7 @@ import {
 import { checkVisualRunnerAvailability } from './lib/visual-runner.js';
 
 const DEFAULT_PORT = 8765;
-const DEFAULT_MODEL = 'gpt-5.4-mini';
+const DEFAULT_MODEL = 'gpt-5.5';
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const repoRoot = path.resolve(__dirname, '..');
 const appDist = path.join(repoRoot, 'ui', 'dist');

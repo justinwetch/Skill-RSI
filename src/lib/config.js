@@ -51,9 +51,9 @@ export const DEFAULT_PROJECT_CONFIG = {
     mode: 'warn_and_revise',
   },
   models: {
-    agent: 'gpt-5.4-mini',       // ontology, deconstructor, planner, creator, reviewer, analyst
-    generation: 'gpt-5.4-mini',  // runs candidate skills to produce eval outputs
-    judge: 'gpt-5.4-mini',       // scores eval outputs
+    agent: 'gpt-5.5',       // ontology, deconstructor, planner, creator, reviewer, analyst
+    generation: 'gpt-5.5',  // runs candidate skills to produce eval outputs
+    judge: 'gpt-5.5',       // scores eval outputs
     agentMaxTokens: 8192,
     creatorMaxTokens: 12000,
     generationMaxTokens: 8192,

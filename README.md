@@ -125,7 +125,7 @@ Stub mode runs without API calls:
 node src/cli.js init my-skill \
   --goal "Help agents write clear technical documentation." \
   --output text \
-  --model gpt-5.4-mini \
+  --model gpt-5.5 \
   --target-iterations 3
 node src/cli.js run my-skill --stub --loops 3
 ```
@@ -187,12 +187,12 @@ The UI supports:
 
 - creating projects from scratch or from an uploaded skill folder, single `SKILL.md`, or zip
 - output artifact selection: Text, Code, or Code + visuals
-- OpenAI model selection at project creation: `gpt-5.4-mini` or `gpt-5.5`
+- OpenAI model selection: `gpt-5.5` by default, or `gpt-5.4-mini` for lower-cost iteration
 - browser-local OpenAI API key entry, with `.env` as server fallback
 - live loop progress, next-loop plan, detailed eval data, champion/challenger skill viewing, and visual screenshots when available
 - automation status for manual runs, cron/LaunchAgent setup commands, and queued Codex hook context
 
-Model choice is fixed at project creation for cleaner run history. API keys are not stored in project config; the UI stores pasted keys locally in the browser.
+Model choice can be changed between runs; each run records the models it used. API keys are not stored in project config; the UI stores pasted keys locally in the browser.
 
 ## Codex Plugin
 
@@ -245,7 +245,7 @@ node src/cli.js run ux-design --agentic --real-eval --loops 1
 Scheduled or continuous:
 
 ```bash
-node scripts/skill-rsi-cron-runner.mjs ux-design --agentic --real-eval --max-runs 20 --max-new-runs 1 --agent-model gpt-5.4-mini
+node scripts/skill-rsi-cron-runner.mjs ux-design --agentic --real-eval --max-runs 20 --max-new-runs 1 --agent-model gpt-5.5
 ```
 
 Queue hook context:
@@ -303,7 +303,7 @@ After a promotion, `champion/skill/` is updated and `history/current-summary.md`
 ```bash
 # Project management
 node src/cli.js doctor
-node src/cli.js init <name> --goal "..." --output text|code|code_visual --model gpt-5.4-mini --target-iterations 3
+node src/cli.js init <name> --goal "..." --output text|code|code_visual --model gpt-5.5 --target-iterations 3
 node src/cli.js init <name> --goal "..." --baseline ./path/to/skill-or.zip
 node src/cli.js projects
 node src/cli.js status <project>
@@ -337,7 +337,7 @@ node src/cli.js evaluate <project> \
   --a ./skill-a --b ./skill-b \
   --prompts prompts.json --criteria criteria.json \
   --output text \
-  --gen-model gpt-5.4-mini --judge-model gpt-5.4-mini \
+  --gen-model gpt-5.5 --judge-model gpt-5.5 \
   --out result.json
 
 node src/cli.js evaluate <project> \
@@ -345,7 +345,7 @@ node src/cli.js evaluate <project> \
   --prompts prompts.json --criteria criteria.json \
   --output code_visual \
   --visual-artifacts-dir ./visual-artifacts \
-  --gen-model gpt-5.4-mini --judge-model gpt-5.4-mini \
+  --gen-model gpt-5.5 --judge-model gpt-5.5 \
   --out result.json
 
 # Annotation, not required promotion
@@ -383,9 +383,9 @@ Current UI-created model config:
 ```json
 {
   "models": {
-    "agent": "gpt-5.4-mini",
-    "generation": "gpt-5.4-mini",
-    "judge": "gpt-5.4-mini"
+    "agent": "gpt-5.5",
+    "generation": "gpt-5.5",
+    "judge": "gpt-5.5"
   }
 }
 ```

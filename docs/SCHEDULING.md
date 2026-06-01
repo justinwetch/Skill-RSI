@@ -17,7 +17,7 @@ node scripts/skill-rsi-cron-runner.mjs ux-design \
   --real-eval \
   --max-runs 20 \
   --max-new-runs 1 \
-  --agent-model gpt-5.4-mini
+  --agent-model gpt-5.5
 ```
 
 PowerShell:
@@ -29,7 +29,7 @@ node scripts/skill-rsi-cron-runner.mjs ux-design `
   --real-eval `
   --max-runs 20 `
   --max-new-runs 1 `
-  --agent-model gpt-5.4-mini
+  --agent-model gpt-5.5
 ```
 
 Rules:
@@ -56,7 +56,7 @@ Advanced stop flags exist for CLI-only operator experiments, but they are not th
 Run once per day at 2:15 AM, with one new loop per tick:
 
 ```cron
-15 2 * * * cd /absolute/path/to/Skill\ RSI && /usr/bin/env node scripts/skill-rsi-cron-runner.mjs ux-design --agentic --real-eval --max-runs 20 --max-new-runs 1 --agent-model gpt-5.4-mini >> .skill-rsi/cron.log 2>&1
+15 2 * * * cd /absolute/path/to/Skill\ RSI && /usr/bin/env node scripts/skill-rsi-cron-runner.mjs ux-design --agentic --real-eval --max-runs 20 --max-new-runs 1 --agent-model gpt-5.5 >> .skill-rsi/cron.log 2>&1
 ```
 
 Run batch RSI progress instead by omitting `--max-new-runs`:
@@ -66,7 +66,7 @@ node scripts/skill-rsi-cron-runner.mjs ux-design \
   --agentic \
   --real-eval \
   --max-runs 20 \
-  --agent-model gpt-5.4-mini
+  --agent-model gpt-5.5
 ```
 
 Drain queued Codex hook events without starting a loop:
@@ -113,7 +113,7 @@ Create `~/Library/LaunchAgents/com.local.skill-rsi.ux-design.plist`:
     <string>--max-new-runs</string>
     <string>1</string>
     <string>--agent-model</string>
-    <string>gpt-5.4-mini</string>
+    <string>gpt-5.5</string>
   </array>
 
   <key>StartCalendarInterval</key>
@@ -149,7 +149,7 @@ launchctl unload ~/Library/LaunchAgents/com.local.skill-rsi.ux-design.plist
 For Windows, configure Task Scheduler to run PowerShell with a bounded command:
 
 ```text
-powershell.exe -NoProfile -ExecutionPolicy Bypass -Command "Set-Location 'C:\path\to\Skill RSI'; node scripts/skill-rsi-cron-runner.mjs ux-design --agentic --real-eval --max-runs 20 --max-new-runs 1 --agent-model gpt-5.4-mini"
+powershell.exe -NoProfile -ExecutionPolicy Bypass -Command "Set-Location 'C:\path\to\Skill RSI'; node scripts/skill-rsi-cron-runner.mjs ux-design --agentic --real-eval --max-runs 20 --max-new-runs 1 --agent-model gpt-5.5"
 ```
 
 Use the same ceiling rules as cron: keep `--max-runs` explicit, add `--max-new-runs 1` when each scheduled wakeup should start at most one new loop, and keep API keys in `.env` or the browser-local UI key field rather than in the scheduled command.

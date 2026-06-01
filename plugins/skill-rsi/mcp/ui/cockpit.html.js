@@ -232,7 +232,7 @@ export function renderCockpitHtml(state) {
       ).join('') + '</div>';
     }
     function createFormHtml() {
-      const models = state.supportedModels || ['gpt-5.4-mini', 'gpt-5.5'];
+      const models = state.supportedModels || ['gpt-5.5', 'gpt-5.4-mini'];
       const outputs = state.supportedOutputTypes || ['text', 'code', 'code_visual'];
       return '<h2>Create or import</h2><form onsubmit="event.preventDefault(); createProject();">' +
         '<label>Skill name<input name="projectName" required placeholder="frontend-design"></label>' +

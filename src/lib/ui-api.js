@@ -12,7 +12,8 @@ import { normalizeTaskContract, taskContractOutputType } from './task-contracts.
 
 const MAX_BASELINE_ZIP_BYTES = 25 * 1024 * 1024;
 const UI_OUTPUT_TYPES = ['text', 'code', 'code_visual'];
-export const UI_OPENAI_MODELS = ['gpt-5.4-mini', 'gpt-5.5'];
+export const DEFAULT_UI_MODEL = 'gpt-5.5';
+export const UI_OPENAI_MODELS = ['gpt-5.5', 'gpt-5.4-mini'];
 
 export async function createProjectForUi({
   cwd,
@@ -21,7 +22,7 @@ export async function createProjectForUi({
   targetIterations = 3,
   triggerMode = 'manual',
   outputType = 'text',
-  model = 'gpt-5.4-mini',
+  model = DEFAULT_UI_MODEL,
   baselineFiles = [],
   baselineArchive = null,
 }) {
@@ -90,7 +91,7 @@ export async function createProjectDraftForUi({
   targetIterations = 3,
   triggerMode = 'manual',
   outputType = null,
-  model = 'gpt-5.4-mini',
+  model = DEFAULT_UI_MODEL,
   baselinePath = null,
 }) {
   const now = new Date().toISOString();
@@ -131,7 +132,7 @@ export async function createProjectFromDraftForUi({
   targetIterations = 3,
   triggerMode = 'manual',
   outputType = 'text',
-  model = 'gpt-5.4-mini',
+  model = DEFAULT_UI_MODEL,
 }) {
   const draft = await readProjectDraftRecord({ cwd, draftId });
   const summary = await createProjectFromLocalInput({
@@ -155,7 +156,7 @@ export async function createProjectFromLocalInput({
   targetIterations = 3,
   triggerMode = 'manual',
   outputType = 'text',
-  model = 'gpt-5.4-mini',
+  model = DEFAULT_UI_MODEL,
   baselinePath = null,
 }) {
   if (typeof projectName !== 'string' || projectName.trim() === '') {
@@ -202,7 +203,7 @@ export async function createProjectFromLocalInput({
 }
 
 function normalizeUiModel(model) {
-  return UI_OPENAI_MODELS.includes(model) ? model : 'gpt-5.4-mini';
+  return UI_OPENAI_MODELS.includes(model) ? model : DEFAULT_UI_MODEL;
 }
 
 function normalizeUiOutputType(outputType) {
@@ -758,9 +759,6 @@ export async function updateProjectModelForUi({ cwd, projectName, model }) {
   const normalizedModel = normalizeUiModel(model);
   const state = await readJson(paths.stateJson, null);
   if (!state) throw badRequest(`Project "${paths.projectId}" does not exist`);
-  if ((state.runCount || 0) > 0) {
-    throw badRequest('Model can only be changed before the first iteration');
-  }
   const rawConfig = await readJson(paths.configJson, {});
   const config = normalizeProjectConfig(rawConfig);
   await writeJson(paths.configJson, {
@@ -785,7 +783,7 @@ async function readAutomationSummary({ cwd, paths, state, config }) {
   const targetIterations = normalizeRunPolicy(state.runPolicy).targetIterations;
   const maxRuns = config.budget?.maxRuns ?? null;
   const generatedMaxRuns = maxRuns || Math.max(runCount + targetIterations, targetIterations);
-  const model = config.models?.agent || 'gpt-5.4-mini';
+  const model = config.models?.agent || DEFAULT_UI_MODEL;
   const scheduledMode = config.trigger?.mode === 'cron'
     || config.trigger?.mode === 'continuous'
     || latestRun?.trigger?.mode === 'continuous'

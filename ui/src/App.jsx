@@ -122,8 +122,8 @@ const ACCENTS = [
 ];
 const OPENAI_KEY_STORAGE_KEY = 'skill-rsi-openai-api-key';
 const OPENAI_MODELS = [
-  { id: 'gpt-5.4-mini', label: 'gpt-5.4-mini', note: 'Default for lower-cost iteration.' },
-  { id: 'gpt-5.5', label: 'gpt-5.5', note: 'Higher-capability model with higher expected cost.' },
+  { id: 'gpt-5.5', label: 'gpt-5.5', note: 'Default higher-capability model.' },
+  { id: 'gpt-5.4-mini', label: 'gpt-5.4-mini', note: 'Lower-cost iteration model.' },
 ];
 
 export default function App() {
@@ -151,7 +151,7 @@ export default function App() {
   const [draft, setDraft] = useState({
     mode: 'scratch',
     outputType: 'text',
-    model: 'gpt-5.4-mini',
+    model: 'gpt-5.5',
     name: '',
     goal: '',
     baselineFiles: [],
@@ -366,7 +366,7 @@ export default function App() {
             triggerMode: 'manual',
             outputType: draft.outputType || 'text',
             taskContract: getDraftTaskContract(draft),
-            model: draft.model || 'gpt-5.4-mini',
+            model: draft.model || 'gpt-5.5',
             draftId: fromServerDraft ? draft.serverDraftId : null,
             baselineFiles,
             baselineArchive,
@@ -379,7 +379,7 @@ export default function App() {
       setDraft({
         mode: 'scratch',
         outputType: 'text',
-        model: 'gpt-5.4-mini',
+        model: 'gpt-5.5',
         name: '',
         goal: '',
         baselineFiles: [],
@@ -929,15 +929,15 @@ function CreateView({
 
       <div className="field">
         <span>Model</span>
-        <select value={draft.model || 'gpt-5.4-mini'}
+        <select value={draft.model || 'gpt-5.5'}
           onChange={e => setDraft({ ...draft, model: e.target.value })}>
           {OPENAI_MODELS.map(model => (
             <option key={model.id} value={model.id}>{model.label}</option>
           ))}
         </select>
         <p className="field-hint">
-          {(OPENAI_MODELS.find(model => model.id === (draft.model || 'gpt-5.4-mini')) || OPENAI_MODELS[0]).note}
-          {' '}This model is fixed for the project’s run history.
+          {(OPENAI_MODELS.find(model => model.id === (draft.model || 'gpt-5.5')) || OPENAI_MODELS[0]).note}
+          {' '}You can change it later before a future run.
         </p>
       </div>
 
@@ -1203,8 +1203,7 @@ function RunBar({ summary, loops, setLoops, busy, settingsBusy, onStart, onModel
   const maxRuns = budget.maxRuns;
   const automation = summary.automation || null;
   const taskContractLabel = formatTaskContract(summary.config?.eval?.taskContract);
-  const modelLabel = summary.config?.models?.agent || 'gpt-5.4-mini';
-  const hasRuns = (summary.state.runCount || 0) > 0;
+  const modelLabel = summary.config?.models?.agent || 'gpt-5.5';
   const automationState = describeAutomation(automation);
   const StatusIcon = automationState.icon;
   const runDisabled = busy || settingsBusy || automation?.locked;
@@ -1232,7 +1231,7 @@ function RunBar({ summary, loops, setLoops, busy, settingsBusy, onStart, onModel
       <div className="run-settings">
         <label className="run-setting">
           <span>Model</span>
-          <select value={modelLabel} disabled={hasRuns || busy || settingsBusy || automation?.locked}
+          <select value={modelLabel} disabled={busy || settingsBusy || automation?.locked}
             onChange={e => onModelChange?.(e.target.value)}>
             {OPENAI_MODELS.map(model => (
               <option key={model.id} value={model.id}>{model.label}</option>
@@ -1240,9 +1239,7 @@ function RunBar({ summary, loops, setLoops, busy, settingsBusy, onStart, onModel
           </select>
         </label>
         <span className="run-setting-note">
-          {hasRuns
-            ? 'Model is fixed after iterations exist.'
-            : `${(OPENAI_MODELS.find(model => model.id === modelLabel) || OPENAI_MODELS[0]).note} Used for agent, generation, judge, and scheduler commands.`}
+          {`${(OPENAI_MODELS.find(model => model.id === modelLabel) || OPENAI_MODELS[0]).note} Used for future agent, generation, judge, and scheduler commands.`}
         </span>
       </div>
       <div className={`automation-line ${automationState.kind}`}>

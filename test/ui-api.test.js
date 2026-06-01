@@ -64,6 +64,30 @@ async function setRecommendationDecision({ cwd, projectName, runId, decision, ca
   await fs.writeFile(detail.artifacts.recommendationJson, `${JSON.stringify(recommendation, null, 2)}\n`);
 }
 
+async function runUntilChallengeDetails({ cwd, projectName, goal, count = 1, maxRuns = 6 }) {
+  const challengeDetails = [];
+  let latestResult = null;
+  for (let i = 0; i < maxRuns; i += 1) {
+    latestResult = await runProject({
+      cwd,
+      projectName,
+      goal,
+      loops: 1,
+      mode: 'mock',
+    });
+    const runId = latestResult.completedRuns.at(-1)?.runId;
+    if (!runId) continue;
+    const detail = await readRunDetail({ cwd, projectName, runId });
+    if (detail.artifacts.challengeJson) {
+      challengeDetails.push({ runId, detail });
+      if (challengeDetails.length >= count) {
+        return { result: latestResult, paths: latestResult.paths, challengeDetails };
+      }
+    }
+  }
+  throw new Error(`Expected ${count} challenge run(s) for ${projectName}; found ${challengeDetails.length}`);
+}
+
 test('ui api exposes stable project and run detail surfaces', async () => {
   const cwd = await fs.mkdtemp(path.join(os.tmpdir(), 'skill-rsi-ui-api-'));
   const result = await runProject({
@@ -187,15 +211,12 @@ test('ui api derives latest loop result for a cold-start champion', async () => 
 
 test('ui api derives latest loop result for champion challenge and policy gates', async () => {
   const cwd = await fs.mkdtemp(path.join(os.tmpdir(), 'skill-rsi-ui-loop-result-challenge-'));
-  const result = await runProject({
+  const { paths, challengeDetails } = await runUntilChallengeDetails({
     cwd,
     projectName: 'Loop Result Challenge',
     goal: 'Expose champion challenge outcomes.',
-    loops: 2,
-    mode: 'mock',
   });
-  const runId = result.completedRuns.at(-1).runId;
-  const detail = await readRunDetail({ cwd, projectName: 'Loop Result Challenge', runId });
+  const { runId, detail } = challengeDetails[0];
   const challenge = JSON.parse(await fs.readFile(detail.artifacts.challengeJson, 'utf8'));
   challenge.stats.winner = 'skillA';
   challenge.stats.scoreDelta = 12;
@@ -214,7 +235,7 @@ test('ui api derives latest loop result for champion challenge and policy gates'
   };
   await fs.writeFile(detail.artifacts.challengeJson, `${JSON.stringify(challenge, null, 2)}\n`);
   await fs.writeFile(detail.artifacts.recommendationJson, `${JSON.stringify(recommendation, null, 2)}\n`);
-  await patchHistory(result.paths.historyIndex, history => ({
+  await patchHistory(paths.historyIndex, history => ({
     ...history,
     trajectory: history.trajectory.map(entry => (
       entry.runId === runId ? { ...entry, decision: 'keep_current', winner: 'current' } : entry
@@ -236,20 +257,19 @@ test('ui api derives latest loop result for champion challenge and policy gates'
 
 test('ui api compounds overall progress from promoted stable-prompt challenge evidence', async () => {
   const cwd = await fs.mkdtemp(path.join(os.tmpdir(), 'skill-rsi-ui-overall-progress-'));
-  const result = await runProject({
+  const { paths, challengeDetails } = await runUntilChallengeDetails({
     cwd,
     projectName: 'Overall Progress',
     goal: 'Expose cumulative improvement across promoted challengers.',
-    loops: 3,
-    mode: 'mock',
+    count: 2,
   });
-  const run2 = result.completedRuns[1].runId;
-  const run3 = result.completedRuns[2].runId;
+  const run2 = challengeDetails[0].runId;
+  const run3 = challengeDetails[1].runId;
   await writeChallengeScores({ cwd, projectName: 'Overall Progress', runId: run2, scoreA: 11, scoreB: 10, bucket: 'stable' });
   await writeChallengeScores({ cwd, projectName: 'Overall Progress', runId: run3, scoreA: 21, scoreB: 20, bucket: 'stable' });
   await setRecommendationDecision({ cwd, projectName: 'Overall Progress', runId: run2, decision: 'promote', candidateId: 'challenger' });
   await setRecommendationDecision({ cwd, projectName: 'Overall Progress', runId: run3, decision: 'promote', candidateId: 'challenger' });
-  await patchHistory(result.paths.historyIndex, history => ({
+  await patchHistory(paths.historyIndex, history => ({
     ...history,
     trajectory: history.trajectory.map(entry => (
       entry.runId === run2 || entry.runId === run3
@@ -267,20 +287,19 @@ test('ui api compounds overall progress from promoted stable-prompt challenge ev
 
 test('ui api keeps prior overall progress visible when latest challenger is kept', async () => {
   const cwd = await fs.mkdtemp(path.join(os.tmpdir(), 'skill-rsi-ui-overall-progress-kept-'));
-  const result = await runProject({
+  const { paths, challengeDetails } = await runUntilChallengeDetails({
     cwd,
     projectName: 'Overall Progress Kept',
     goal: 'Keep cumulative improvement visible through non-promoting loops.',
-    loops: 3,
-    mode: 'mock',
+    count: 2,
   });
-  const run2 = result.completedRuns[1].runId;
-  const run3 = result.completedRuns[2].runId;
+  const run2 = challengeDetails[0].runId;
+  const run3 = challengeDetails[1].runId;
   await writeChallengeScores({ cwd, projectName: 'Overall Progress Kept', runId: run2, scoreA: 12, scoreB: 10, bucket: 'stable' });
   await writeChallengeScores({ cwd, projectName: 'Overall Progress Kept', runId: run3, scoreA: 9, scoreB: 10, bucket: 'stable' });
   await setRecommendationDecision({ cwd, projectName: 'Overall Progress Kept', runId: run2, decision: 'promote', candidateId: 'challenger' });
   await setRecommendationDecision({ cwd, projectName: 'Overall Progress Kept', runId: run3, decision: 'keep_current', candidateId: null });
-  await patchHistory(result.paths.historyIndex, history => ({
+  await patchHistory(paths.historyIndex, history => ({
     ...history,
     trajectory: history.trajectory.map(entry => {
       if (entry.runId === run2) return { ...entry, decision: 'promote', winner: 'challenger' };
@@ -297,17 +316,15 @@ test('ui api keeps prior overall progress visible when latest challenger is kept
 
 test('ui api hides overall progress when promoted evidence is not stable-prompt comparable', async () => {
   const cwd = await fs.mkdtemp(path.join(os.tmpdir(), 'skill-rsi-ui-overall-progress-missing-'));
-  const result = await runProject({
+  const { paths, challengeDetails } = await runUntilChallengeDetails({
     cwd,
     projectName: 'Overall Progress Missing',
     goal: 'Hide unsupported cumulative progress.',
-    loops: 2,
-    mode: 'mock',
   });
-  const run2 = result.completedRuns[1].runId;
+  const run2 = challengeDetails[0].runId;
   await writeChallengeScores({ cwd, projectName: 'Overall Progress Missing', runId: run2, scoreA: 12, scoreB: 10, bucket: 'exploration' });
   await setRecommendationDecision({ cwd, projectName: 'Overall Progress Missing', runId: run2, decision: 'promote', candidateId: 'challenger' });
-  await patchHistory(result.paths.historyIndex, history => ({
+  await patchHistory(paths.historyIndex, history => ({
     ...history,
     trajectory: history.trajectory.map(entry => (
       entry.runId === run2 ? { ...entry, decision: 'promote', winner: 'challenger' } : entry
@@ -359,9 +376,9 @@ test('ui api creates new projects and rejects duplicates', async () => {
   assert.equal(created.state.runPolicy.targetIterations, 3);
   assert.equal(created.config.trigger.targetIterations, 3);
   assert.equal(created.config.budget.estimatedTokensPerLoop, 50000);
-  assert.equal(created.config.models.agent, 'gpt-5.4-mini');
-  assert.equal(created.config.models.generation, 'gpt-5.4-mini');
-  assert.equal(created.config.models.judge, 'gpt-5.4-mini');
+  assert.equal(created.config.models.agent, 'gpt-5.5');
+  assert.equal(created.config.models.generation, 'gpt-5.5');
+  assert.equal(created.config.models.judge, 'gpt-5.5');
 
   const summaries = await readProjectSummaries({ cwd });
   assert.equal(summaries.length, 1);
@@ -483,10 +500,10 @@ test('ui api stores the selected project model across all model roles', async ()
     model: 'gpt-5.4-large',
   });
 
-  assert.equal(fallback.config.models.agent, 'gpt-5.4-mini');
+  assert.equal(fallback.config.models.agent, 'gpt-5.5');
 });
 
-test('ui api updates project model before the first iteration only', async () => {
+test('ui api updates project model for future runs', async () => {
   const cwd = await fs.mkdtemp(path.join(os.tmpdir(), 'skill-rsi-ui-api-update-model-'));
 
   const created = await createProjectForUi({
@@ -494,36 +511,58 @@ test('ui api updates project model before the first iteration only', async () =>
     projectName: 'Model Update Project',
     goal: 'Change model before running.',
   });
-  assert.match(created.automation.commands.cron, /--agent-model gpt-5\.4-mini/);
-  assert.match(created.automation.commands.powershell.cron, /--agent-model 'gpt-5\.4-mini'/);
+  assert.match(created.automation.commands.cron, /--agent-model gpt-5\.5/);
+  assert.match(created.automation.commands.powershell.cron, /--agent-model 'gpt-5\.5'/);
 
   const updated = await updateProjectModelForUi({
     cwd,
     projectName: 'Model Update Project',
-    model: 'gpt-5.5',
+    model: 'gpt-5.4-mini',
   });
-  assert.equal(updated.config.models.agent, 'gpt-5.5');
-  assert.equal(updated.config.models.generation, 'gpt-5.5');
-  assert.equal(updated.config.models.judge, 'gpt-5.5');
-  assert.match(updated.automation.commands.cron, /--agent-model gpt-5\.5/);
-  assert.match(updated.automation.commands.powershell.cron, /--agent-model 'gpt-5\.5'/);
+  assert.equal(updated.config.models.agent, 'gpt-5.4-mini');
+  assert.equal(updated.config.models.generation, 'gpt-5.4-mini');
+  assert.equal(updated.config.models.judge, 'gpt-5.4-mini');
+  assert.match(updated.automation.commands.cron, /--agent-model gpt-5\.4-mini/);
+  assert.match(updated.automation.commands.powershell.cron, /--agent-model 'gpt-5\.4-mini'/);
 
-  await runProject({
+  const firstRun = await runProject({
     cwd,
     projectName: 'Model Update Project',
     goal: 'Change model before running.',
     loops: 1,
     mode: 'mock',
   });
+  const firstRunDetail = await readRunDetail({
+    cwd,
+    projectName: 'Model Update Project',
+    runId: firstRun.completedRuns[0].runId,
+  });
+  assert.equal(firstRunDetail.run.models.agent, 'gpt-5.4-mini');
 
-  await assert.rejects(
-    () => updateProjectModelForUi({
-      cwd,
-      projectName: 'Model Update Project',
-      model: 'gpt-5.4-mini',
-    }),
-    /before the first iteration/
-  );
+  const updatedAfterRun = await updateProjectModelForUi({
+    cwd,
+    projectName: 'Model Update Project',
+    model: 'gpt-5.5',
+  });
+  assert.equal(updatedAfterRun.state.runCount, 1);
+  assert.equal(updatedAfterRun.config.models.agent, 'gpt-5.5');
+  assert.equal(updatedAfterRun.config.models.generation, 'gpt-5.5');
+  assert.equal(updatedAfterRun.config.models.judge, 'gpt-5.5');
+  assert.match(updatedAfterRun.automation.commands.cron, /--agent-model gpt-5\.5/);
+
+  const secondRun = await runProject({
+    cwd,
+    projectName: 'Model Update Project',
+    goal: 'Change model before running.',
+    loops: 1,
+    mode: 'mock',
+  });
+  const secondRunDetail = await readRunDetail({
+    cwd,
+    projectName: 'Model Update Project',
+    runId: secondRun.completedRuns[0].runId,
+  });
+  assert.equal(secondRunDetail.run.models.agent, 'gpt-5.5');
 });
 
 test('ui api prepares setup drafts and creates baseline projects only after confirmation', async () => {

@@ -451,7 +451,7 @@ function stubServices({
       stopReason: null,
     }),
     uiApi: {
-      UI_OPENAI_MODELS: ['gpt-5.4-mini', 'gpt-5.5'],
+      UI_OPENAI_MODELS: ['gpt-5.5', 'gpt-5.4-mini'],
       readProjectSummaries: async () => projects,
       createProjectDraftForUi: async () => ({ id: '11111111-1111-4111-8111-111111111111' }),
       createProjectFromLocalInput: async () => ({ projectId: 'stub' }),

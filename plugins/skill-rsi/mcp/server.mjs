@@ -7,9 +7,9 @@ import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { renderCockpitHtml } from './ui/cockpit.html.js';
 
-const DEFAULT_MODEL = 'gpt-5.4-mini';
+const DEFAULT_MODEL = 'gpt-5.5';
 const SUPPORTED_OUTPUT_TYPES = ['text', 'code', 'code_visual'];
-const SUPPORTED_MODELS = ['gpt-5.4-mini', 'gpt-5.5'];
+const SUPPORTED_MODELS = ['gpt-5.5', 'gpt-5.4-mini'];
 const COCKPIT_RESOURCE_URI = 'ui://skill-rsi/cockpit.html';
 const MCP_APP_MIME_TYPE = 'text/html;profile=mcp-app';
 const DEFAULT_APP_URL = 'http://127.0.0.1:8765/';
@@ -1268,7 +1268,7 @@ export async function createSkillRsiMcpServer({ services = null } = {}) {
       projectName: z.string().min(1),
       goal: z.string().min(1),
       outputType: z.enum(['text', 'code', 'code_visual']).default('text'),
-      model: z.enum(['gpt-5.4-mini', 'gpt-5.5']).default(DEFAULT_MODEL),
+      model: z.enum(['gpt-5.5', 'gpt-5.4-mini']).default(DEFAULT_MODEL),
       targetIterations: z.number().int().positive().default(3),
       triggerMode: z.enum(['manual', 'continuous', 'hook', 'cron']).default('manual'),
       baselinePath: z.string().optional(),
@@ -1282,7 +1282,7 @@ export async function createSkillRsiMcpServer({ services = null } = {}) {
       projectName: z.string().optional(),
       goal: z.string().optional(),
       outputType: z.enum(['text', 'code', 'code_visual']).optional(),
-      model: z.enum(['gpt-5.4-mini', 'gpt-5.5']).default(DEFAULT_MODEL),
+      model: z.enum(['gpt-5.5', 'gpt-5.4-mini']).default(DEFAULT_MODEL),
       targetIterations: z.number().int().positive().default(3),
       triggerMode: z.enum(['manual', 'continuous', 'hook', 'cron']).default('manual'),
       baselinePath: z.string().optional(),

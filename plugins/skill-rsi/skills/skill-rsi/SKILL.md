@@ -118,13 +118,13 @@ Starting a real/agentic improvement loop can spend API budget. If the user expli
 Use these as patterns, adapting project names and options to the user's request:
 
 ```bash
-node src/cli.js init my-skill --goal "Help agents write better..." --output text --model gpt-5.4-mini --target-iterations 3
+node src/cli.js init my-skill --goal "Help agents write better..." --output text --model gpt-5.5 --target-iterations 3
 node src/cli.js run my-skill --agentic --real-eval
 node src/cli.js progress my-skill
 node src/cli.js report my-skill
 node src/cli.js skill my-skill --source champion
 node src/cli.js export-skill my-skill --source champion --out ./exported-skill
-node scripts/skill-rsi-cron-runner.mjs my-skill --agentic --real-eval --max-runs 20 --max-new-runs 1 --agent-model gpt-5.4-mini
+node scripts/skill-rsi-cron-runner.mjs my-skill --agentic --real-eval --max-runs 20 --max-new-runs 1 --agent-model gpt-5.5
 ```
 
 For Codex hook context capture, prefer the example in `plugins/skill-rsi/hooks/codex-stop-hook.example.json` and the detailed explanation in `docs/CODEX_HOOKS.md`.

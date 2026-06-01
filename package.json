@@ -10,6 +10,8 @@
     "test": "node --test",
     "start": "node src/cli.js",
     "doctor": "node src/cli.js doctor",
+    "diagnose": "node src/cli.js diagnose",
+    "support:prompt": "node src/cli.js support-prompt",
     "server": "node src/server.js",
     "dev:ui": "vite --config ui/vite.config.js --host 127.0.0.1",
     "build:ui": "vite build --config ui/vite.config.js",

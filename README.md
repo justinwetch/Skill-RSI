@@ -294,6 +294,8 @@ node src/cli.js init <name> --goal "..." --baseline ./path/to/skill-or.zip
 node src/cli.js projects
 node src/cli.js status <project>
 node src/cli.js delete <project>
+node src/cli.js diagnose [project]
+node src/cli.js support-prompt [project]
 
 # Running loops
 node src/cli.js run <project> --stub --loops 3
@@ -336,7 +338,7 @@ node src/cli.js evaluate <project> \
 node src/cli.js decide <project> --decision annotate --note "Reviewed."
 ```
 
-`init --output code_visual` checks local screenshot runner availability before creating the project. Run `node src/cli.js doctor` for OpenAI key status, supported model names, and visual runner diagnostics. Per-run model flags override project config and should be used intentionally because they make the run history less uniform.
+`init --output code_visual` checks local screenshot runner availability before creating the project. Run `node src/cli.js doctor` for OpenAI key status, supported model names, and visual runner diagnostics. `node src/cli.js diagnose [project]` creates a sanitized support zip under `.skill-rsi-diagnostics/`; `node src/cli.js support-prompt [project]` prints a copy-paste prompt for Codex to collect that bundle without exposing API keys. Per-run model flags override project config and should be used intentionally because they make the run history less uniform.
 
 ## Project Workspace
 

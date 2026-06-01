@@ -21,6 +21,7 @@ import { readJson } from './lib/store.js';
 import { loadDotEnv } from './lib/env.js';
 import { readTimeline, renderTimeline } from './lib/timeline.js';
 import { checkVisualRunnerAvailability } from './lib/visual-runner.js';
+import { createSupportDiagnostics, createSupportPrompt } from './lib/support-diagnostics.js';
 import {
   createProjectFromLocalInput,
   deleteProject,
@@ -75,6 +76,8 @@ Usage:
   skill-rsi hook <project> --mock --event hook.json
   skill-rsi hook-record <project> --event hook.json|-
   skill-rsi doctor [--json]
+  skill-rsi diagnose [project] [--run latest|run-id] [--out .skill-rsi-diagnostics] [--json]
+  skill-rsi support-prompt [project]
   skill-rsi projects
   skill-rsi status <project>
   skill-rsi summary <project>
@@ -237,6 +240,31 @@ async function main() {
       visualRunner,
     };
     printJsonOrHuman(result, options, renderDoctor);
+    return;
+  }
+
+  if (command === 'support-prompt') {
+    console.log(createSupportPrompt({ projectName, cwd: process.cwd() }));
+    return;
+  }
+
+  if (command === 'diagnose') {
+    const result = await createSupportDiagnostics({
+      cwd: process.cwd(),
+      projectName,
+      runId: normalizeRunIdOption(options.run),
+      outDir: options.out ? path.resolve(options.out) : undefined,
+    });
+    printJsonOrHuman(result, options, diagnostics => [
+      `Created Skill RSI diagnostics: ${diagnostics.bundlePath}`,
+      `Files: ${diagnostics.fileCount}`,
+      `Redactions: ${diagnostics.redactionCount}`,
+      diagnostics.omitted.length ? `Omitted: ${diagnostics.omitted.length} file(s) due to size or limits` : null,
+      `Email this zip to ${diagnostics.supportEmail} with a short note describing what failed.`,
+      '',
+      'Copy-paste support prompt:',
+      diagnostics.prompt,
+    ].filter(Boolean).join('\n'));
     return;
   }
 

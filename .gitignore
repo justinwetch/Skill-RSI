@@ -8,3 +8,6 @@ plugins/skill-rsi/.mcp.json
 .gh-config/
 .DS_Store
 .claude/
+videos/product-videos/
+.agents/skills/remotion-best-practices/
+skills-lock.json

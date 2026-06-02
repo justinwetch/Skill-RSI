@@ -1,5 +1,9 @@
 # Skill RSI
 
+<p align="center">
+  <img src="plugins/skill-rsi/assets/icon.png" alt="Skill RSI red beaker icon" width="128" height="128">
+</p>
+
 [Watch the Intro Video here](https://youtu.be/Ymt1FzdO-IQ?si=5n7jp74BpF-vASLA)
 
 Want Codex to install it for you? Paste this into a fresh Codex thread:

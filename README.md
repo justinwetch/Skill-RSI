@@ -70,6 +70,10 @@ The history view records the improvement trajectory over time.
 
 ![Improvement history](screenshots/readme-latest-project-20260530-2225/02-history.png)
 
+The next loop plan carries forward what the latest evidence says to try, preserve, or avoid.
+
+![Next loop plan](screenshots/readme-latest-project-20260530-2225/12-next-loop-plan.png)
+
 ## How It Works
 
 For the canonical explanation of the loop and agent roles, see [docs/HOW_IT_WORKS.md](docs/HOW_IT_WORKS.md).

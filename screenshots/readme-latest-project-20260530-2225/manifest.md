@@ -18,3 +18,4 @@
 | `09-codex-invoke.png` | Codex prompt invocation | Manual screenshot of invoking Skill RSI from the Codex composer. |
 | `10-codex-setup-sidebar.png` | Codex setup sidebar | Manual screenshot of Codex handing off to the Skill RSI setup screen. |
 | `11-codex-result-sidebar-dark.png` | Codex result sidebar, dark mode | Manual screenshot of the updated champion result card beside the chat. |
+| `12-next-loop-plan.png` | Next loop plan | Manual screenshot of the run-003 next-loop guidance card. |

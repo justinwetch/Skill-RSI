@@ -1,0 +1,246 @@
+{
+  "generatedAt": "2026-06-02T06:26:27.720Z",
+  "source": "docs/assets/diagrams/source/index.html",
+  "exports": [
+    {
+      "slug": "core-loop",
+      "title": "The core loop",
+      "use": "Explain the full Skill RSI loop in one frame.",
+      "placement": "README How It Works anchor; blog/social overview",
+      "format": "wide",
+      "width": 1600,
+      "height": 900,
+      "file": "png/core-loop-wide.png"
+    },
+    {
+      "slug": "core-loop",
+      "title": "The core loop",
+      "use": "Explain the full Skill RSI loop in one frame.",
+      "placement": "README How It Works anchor; blog/social overview",
+      "format": "square",
+      "width": 1200,
+      "height": 1200,
+      "file": "png/core-loop-square.png"
+    },
+    {
+      "slug": "ontology-map",
+      "title": "Ontology map",
+      "use": "Show what the ontology contains and why it prevents drift.",
+      "placement": "README intro after the ontology paragraph; social explainer",
+      "format": "wide",
+      "width": 1600,
+      "height": 900,
+      "file": "png/ontology-map-wide.png"
+    },
+    {
+      "slug": "ontology-map",
+      "title": "Ontology map",
+      "use": "Show what the ontology contains and why it prevents drift.",
+      "placement": "README intro after the ontology paragraph; social explainer",
+      "format": "square",
+      "width": 1200,
+      "height": 1200,
+      "file": "png/ontology-map-square.png"
+    },
+    {
+      "slug": "deconstruction-map",
+      "title": "Deconstruction map",
+      "use": "Explain how the current champion becomes a parameter map.",
+      "placement": "docs/HOW_IT_WORKS deconstruction section; technical social post",
+      "format": "wide",
+      "width": 1600,
+      "height": 900,
+      "file": "png/deconstruction-map-wide.png"
+    },
+    {
+      "slug": "deconstruction-map",
+      "title": "Deconstruction map",
+      "use": "Explain how the current champion becomes a parameter map.",
+      "placement": "docs/HOW_IT_WORKS deconstruction section; technical social post",
+      "format": "square",
+      "width": 1200,
+      "height": 1200,
+      "file": "png/deconstruction-map-square.png"
+    },
+    {
+      "slug": "control-treatment",
+      "title": "Control vs treatment",
+      "use": "Make the experiment design immediately legible.",
+      "placement": "README controlled-experiment explanation; social carousel",
+      "format": "wide",
+      "width": 1600,
+      "height": 900,
+      "file": "png/control-treatment-wide.png"
+    },
+    {
+      "slug": "control-treatment",
+      "title": "Control vs treatment",
+      "use": "Make the experiment design immediately legible.",
+      "placement": "README controlled-experiment explanation; social carousel",
+      "format": "square",
+      "width": 1200,
+      "height": 1200,
+      "file": "png/control-treatment-square.png"
+    },
+    {
+      "slug": "cold-start-duel",
+      "title": "Cold-start duel",
+      "use": "Explain the one case where Skill RSI generates two candidates.",
+      "placement": "README How It Works scratch-run section",
+      "format": "wide",
+      "width": 1600,
+      "height": 900,
+      "file": "png/cold-start-duel-wide.png"
+    },
+    {
+      "slug": "cold-start-duel",
+      "title": "Cold-start duel",
+      "use": "Explain the one case where Skill RSI generates two candidates.",
+      "placement": "README How It Works scratch-run section",
+      "format": "square",
+      "width": 1200,
+      "height": 1200,
+      "file": "png/cold-start-duel-square.png"
+    },
+    {
+      "slug": "experiment-plan",
+      "title": "Experiment plan card",
+      "use": "Show the shape of a well-formed loop premise.",
+      "placement": "README next-loop plan or UI walkthrough",
+      "format": "wide",
+      "width": 1600,
+      "height": 900,
+      "file": "png/experiment-plan-wide.png"
+    },
+    {
+      "slug": "experiment-plan",
+      "title": "Experiment plan card",
+      "use": "Show the shape of a well-formed loop premise.",
+      "placement": "README next-loop plan or UI walkthrough",
+      "format": "square",
+      "width": 1200,
+      "height": 1200,
+      "file": "png/experiment-plan-square.png"
+    },
+    {
+      "slug": "preflight-review",
+      "title": "Preflight review gate",
+      "use": "Explain why broken or drifting candidates stop cleanly.",
+      "placement": "docs/HOW_IT_WORKS preflight review section",
+      "format": "wide",
+      "width": 1600,
+      "height": 900,
+      "file": "png/preflight-review-wide.png"
+    },
+    {
+      "slug": "preflight-review",
+      "title": "Preflight review gate",
+      "use": "Explain why broken or drifting candidates stop cleanly.",
+      "placement": "docs/HOW_IT_WORKS preflight review section",
+      "format": "square",
+      "width": 1200,
+      "height": 1200,
+      "file": "png/preflight-review-square.png"
+    },
+    {
+      "slug": "prompt-evidence-stack",
+      "title": "Prompt-level evidence stack",
+      "use": "Show that decisions are traceable, not just summary scores.",
+      "placement": "README Evidence-Backed Decisions section",
+      "format": "wide",
+      "width": 1600,
+      "height": 900,
+      "file": "png/prompt-evidence-stack-wide.png"
+    },
+    {
+      "slug": "prompt-evidence-stack",
+      "title": "Prompt-level evidence stack",
+      "use": "Show that decisions are traceable, not just summary scores.",
+      "placement": "README Evidence-Backed Decisions section",
+      "format": "square",
+      "width": 1200,
+      "height": 1200,
+      "file": "png/prompt-evidence-stack-square.png"
+    },
+    {
+      "slug": "promotion-policy",
+      "title": "Promotion policy gate",
+      "use": "Explain score thresholds, regression protection, and analyst recommendation.",
+      "placement": "docs/HOW_IT_WORKS promotion section; social technical post",
+      "format": "wide",
+      "width": 1600,
+      "height": 900,
+      "file": "png/promotion-policy-wide.png"
+    },
+    {
+      "slug": "promotion-policy",
+      "title": "Promotion policy gate",
+      "use": "Explain score thresholds, regression protection, and analyst recommendation.",
+      "placement": "docs/HOW_IT_WORKS promotion section; social technical post",
+      "format": "square",
+      "width": 1200,
+      "height": 1200,
+      "file": "png/promotion-policy-square.png"
+    },
+    {
+      "slug": "history-memory",
+      "title": "History as memory",
+      "use": "Show why the loop compounds rather than resets.",
+      "placement": "README history screenshot section; social proof post",
+      "format": "wide",
+      "width": 1600,
+      "height": 900,
+      "file": "png/history-memory-wide.png"
+    },
+    {
+      "slug": "history-memory",
+      "title": "History as memory",
+      "use": "Show why the loop compounds rather than resets.",
+      "placement": "README history screenshot section; social proof post",
+      "format": "square",
+      "width": 1200,
+      "height": 1200,
+      "file": "png/history-memory-square.png"
+    },
+    {
+      "slug": "artifact-contract",
+      "title": "Artifact contract",
+      "use": "Explain text, code, and code + visuals modes.",
+      "placement": "docs/HOW_IT_WORKS project inputs/output artifact section",
+      "format": "wide",
+      "width": 1600,
+      "height": 900,
+      "file": "png/artifact-contract-wide.png"
+    },
+    {
+      "slug": "artifact-contract",
+      "title": "Artifact contract",
+      "use": "Explain text, code, and code + visuals modes.",
+      "placement": "docs/HOW_IT_WORKS project inputs/output artifact section",
+      "format": "square",
+      "width": 1200,
+      "height": 1200,
+      "file": "png/artifact-contract-square.png"
+    },
+    {
+      "slug": "operator-surfaces",
+      "title": "Operator surfaces",
+      "use": "Orient users across the product surfaces.",
+      "placement": "README Codex Plugin and Local UI sections",
+      "format": "wide",
+      "width": 1600,
+      "height": 900,
+      "file": "png/operator-surfaces-wide.png"
+    },
+    {
+      "slug": "operator-surfaces",
+      "title": "Operator surfaces",
+      "use": "Orient users across the product surfaces.",
+      "placement": "README Codex Plugin and Local UI sections",
+      "format": "square",
+      "width": 1200,
+      "height": 1200,
+      "file": "png/operator-surfaces-square.png"
+    }
+  ]
+}

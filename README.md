@@ -104,6 +104,24 @@ load champion and history
 
 Baseline uploads skip the initial ontology step and start from deconstructing the uploaded champion. Existing ontologies are reused or conservatively refreshed when the champion changes.
 
+## Diagram Views
+
+The core loop keeps every run framed as a controlled experiment.
+
+![Skill RSI core loop diagram](docs/assets/diagrams/mermaid-png/core-loop.png)
+
+The ontology turns research into a domain guardrail before the first skill is written.
+
+![Skill RSI ontology map diagram](docs/assets/diagrams/mermaid-png/ontology-map.png)
+
+The experiment plan decides what changes, what stays fixed, and what evidence should count.
+
+![Skill RSI experiment plan diagram](docs/assets/diagrams/mermaid-png/experiment-plan.png)
+
+History keeps each loop from forgetting what already worked or failed.
+
+![Skill RSI history memory diagram](docs/assets/diagrams/mermaid-png/history-memory.png)
+
 ## Quick Start
 
 ```bash

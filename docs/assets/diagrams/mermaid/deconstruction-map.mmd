@@ -1,0 +1,43 @@
+%%{init: {"theme":"base","themeVariables":{"background":"#F5F5F7","mainBkg":"#FFFFFF","primaryColor":"#FFFFFF","primaryTextColor":"#1D1D1F","primaryBorderColor":"#D2D2D7","lineColor":"#6E6E73","secondaryColor":"#DCEAF5","tertiaryColor":"#E7F2E8","textColor":"#1D1D1F","clusterBkg":"#FFFFFF","clusterBorder":"#D2D2D7","fontFamily":"DM Sans, -apple-system, BlinkMacSystemFont, Segoe UI, sans-serif"}}}%%
+flowchart TB
+    champion[("Champion package")]:::champion
+    history[("Run history")]:::memory
+    ontology[("Ontology guardrail")]:::data
+    standard["Agent Skills standard"]
+
+    deconstruct["Deconstructor reads actual artifact"]:::process
+
+    champion --> deconstruct
+    history --> deconstruct
+    ontology --> deconstruct
+    standard --> deconstruct
+
+    subgraph surfaces["Improvement surfaces"]
+      direction LR
+      activation["Activation boundary"]
+      instructions["Instruction density"]
+      references["Reference file usage"]
+      contract["Output contract"]
+      examples["Example coverage"]
+      failure["Failure handling"]
+    end
+
+    subgraph parameter["Each parameter carries"]
+      direction LR
+      artifact["Artifact evidence"]
+      prior["History evidence"]
+      hypothesis["Mutation hypothesis"]
+      risk["Regression risk"]
+      measurement["Measurement plan"]
+      coupling["Coupling notes"]
+      confidence["Confidence"]
+    end
+
+    deconstruct --> activation & instructions & references & contract & examples & failure
+    activation & instructions & references & contract & examples & failure --> artifact
+    artifact --> prior --> hypothesis --> risk --> measurement --> coupling --> confidence
+
+    classDef champion fill:#68FF9130,stroke:#68FF91,color:#1D1D1F,stroke-width:2px
+    classDef memory fill:#76A77C22,stroke:#76A77C,color:#1D1D1F
+    classDef data fill:#7FA7C922,stroke:#7FA7C9,color:#1D1D1F
+    classDef process fill:#F5F5F7,stroke:#F5F5F7,color:#161617

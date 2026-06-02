@@ -1,0 +1,34 @@
+%%{init: {"theme":"base","themeVariables":{"background":"#F5F5F7","mainBkg":"#FFFFFF","primaryColor":"#FFFFFF","primaryTextColor":"#1D1D1F","primaryBorderColor":"#D2D2D7","lineColor":"#6E6E73","secondaryColor":"#DCEAF5","tertiaryColor":"#E7F2E8","textColor":"#1D1D1F","clusterBkg":"#FFFFFF","clusterBorder":"#D2D2D7","fontFamily":"DM Sans, -apple-system, BlinkMacSystemFont, Segoe UI, sans-serif"}}}%%
+flowchart LR
+    subgraph research["Research packet"]
+      sources["Sourced claims"]
+      authorities["Authority map"]
+      gaps["Open questions"]
+      labels["Sourced / inferred / speculative labels"]
+    end
+
+    ontology[("Ontology")]:::ontology
+
+    subgraph domain["Domain model"]
+      users["Users served"]
+      tasks["Activation tasks"]
+      outputs["Expected outputs"]
+      quality["Quality bar"]
+      failures["Failure modes"]
+      criteria["Eval criteria vocabulary"]
+    end
+
+    sources --> ontology
+    authorities --> ontology
+    gaps --> ontology
+    labels --> ontology
+    ontology --> users
+    ontology --> tasks
+    ontology --> outputs
+    ontology --> quality
+    ontology --> failures
+    ontology --> criteria
+    ontology -. "guardrail, not rewrite brief" .-> later["Later loops"]:::muted
+
+    classDef ontology fill:#7FA7C930,stroke:#7FA7C9,color:#1D1D1F,stroke-width:2px
+    classDef muted fill:#FFFFFF,stroke:#B8B8BD,color:#D1D1D6,stroke-dasharray:4 4

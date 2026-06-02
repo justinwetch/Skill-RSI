@@ -1,0 +1,23 @@
+%%{init: {"theme":"base","themeVariables":{"background":"#F5F5F7","mainBkg":"#FFFFFF","primaryColor":"#FFFFFF","primaryTextColor":"#1D1D1F","primaryBorderColor":"#D2D2D7","lineColor":"#6E6E73","secondaryColor":"#DCEAF5","tertiaryColor":"#E7F2E8","textColor":"#1D1D1F","clusterBkg":"#FFFFFF","clusterBorder":"#D2D2D7","fontFamily":"DM Sans, -apple-system, BlinkMacSystemFont, Segoe UI, sans-serif"}}}%%
+flowchart TD
+    candidate[("Candidate package")]:::candidate
+    reviewer["Adversarial reviewer"]
+    candidate --> reviewer
+
+    reviewer --> package{"Valid SKILL.md<br/>and frontmatter?"}
+    package -->|"no"| revision["Request one bounded revision"]:::warn
+    package -->|"yes"| refs{"Referenced files present?"}
+    refs -->|"no"| revision
+    refs -->|"yes"| safety{"Unsafe package behavior?"}
+    safety -->|"yes"| stop["Stop run cleanly"]:::error
+    safety -->|"no"| leakage{"Eval leakage or strategy drift?"}
+    leakage -->|"yes"| revision
+    leakage -->|"no"| compression{"Severe compression<br/>or wholesale rewrite?"}
+    compression -->|"yes"| revision
+    compression -->|"no"| eval["Allowed into evaluation"]:::pass
+    revision --> reviewer
+
+    classDef candidate fill:#D39A5F30,stroke:#D39A5F,color:#1D1D1F,stroke-width:2px
+    classDef warn fill:#D6A84F30,stroke:#D6A84F,color:#1D1D1F
+    classDef error fill:#FF50682A,stroke:#FF5068,color:#1D1D1F
+    classDef pass fill:#68FF9130,stroke:#68FF91,color:#1D1D1F

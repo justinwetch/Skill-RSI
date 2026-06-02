@@ -1,0 +1,23 @@
+%%{init: {"theme":"base","themeVariables":{"background":"#F5F5F7","mainBkg":"#FFFFFF","primaryColor":"#FFFFFF","primaryTextColor":"#1D1D1F","primaryBorderColor":"#D2D2D7","lineColor":"#6E6E73","secondaryColor":"#DCEAF5","tertiaryColor":"#E7F2E8","textColor":"#1D1D1F","clusterBkg":"#FFFFFF","clusterBorder":"#D2D2D7","fontFamily":"DM Sans, -apple-system, BlinkMacSystemFont, Segoe UI, sans-serif"}}}%%
+flowchart TB
+    prompt[/"Evaluation prompt"/]:::prompt
+    a["Candidate A output"]:::a
+    b["Candidate B output"]:::b
+    criteria[["Criterion scores<br/>format, fidelity, completeness, validity"]]:::eval
+    rationale["Judge rationale"]:::eval
+    winner{"Prompt winner"}
+    summary[("Prompt-level evidence record")]:::memory
+
+    prompt --> a
+    prompt --> b
+    a --> criteria
+    b --> criteria
+    criteria --> rationale --> winner --> summary
+    summary --> decision["Promotion decision can link back here"]:::champion
+
+    classDef prompt fill:#F5F5F7,stroke:#F5F5F7,color:#161617
+    classDef a fill:#7FA7C92A,stroke:#7FA7C9,color:#1D1D1F,stroke-width:2px
+    classDef b fill:#D39A5F30,stroke:#D39A5F,color:#1D1D1F,stroke-width:2px
+    classDef eval fill:#FFFFFF,stroke:#B8B8BD,color:#1D1D1F
+    classDef memory fill:#76A77C22,stroke:#76A77C,color:#1D1D1F
+    classDef champion fill:#68FF9130,stroke:#68FF91,color:#1D1D1F

@@ -1,0 +1,205 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Skill RSI Mermaid renderer</title>
+    <style>
+      :root {
+        --bg: #f5f5f7;
+        --panel: #ffffff;
+        --panel-2: #efeff2;
+        --border: #d2d2d7;
+        --text: #1d1d1f;
+        --muted: #86868b;
+        --secondary: #424245;
+      }
+
+      * { box-sizing: border-box; }
+
+      html,
+      body {
+        margin: 0;
+        min-height: 100%;
+        background: var(--bg);
+        color: var(--text);
+        font-family: "DM Sans", -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", sans-serif;
+      }
+
+      body::after {
+        content: "";
+        position: fixed;
+        inset: 0;
+        pointer-events: none;
+        opacity: 0.018;
+        background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 256 256' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)' opacity='0.55'/%3E%3C/svg%3E");
+      }
+
+      .frame {
+        display: grid;
+        grid-template-rows: auto 1fr auto;
+        width: 100vw;
+        height: 100vh;
+        overflow: hidden;
+        padding: 48px 58px 36px;
+        background:
+          radial-gradient(circle at 12% 8%, rgba(127, 167, 201, 0.18), transparent 32%),
+          radial-gradient(circle at 90% 20%, rgba(118, 167, 124, 0.14), transparent 34%),
+          linear-gradient(180deg, #ffffff, #f5f5f7);
+      }
+
+      .header {
+        display: flex;
+        align-items: flex-start;
+        justify-content: space-between;
+        gap: 24px;
+      }
+
+      .eyebrow {
+        margin: 0 0 10px;
+        color: var(--muted);
+        font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
+        font-size: 12px;
+        letter-spacing: 0.08em;
+        text-transform: uppercase;
+      }
+
+      h1 {
+        margin: 0;
+        max-width: 860px;
+        color: var(--text);
+        font-size: 44px;
+        line-height: 1.05;
+        font-weight: 780;
+        letter-spacing: 0;
+      }
+
+      .lede {
+        max-width: 760px;
+        margin: 12px 0 0;
+        color: var(--secondary);
+        font-size: 17px;
+        line-height: 1.42;
+      }
+
+      .brand {
+        display: flex;
+        align-items: center;
+        gap: 12px;
+        font-size: 18px;
+        font-weight: 720;
+        white-space: nowrap;
+      }
+
+      .mark {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        width: 34px;
+        height: 34px;
+        border-radius: 9px;
+        background: var(--text);
+        color: var(--bg);
+        font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
+        font-weight: 900;
+      }
+
+      .diagram-wrap {
+        display: grid;
+        place-items: center;
+        min-height: 0;
+        margin-top: 22px;
+        border: 1px solid color-mix(in srgb, var(--border) 84%, white 6%);
+        border-radius: 14px;
+        background:
+          linear-gradient(180deg, #ffffff, color-mix(in srgb, var(--panel) 94%, black 2%));
+        padding: 24px;
+        box-shadow: 0 18px 46px rgba(0, 0, 0, 0.10);
+      }
+
+      #diagram {
+        display: grid;
+        place-items: center;
+        width: 100%;
+        height: 100%;
+        min-height: 0;
+      }
+
+      #diagram svg {
+        display: block;
+        width: 100% !important;
+        height: 100% !important;
+        max-width: none !important;
+        max-height: none !important;
+      }
+
+      .footer {
+        display: flex;
+        justify-content: space-between;
+        gap: 20px;
+        padding-top: 18px;
+        color: var(--muted);
+        font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
+        font-size: 12px;
+      }
+
+      .square h1 { font-size: 78px; }
+      .square .lede { display: none; }
+      .square .eyebrow { font-size: 22px; }
+      .square .brand { font-size: 32px; gap: 18px; }
+      .square .mark { width: 60px; height: 60px; border-radius: 15px; }
+      .square .frame { padding: 104px 108px 68px; }
+      .square .diagram-wrap { margin-top: 48px; padding: 40px; border-radius: 24px; }
+      .square .footer { padding-top: 32px; font-size: 21px; }
+    </style>
+  </head>
+  <body>
+    <main class="frame">
+      <header class="header">
+        <div>
+          <p id="eyebrow" class="eyebrow"></p>
+          <h1 id="title"></h1>
+          <p id="lede" class="lede"></p>
+        </div>
+        <div class="brand"><span class="mark">∴</span><span>Skill RSI</span></div>
+      </header>
+      <section class="diagram-wrap">
+        <div id="diagram"></div>
+      </section>
+      <footer class="footer">
+        <span id="source"></span>
+        <span>Mermaid source · version controlled</span>
+      </footer>
+    </main>
+
+    <script type="module">
+      import mermaid from "../../../../node_modules/mermaid/dist/mermaid.esm.min.mjs";
+
+      mermaid.initialize({
+        startOnLoad: false,
+        securityLevel: "loose",
+        flowchart: {
+          htmlLabels: true,
+          curve: "basis",
+          padding: 18,
+        },
+        sequence: {
+          showSequenceNumbers: true,
+          mirrorActors: false,
+        },
+      });
+
+      window.renderDiagram = async function renderDiagram({ source, slug, title, eyebrow, lede, format }) {
+        document.documentElement.classList.toggle("square", format === "square");
+        document.querySelector("#title").textContent = title;
+        document.querySelector("#eyebrow").textContent = eyebrow;
+        document.querySelector("#lede").textContent = lede;
+        document.querySelector("#source").textContent = `docs/assets/diagrams/mermaid/${slug}.mmd`;
+        const id = `diagram-${slug}-${Date.now()}`.replace(/[^a-zA-Z0-9_-]/g, "-");
+        const result = await mermaid.render(id, source);
+        document.querySelector("#diagram").innerHTML = result.svg;
+        return result.svg;
+      };
+    </script>
+  </body>
+</html>

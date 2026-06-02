@@ -1,5 +1,7 @@
 # Skill RSI
 
+[Watch the Intro Video here](https://youtu.be/Ymt1FzdO-IQ?si=5n7jp74BpF-vASLA)
+
 Want Codex to install it for you? Paste this into a fresh Codex thread:
 
 ```text

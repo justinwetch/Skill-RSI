@@ -9,7 +9,7 @@ import {
 import {
   createProject, deleteProject, fetchProjects, fetchProjectSummary, fetchRunDetail,
   fetchComparison, fetchSkill, fetchProgress, fetchCapabilities, fetchProjectDraft, artifactUrl, runStep,
-  updateProjectSettings, exportChampion,
+  updateProjectSettings, exportChampion, fetchUpdateStatus,
 } from './api.js';
 import { resolveInitialRoute } from './routing.js';
 import { createOpenAiDiagnosticMetadata, getOpenAiKeyStatus } from './key-status.js';
@@ -162,6 +162,8 @@ export default function App() {
   });
   const [openAiKey, setOpenAiKey] = useState(() => localStorage.getItem(OPENAI_KEY_STORAGE_KEY) || '');
   const [capabilities, setCapabilities] = useState(null);
+  const [updateStatus, setUpdateStatus] = useState(null);
+  const [updateBusy, setUpdateBusy] = useState(false);
   const [skillSource, setSkillSource] = useState('champion');
   const [skillData, setSkillData] = useState(null);
   const [compareData, setCompareData] = useState(null);
@@ -447,13 +449,35 @@ export default function App() {
     else localStorage.removeItem(OPENAI_KEY_STORAGE_KEY);
   }
 
+  async function handleCheckUpdates() {
+    if (updateBusy) return;
+    setUpdateBusy(true);
+    try {
+      setUpdateStatus(await fetchUpdateStatus());
+    } catch (err) {
+      setUpdateStatus({
+        status: 'unknown',
+        message: err.message,
+      });
+    } finally {
+      setUpdateBusy(false);
+    }
+  }
+
   return (
     <div className="app">
       <div className="topbar">
-        <button className="brand" onClick={() => { setView('list'); loadProjects(); }}>
-          <span className="brand-mark"><FlaskConical size={17} /></span>
-          Skill RSI
-        </button>
+        <div className="brand-wrap">
+          <button className="brand" onClick={() => { setView('list'); loadProjects(); }}>
+            <span className="brand-mark"><FlaskConical size={17} /></span>
+            Skill RSI
+          </button>
+          <button type="button" className="update-check" onClick={handleCheckUpdates} disabled={updateBusy}>
+            {updateBusy ? <Loader2 size={13} className="spin" /> : <RefreshCw size={13} />}
+            Check for updates
+          </button>
+          {updateStatus && <UpdateStatus status={updateStatus} />}
+        </div>
         <button className="icon-btn" aria-label="Toggle theme"
           onClick={() => setTheme(theme === 'dark' ? 'light' : 'dark')}>
           {theme === 'dark' ? <Sun size={17} /> : <Moon size={17} />}
@@ -499,6 +523,90 @@ export default function App() {
       {lightboxImage && <ImageLightbox image={lightboxImage} onClose={() => setLightboxImage(null)} />}
     </div>
   );
+}
+
+function UpdateStatus({ status }) {
+  const [copyState, setCopyState] = useState('idle');
+  const updateAvailable = status.status === 'update_available';
+  const upToDate = status.status === 'up_to_date';
+  const label = upToDate
+    ? `Up to date (${status.local?.shortCommit || 'local'})`
+    : updateAvailable
+      ? `Update available (${status.remote?.shortCommit || 'latest'})`
+      : status.message || 'Update status unknown';
+
+  if (updateAvailable && status.remote?.htmlUrl) {
+    return (
+      <span className="update-actions">
+        <a className="update-status update" href={status.remote.htmlUrl} target="_blank" rel="noreferrer">
+          {label}
+          <ExternalLink size={12} />
+        </a>
+        <button type="button" className="agent-update-copy" onClick={async () => {
+          const ok = await copyText(buildUpdateAgentPrompt(status));
+          setCopyState(ok ? 'copied' : 'failed');
+          window.setTimeout(() => setCopyState('idle'), 1800);
+        }}>
+          <Copy size={12} />
+          {copyState === 'copied' ? 'Copied' : copyState === 'failed' ? 'Copy failed' : 'Ask agent to update'}
+        </button>
+      </span>
+    );
+  }
+
+  return (
+    <span className={`update-status ${upToDate ? 'ok' : 'unknown'}`} title={status.message || ''}>
+      {label}
+    </span>
+  );
+}
+
+async function copyText(text) {
+  try {
+    if (navigator.clipboard?.writeText) {
+      await navigator.clipboard.writeText(text);
+      return true;
+    }
+  } catch {
+    // Fall back to a temporary textarea for older or restricted browser contexts.
+  }
+
+  try {
+    const textarea = document.createElement('textarea');
+    textarea.value = text;
+    textarea.setAttribute('readonly', '');
+    textarea.style.position = 'fixed';
+    textarea.style.opacity = '0';
+    document.body.appendChild(textarea);
+    textarea.select();
+    const ok = document.execCommand('copy');
+    document.body.removeChild(textarea);
+    return ok;
+  } catch {
+    return false;
+  }
+}
+
+function buildUpdateAgentPrompt(status) {
+  const branch = status.remote?.defaultBranch || 'main';
+  const latest = status.remote?.shortCommit || status.remote?.commit || 'latest GitHub commit';
+  return [
+    'Please update the local Skill RSI checkout for me.',
+    '',
+    'Repo: /Users/justinwetch/Documents/ClaudeCode/Skill RSI',
+    `Target: latest GitHub commit on ${branch} (${latest}).`,
+    '',
+    'Please:',
+    '1. Check the worktree and preserve any user changes.',
+    '2. Pull/update the repo safely, preferably with git pull --ff-only.',
+    '3. Run npm install only if dependencies changed.',
+    '4. Run npm run build:ui.',
+    '5. Refresh the Codex plugin install if plugin files changed or the installed plugin may be stale: run npm run plugin:configure, npm run plugin:validate, npm run plugin:smoke, codex plugin marketplace add ., and codex plugin add skill-rsi@skill-rsi.',
+    '6. Restart the local Skill RSI server after the update.',
+    '7. Tell me whether I should start a fresh Codex thread so the updated Skill RSI plugin and tools are loaded.',
+    '',
+    'Do not start any Skill RSI improvement loop or model-backed run.',
+  ].join('\n');
 }
 
 function getDraftTaskContract(draft) {

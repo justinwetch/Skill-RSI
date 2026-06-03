@@ -4,6 +4,8 @@ import http from 'node:http';
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { execFile } from 'node:child_process';
+import { promisify } from 'node:util';
 import { loadDotEnv } from './lib/env.js';
 import { runProject } from './lib/run-loop.js';
 import {
@@ -38,6 +40,7 @@ const DEFAULT_MODEL = 'gpt-5.5';
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const repoRoot = path.resolve(__dirname, '..');
 const appDist = path.join(repoRoot, 'ui', 'dist');
+const execFileAsync = promisify(execFile);
 
 await loadDotEnv(repoRoot);
 
@@ -93,6 +96,11 @@ async function handleApi(request, response, url) {
         defaultModel: DEFAULT_MODEL,
       },
     });
+    return;
+  }
+
+  if (request.method === 'GET' && parts.length === 2 && parts[1] === 'update-status') {
+    writeJson(response, 200, await readUpdateStatus());
     return;
   }
 
@@ -297,6 +305,115 @@ async function readBody(request) {
   for await (const chunk of request) chunks.push(chunk);
   const text = Buffer.concat(chunks).toString('utf8');
   return text.trim() ? JSON.parse(text) : {};
+}
+
+async function readUpdateStatus() {
+  const [localCommit, localBranch, remoteUrl, dirtyStatus] = await Promise.all([
+    git(['rev-parse', 'HEAD']),
+    git(['branch', '--show-current']).catch(() => ''),
+    git(['remote', 'get-url', 'origin']).catch(() => ''),
+    git(['status', '--porcelain']).catch(() => ''),
+  ]);
+  const github = parseGitHubRemote(remoteUrl);
+  if (!github) {
+    return {
+      schemaVersion: 1,
+      status: 'unknown',
+      message: 'No GitHub origin remote is configured.',
+      local: formatLocalGit(localCommit, localBranch, dirtyStatus),
+      remote: null,
+      checkedAt: new Date().toISOString(),
+    };
+  }
+
+  try {
+    const repo = await fetchGitHubJson(`https://api.github.com/repos/${github.owner}/${github.repo}`);
+    const defaultBranch = repo.default_branch || 'main';
+    const latest = await fetchGitHubJson(`https://api.github.com/repos/${github.owner}/${github.repo}/commits/${encodeURIComponent(defaultBranch)}`);
+    const remoteCommit = latest.sha || '';
+    const upToDate = remoteCommit && remoteCommit === localCommit;
+    return {
+      schemaVersion: 1,
+      status: upToDate ? 'up_to_date' : 'update_available',
+      message: upToDate ? 'Skill RSI is up to date.' : `A newer GitHub commit is available on ${defaultBranch}.`,
+      local: formatLocalGit(localCommit, localBranch, dirtyStatus),
+      remote: {
+        owner: github.owner,
+        repo: github.repo,
+        defaultBranch,
+        commit: remoteCommit,
+        shortCommit: shortCommit(remoteCommit),
+        htmlUrl: latest.html_url || `https://github.com/${github.owner}/${github.repo}/commit/${remoteCommit}`,
+      },
+      checkedAt: new Date().toISOString(),
+    };
+  } catch (error) {
+    return {
+      schemaVersion: 1,
+      status: 'unknown',
+      message: `Could not check GitHub updates: ${error.message}`,
+      local: formatLocalGit(localCommit, localBranch, dirtyStatus),
+      remote: {
+        owner: github.owner,
+        repo: github.repo,
+      },
+      checkedAt: new Date().toISOString(),
+    };
+  }
+}
+
+async function git(args) {
+  const { stdout } = await execFileAsync('git', args, { cwd: repoRoot, timeout: 8000 });
+  return stdout.trim();
+}
+
+function parseGitHubRemote(remoteUrl) {
+  if (!remoteUrl) return null;
+  const normalized = remoteUrl.trim().replace(/\.git$/i, '');
+  const sshMatch = normalized.match(/^git@github\.com:([^/]+)\/(.+)$/i);
+  if (sshMatch) return { owner: sshMatch[1], repo: sshMatch[2] };
+  try {
+    const url = new URL(normalized);
+    if (url.hostname !== 'github.com') return null;
+    const [owner, repo] = url.pathname.replace(/^\/+/, '').split('/');
+    if (!owner || !repo) return null;
+    return { owner, repo };
+  } catch {
+    return null;
+  }
+}
+
+function formatLocalGit(commit, branch, dirtyStatus) {
+  return {
+    branch: branch || 'detached',
+    commit,
+    shortCommit: shortCommit(commit),
+    dirty: Boolean(dirtyStatus),
+  };
+}
+
+function shortCommit(commit) {
+  return String(commit || '').slice(0, 7);
+}
+
+async function fetchGitHubJson(url) {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 8000);
+  try {
+    const response = await fetch(url, {
+      headers: {
+        'Accept': 'application/vnd.github+json',
+        'User-Agent': 'skill-rsi-local-ui',
+      },
+      signal: controller.signal,
+    });
+    if (!response.ok) {
+      throw new Error(`GitHub returned HTTP ${response.status}`);
+    }
+    return await response.json();
+  } finally {
+    clearTimeout(timeout);
+  }
 }
 
 function writeJson(response, statusCode, value) {

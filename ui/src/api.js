@@ -13,6 +13,10 @@ export async function fetchCapabilities() {
   return request('/api/capabilities');
 }
 
+export async function fetchUpdateStatus() {
+  return request('/api/update-status');
+}
+
 export async function fetchProjectDraft(draftId) {
   return request(`/api/drafts/${encodeURIComponent(draftId)}`);
 }

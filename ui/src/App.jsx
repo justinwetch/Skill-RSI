@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import {
   FlaskConical, Moon, Sun, Plus, RefreshCw, ChevronLeft, ChevronRight, ChevronDown, ChevronUp,
   ArrowRight, Play, Trophy, Check, CheckCircle2, ArrowUp, Minus, FileText,
@@ -972,7 +972,7 @@ function CreateView({
         </label>
         <label className="field">
           <span>What should it get better at?{existing ? ' (optional)' : ''}</span>
-          <textarea value={draft.goal} required={!existing}
+          <AutoResizeTextarea value={draft.goal} required={!existing}
             placeholder="Help agents write correct, readable SQL across dialects."
             onChange={e => setDraft({ ...draft, goal: e.target.value })} />
           <p className="field-hint">
@@ -991,6 +991,28 @@ function CreateView({
         </div>
       </form>
     </div>
+  );
+}
+
+function AutoResizeTextarea({ value, onChange, ...props }) {
+  const textareaRef = useRef(null);
+
+  useLayoutEffect(() => {
+    const textarea = textareaRef.current;
+    if (!textarea) return;
+    textarea.style.height = 'auto';
+    textarea.style.height = `${textarea.scrollHeight}px`;
+  }, [value]);
+
+  return (
+    <textarea
+      ref={textareaRef}
+      value={value}
+      onChange={onChange}
+      className="auto-textarea"
+      rows={3}
+      {...props}
+    />
   );
 }
 
@@ -1149,7 +1171,7 @@ function Project(props) {
       {(screen === 'home' || screen === 'running') && (
         <>
           <h1 className="h-title">{formatName(summary.projectId)}</h1>
-          <p className="goal">{summary.goal}</p>
+          <ExpandableGoal text={summary.goal} />
 
           {screen === 'running' ? (
             <RunningLoop fallbackStage={stageIdx} elapsed={elapsed} progress={progress}
@@ -1172,6 +1194,51 @@ function Project(props) {
             </>
           )}
         </>
+      )}
+    </div>
+  );
+}
+
+function ExpandableGoal({ text }) {
+  const [expanded, setExpanded] = useState(false);
+  const [canExpand, setCanExpand] = useState(false);
+  const goalRef = useRef(null);
+  const words = String(text || '').trim().split(/\s+/).filter(Boolean);
+
+  useEffect(() => {
+    setExpanded(false);
+  }, [text]);
+
+  useLayoutEffect(() => {
+    const el = goalRef.current;
+    if (!el || expanded) return undefined;
+
+    const updateCanExpand = () => {
+      const overDefaultLines = el.scrollHeight > el.clientHeight + 1;
+      setCanExpand(words.length > 70 || overDefaultLines);
+    };
+
+    updateCanExpand();
+    if (typeof ResizeObserver === 'undefined') {
+      window.addEventListener('resize', updateCanExpand);
+      return () => window.removeEventListener('resize', updateCanExpand);
+    }
+
+    const observer = new ResizeObserver(updateCanExpand);
+    observer.observe(el);
+    return () => observer.disconnect();
+  }, [expanded, text, words.length]);
+
+  if (!text) return null;
+
+  return (
+    <div className="goal-block">
+      <p ref={goalRef} className={`goal${expanded ? ' expanded' : ' clamped'}`}>{text}</p>
+      {canExpand && (
+        <button type="button" className="goal-toggle" aria-expanded={expanded} onClick={() => setExpanded(v => !v)}>
+          {expanded ? <ChevronUp size={14} /> : <ChevronDown size={14} />}
+          {expanded ? 'Show less' : 'Show more'}
+        </button>
       )}
     </div>
   );
@@ -1207,6 +1274,7 @@ function RunBar({ summary, loops, setLoops, busy, settingsBusy, onStart, onModel
   const automationState = describeAutomation(automation);
   const StatusIcon = automationState.icon;
   const runDisabled = busy || settingsBusy || automation?.locked;
+  const hasRuns = (summary.state.runCount || 0) > 0;
   return (
     <div className="run-bar">
       <div className="run-bar-main">

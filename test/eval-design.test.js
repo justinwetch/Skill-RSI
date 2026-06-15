@@ -58,6 +58,158 @@ test('evaluation designer records model-generated criteria provenance', () => {
   assert.ok(design.criteria.some(criterion => criterion.id === 'domain_specificity'));
 });
 
+test('evaluation designer can seed expert-register and intertextual prompt checks', () => {
+  const design = designEvalBatch({
+    runId: 'run-expert-register',
+    goal: 'Help agents design product strategy.',
+    ontology: {
+      qualityAxes: ['strategic precision'],
+      targetTasks: ['draft a positioning critique'],
+      practitionerLexicon: [{
+        term: 'positioning',
+        evalImplication: 'Penalize output that treats positioning as copywriting.',
+      }],
+      terminologyDiscriminators: [{
+        term: 'positioning',
+        distinguishFrom: 'messaging',
+        distinction: 'market frame vs. outward language',
+      }],
+      intertextualMap: {
+        recurringDebates: ['category creation vs. category capture'],
+        conceptLineages: [{
+          concept: 'positioning',
+          drawsFrom: ['market segmentation'],
+          contrastsWith: ['messaging'],
+        }],
+      },
+    },
+    parameterization: {
+      parameters: [{ id: 'p01', surface: 'expert vocabulary', possibleMutations: ['add terminology checks'] }],
+    },
+    experimentPlan: { focusParameterIds: ['p01'] },
+    stablePromptCount: 1,
+    explorationPromptCount: 0,
+  });
+
+  assert.match(design.prompts[0].text, /Expert-register check:/);
+  assert.match(design.prompts[0].text, /positioning/);
+  assert.ok(design.prompts[0].expectedSignals.some(signal => /practitioner_lexicon/.test(signal)));
+});
+
+test('evaluation designer ignores sourced expert-register checks without source refs', () => {
+  const design = designEvalBatch({
+    runId: 'run-expert-register-unsourced',
+    goal: 'Help agents design product strategy.',
+    ontology: {
+      qualityAxes: ['strategic precision'],
+      targetTasks: ['draft a positioning critique'],
+      practitionerLexicon: [{
+        term: 'positioning',
+        evalImplication: 'Penalize output that treats positioning as copywriting.',
+        evidenceBasis: 'sourced',
+        sourceRefs: [],
+      }],
+      intertextualMap: {
+        recurringDebates: ['category creation vs. category capture'],
+        evidenceBasis: 'sourced',
+        sourceRefs: [],
+      },
+    },
+    parameterization: {
+      parameters: [{ id: 'p01', surface: 'expert vocabulary', possibleMutations: ['add terminology checks'] }],
+    },
+    experimentPlan: { focusParameterIds: ['p01'] },
+    stablePromptCount: 1,
+    explorationPromptCount: 0,
+  });
+
+  assert.doesNotMatch(design.prompts[0].text, /Expert-register check:/);
+  assert.ok(!design.prompts[0].expectedSignals.some(signal => /practitioner_lexicon|intertextual/.test(signal)));
+});
+
+test('evaluation designer ignores sourced intertextual lineage checks without source refs', () => {
+  const design = designEvalBatch({
+    runId: 'run-lineage-unsourced',
+    goal: 'Help agents design product strategy.',
+    ontology: {
+      qualityAxes: ['strategic precision'],
+      targetTasks: ['draft a positioning critique'],
+      intertextualMap: {
+        evidenceBasis: 'inferred',
+        sourceRefs: [],
+        conceptLineages: [{
+          concept: 'positioning',
+          drawsFrom: ['market segmentation'],
+          evidenceBasis: 'sourced',
+          sourceRefs: [],
+        }],
+      },
+    },
+    parameterization: {
+      parameters: [{ id: 'p01', surface: 'expert vocabulary', possibleMutations: ['add terminology checks'] }],
+    },
+    experimentPlan: { focusParameterIds: ['p01'] },
+    stablePromptCount: 1,
+    explorationPromptCount: 0,
+  });
+
+  assert.doesNotMatch(design.prompts[0].text, /Expert-register check:/);
+  assert.ok(!design.prompts[0].expectedSignals.some(signal => /intertextual_lineage/.test(signal)));
+});
+
+test('evaluation designer ignores sourced expert-register checks without research provenance when supplied', () => {
+  const design = designEvalBatch({
+    runId: 'run-expert-register-unprovenanced',
+    goal: 'Help agents design product strategy.',
+    ontology: {
+      qualityAxes: ['strategic precision'],
+      targetTasks: ['draft a positioning critique'],
+      practitionerLexicon: [{
+        term: 'positioning',
+        evalImplication: 'Penalize output that treats positioning as copywriting.',
+        evidenceBasis: 'sourced',
+        sourceRefs: ['s1'],
+      }],
+      terminologyDiscriminators: [{
+        term: 'positioning',
+        distinguishFrom: 'messaging',
+        distinction: 'market frame vs. outward language',
+        evidenceBasis: 'sourced',
+        sourceRefs: ['s1'],
+      }, 'category fit'],
+      intertextualMap: {
+        evidenceBasis: 'sourced',
+        sourceRefs: ['s1'],
+        recurringDebates: ['category creation vs. category capture'],
+        conceptLineages: [{
+          concept: 'positioning',
+          drawsFrom: ['market segmentation'],
+          evidenceBasis: 'sourced',
+          sourceRefs: ['s1'],
+        }],
+      },
+    },
+    researchPacket: {
+      researchMode: 'sourced',
+      practitionerLexicon: [],
+      intertextualMap: {
+        evidenceBasis: 'inferred',
+        sourceRefs: [],
+        conceptLineages: [],
+      },
+    },
+    parameterization: {
+      parameters: [{ id: 'p01', surface: 'expert vocabulary', possibleMutations: ['add terminology checks'] }],
+    },
+    experimentPlan: { focusParameterIds: ['p01'] },
+    stablePromptCount: 1,
+    explorationPromptCount: 0,
+  });
+
+  assert.doesNotMatch(design.prompts[0].text, /Expert-register check:/);
+  assert.ok(!design.prompts[0].expectedSignals.some(signal => /practitioner_lexicon|terminology_discriminator|intertextual/.test(signal)));
+});
+
 test('evaluation designer reuses stable prompts and appends exploration history', () => {
   const first = designEvalBatch({
     runId: 'run-001',
@@ -312,6 +464,56 @@ test('invalid naturalized prompts get one repair attempt before fallback', async
   assert.equal(design.bank.promptAuthoring.modelAttemptCount, 2);
   assert.deepEqual(design.bank.promptAuthoring.initialInvalidPromptIds, ['run-naturalized-repair-stable-01']);
   assert.deepEqual(design.bank.promptAuthoring.repairedPromptIds, ['run-naturalized-repair-stable-01']);
+  assert.equal(design.bank.promptAuthoring.fallbackPromptCount, 0);
+});
+
+test('naturalized text prompts repair dangling source-material references', async () => {
+  const design = designEvalBatch({
+    runId: 'run-naturalized-text-repair',
+    goal: 'Help agents analyze screenplay structure.',
+    ontology: {
+      qualityAxes: ['structural usefulness'],
+      targetTasks: ['identify and classify structural beats in a screenplay outline'],
+    },
+    parameterization: { parameters: [{ id: 'p01', surface: 'beat identification' }] },
+    experimentPlan: { focusParameterIds: ['p01'] },
+    stablePromptCount: 1,
+    explorationPromptCount: 0,
+  });
+  const calls = [];
+
+  await naturalizeEvalPrompts({
+    design,
+    goal: 'Help agents analyze screenplay structure.',
+    model: 'fake-judge-model',
+    modelClient: async request => {
+      calls.push(request);
+      if (calls.length === 1) {
+        return JSON.stringify({
+          prompts: ['Please read the screenplay outline below and label the major story beats. The story is about a paramedic who uncovers a conspiracy.'],
+        });
+      }
+      return JSON.stringify({
+        prompts: [`Please label the major story beats in this compact outline:
+
+Outline:
+- Opening: A paramedic begins a routine night shift while trying to avoid political conflict.
+- Inciting pressure: A patient whispers about a city contract and disappears before giving a statement.
+- Act 1 break: The paramedic steals a file and commits to investigating.
+- Midpoint: He learns his supervisor is protecting the conspiracy.
+- Low point: His brother is threatened because of the investigation.
+- Climax: He exposes the contract scheme during a public emergency.`],
+      });
+    },
+  });
+
+  assert.equal(calls.length, 2);
+  assert.match(calls[1].messages[0].content, /Rejected prompt numbers: 1/);
+  assert.match(calls[1].messages[0].content, /Self-containment rule/);
+  assert.match(design.prompts[0].text, /Outline:/);
+  assert.equal(design.bank.promptAuthoring.source, 'model_naturalized');
+  assert.deepEqual(design.bank.promptAuthoring.initialInvalidPromptIds, ['run-naturalized-text-repair-stable-01']);
+  assert.deepEqual(design.bank.promptAuthoring.repairedPromptIds, ['run-naturalized-text-repair-stable-01']);
   assert.equal(design.bank.promptAuthoring.fallbackPromptCount, 0);
 });
 

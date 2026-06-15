@@ -157,6 +157,7 @@ export default function App() {
     baselineFiles: [],
     baselineZip: null,
     baselineMarkdown: null,
+    targetIterations: 3,
     serverDraftId: null,
     serverBaseline: null,
   });
@@ -369,6 +370,7 @@ export default function App() {
             outputType: draft.outputType || 'text',
             taskContract: getDraftTaskContract(draft),
             model: draft.model || 'gpt-5.5',
+            targetIterations: Math.max(1, Number.parseInt(draft.targetIterations, 10) || 3),
             draftId: fromServerDraft ? draft.serverDraftId : null,
             baselineFiles,
             baselineArchive,
@@ -387,6 +389,7 @@ export default function App() {
         baselineFiles: [],
         baselineZip: null,
         baselineMarkdown: null,
+        targetIterations: 3,
         serverDraftId: null,
         serverBaseline: null,
       });

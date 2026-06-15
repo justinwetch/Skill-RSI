@@ -84,6 +84,290 @@ test('real ontology contract normalizes scalar fields', async () => {
   assert.deepEqual(result.artifact.targetUsers, ['agents']);
 });
 
+test('real ontology contract caps lexicon and downgrades unprovenanced sourced entries', async () => {
+  const cwd = await fs.mkdtemp(path.join(os.tmpdir(), 'skill-rsi-ontology-lexicon-cap-'));
+  await initProject({ cwd, projectName: 'Strategy Design', goal: 'Help agents design product strategy.' });
+  const lexicon = Array.from({ length: 55 }, (_, index) => ({
+    term: `term-${index + 1}`,
+    expertMeaning: 'A practitioner distinction.',
+    whyItMattersForThisSkill: 'It shapes the skill behavior.',
+    evalImplication: 'Check usage.',
+    evidenceBasis: 'sourced',
+    sourceRefs: index === 0 ? [] : ['s1'],
+  }));
+
+  const result = await runAgentContract({
+    cwd,
+    projectName: 'strategy-design',
+    agentName: 'ontology',
+    runId: 'ontology-lexicon-cap',
+    mode: 'real',
+    model: 'fake-agent-model',
+    modelClient: async () => JSON.stringify({
+      skillGoal: 'Help agents design product strategy.',
+      targetUsers: ['agents'],
+      targetTasks: ['design product strategy'],
+      invocationBoundaries: {
+        shouldTriggerWhen: ['strategy task'],
+        shouldNotTriggerWhen: ['unrelated task'],
+      },
+      inputSurface: ['user request'],
+      outputArtifacts: ['recommendation'],
+      requiredKnowledge: ['Agent Skills'],
+      failureModes: ['over-triggering', 'jargon stuffing', 'weak validation'],
+      qualityAxes: ['strategic precision'],
+      evalPromptTaxonomy: ['direct request'],
+      candidateStrategySpace: ['lean procedural'],
+      practitionerLexicon: lexicon,
+      terminologyDiscriminators: [{
+        term: 'term-2',
+        distinguishFrom: 'adjacent term',
+        evidenceBasis: 'sourced',
+        sourceRefs: ['s1'],
+      }, 'positioning vs messaging'],
+      intertextualMap: {
+        canonicalTexts: ['Canonical strategy text'],
+        evidenceBasis: 'sourced',
+        sourceRefs: [],
+        conceptLineages: [{
+          concept: 'positioning',
+          drawsFrom: ['segmentation'],
+          evidenceBasis: 'sourced',
+          sourceRefs: [],
+        }],
+      },
+    }),
+  });
+
+  assert.equal(result.artifact.practitionerLexicon.length, 50);
+  assert.equal(result.artifact.practitionerLexicon[0].evidenceBasis, 'inferred');
+  assert.equal(result.artifact.practitionerLexicon[1].evidenceBasis, 'inferred');
+  assert.equal(result.artifact.terminologyDiscriminators[0].evidenceBasis, 'inferred');
+  assert.deepEqual(result.artifact.terminologyDiscriminators[1], {
+    term: 'positioning vs messaging',
+    evidenceBasis: 'inferred',
+    sourceRefs: [],
+  });
+  assert.equal(result.artifact.intertextualMap.evidenceBasis, 'inferred');
+  assert.equal(result.artifact.intertextualMap.conceptLineages[0].evidenceBasis, 'inferred');
+});
+
+test('real ontology contract normalizes pairwise terminology and node-style intertextual maps', async () => {
+  const cwd = await fs.mkdtemp(path.join(os.tmpdir(), 'skill-rsi-ontology-model-shapes-'));
+  await initProject({ cwd, projectName: 'Ontology Skill', goal: 'Help agents build practitioner ontologies.' });
+
+  const result = await runAgentContract({
+    cwd,
+    projectName: 'ontology-skill',
+    agentName: 'ontology',
+    runId: 'ontology-model-shapes',
+    mode: 'real',
+    model: 'fake-agent-model',
+    modelClient: async () => JSON.stringify({
+      skillGoal: 'Help agents build practitioner ontologies.',
+      targetUsers: ['agents'],
+      targetTasks: ['build ontology packets'],
+      invocationBoundaries: {
+        shouldTriggerWhen: ['ontology task'],
+        shouldNotTriggerWhen: ['unrelated task'],
+      },
+      inputSurface: ['user request'],
+      outputArtifacts: ['ontology packet'],
+      requiredKnowledge: ['ontology design'],
+      failureModes: ['shallow jargon', 'weak grounding', 'missing distinctions'],
+      qualityAxes: ['terminology precision'],
+      evalPromptTaxonomy: ['distinction check'],
+      candidateStrategySpace: ['intertextual alignment'],
+      practitionerLexicon: [{
+        term: 'taxonomy',
+        expertMeaning: 'Hierarchical classification.',
+        evidenceBasis: 'inferred',
+        sourceRefs: [],
+      }],
+      terminologyDiscriminators: [{
+        termA: 'taxonomy',
+        termB: 'ontology',
+        difference: 'Hierarchy versus relational semantic model.',
+        skillRule: 'Do not collapse hierarchy into ontology.',
+        evidenceBasis: 'sourced',
+        sourceRefs: ['s1'],
+      }],
+      intertextualMap: [{
+        node: 'W3C SHACL',
+        type: 'web standard',
+        connections: ['Separates validation from semantics'],
+        commonMisreadings: ['Using SHACL as ontology semantics'],
+        relevance: 'Validation layer for ontology checks',
+        sourceRefs: ['s2'],
+      }],
+    }),
+  });
+
+  assert.equal(result.artifact.terminologyDiscriminators[0].term, 'taxonomy vs ontology');
+  assert.equal(result.artifact.terminologyDiscriminators[0].evidenceBasis, 'inferred');
+  assert.equal(result.artifact.intertextualMap.conceptLineages[0].concept, 'W3C SHACL');
+  assert.deepEqual(result.artifact.intertextualMap.conceptLineages[0].drawsFrom, ['Separates validation from semantics']);
+  assert.match(result.artifact.intertextualMap.commonMisreadings[0], /W3C SHACL: Using SHACL/);
+});
+
+test('real ontology contract carries forward research lexicon entries', async () => {
+  const cwd = await fs.mkdtemp(path.join(os.tmpdir(), 'skill-rsi-ontology-lexicon-merge-'));
+  await initProject({ cwd, projectName: 'Ontology Skill', goal: 'Help agents build practitioner ontologies.' });
+
+  const result = await runAgentContract({
+    cwd,
+    projectName: 'ontology-skill',
+    agentName: 'ontology',
+    runId: 'ontology-lexicon-merge',
+    mode: 'real',
+    model: 'fake-agent-model',
+    researchPacket: {
+      practitionerLexicon: [
+        { term: 'ontology', expertMeaning: 'Formal model.', evidenceBasis: 'sourced', sourceRefs: ['s1'] },
+        { term: 'controlled vocabulary', expertMeaning: 'Approved terms.', evidenceBasis: 'sourced', sourceRefs: ['s2'] },
+        { term: 'taxonomy', expertMeaning: 'Hierarchical classification.', evidenceBasis: 'sourced', sourceRefs: ['s3'] },
+      ],
+      intertextualMap: { evidenceBasis: 'inferred', sourceRefs: [], conceptLineages: [] },
+    },
+    modelClient: async () => JSON.stringify({
+      skillGoal: 'Help agents build practitioner ontologies.',
+      targetUsers: ['agents'],
+      targetTasks: ['build ontology packets'],
+      invocationBoundaries: {
+        shouldTriggerWhen: ['ontology task'],
+        shouldNotTriggerWhen: ['unrelated task'],
+      },
+      inputSurface: ['user request'],
+      outputArtifacts: ['ontology packet'],
+      requiredKnowledge: ['ontology design'],
+      failureModes: ['shallow jargon', 'weak grounding', 'missing distinctions'],
+      qualityAxes: ['terminology precision'],
+      evalPromptTaxonomy: ['distinction check'],
+      candidateStrategySpace: ['intertextual alignment'],
+      practitionerLexicon: [{
+        term: 'ontology',
+        expertMeaning: 'A relation-rich domain model.',
+        evidenceBasis: 'sourced',
+        sourceRefs: ['s1'],
+      }],
+      intertextualMap: { evidenceBasis: 'inferred', sourceRefs: [], conceptLineages: [] },
+    }),
+  });
+
+  assert.deepEqual(result.artifact.practitionerLexicon.map(entry => entry.term), [
+    'ontology',
+    'controlled vocabulary',
+    'taxonomy',
+  ]);
+  assert.equal(result.artifact.practitionerLexicon[0].expertMeaning, 'A relation-rich domain model.');
+  assert.equal(result.artifact.practitionerLexicon[1].evidenceBasis, 'sourced');
+});
+
+test('refreshed ontology downgrades newly introduced sourced expert-register claims without research provenance', async () => {
+  const cwd = await fs.mkdtemp(path.join(os.tmpdir(), 'skill-rsi-ontology-refresh-provenance-'));
+  await initProject({ cwd, projectName: 'Strategy Design', goal: 'Help agents design product strategy.' });
+  const paths = getProjectPaths(cwd, 'strategy-design');
+  await fs.mkdir(path.dirname(paths.ontologyCurrent), { recursive: true });
+  await fs.writeFile(paths.ontologyCurrent, JSON.stringify({
+    runId: 'existing-ontology',
+    skillGoal: 'Help agents design product strategy.',
+    targetUsers: ['agents'],
+    targetTasks: ['design product strategy'],
+    invocationBoundaries: {
+      shouldTriggerWhen: ['strategy task'],
+      shouldNotTriggerWhen: ['unrelated task'],
+    },
+    inputSurface: ['user request'],
+    outputArtifacts: ['recommendation'],
+    requiredKnowledge: ['Agent Skills'],
+    failureModes: ['over-triggering', 'jargon stuffing', 'weak validation'],
+    qualityAxes: ['strategic precision'],
+    evalPromptTaxonomy: ['direct request'],
+    candidateStrategySpace: ['lean procedural'],
+    practitionerLexicon: [{
+      term: 'segmentation',
+      evidenceBasis: 'sourced',
+      sourceRefs: ['s0'],
+    }],
+    intertextualMap: {
+      evidenceBasis: 'sourced',
+      sourceRefs: ['s0'],
+      conceptLineages: [{
+        concept: 'segmentation',
+        evidenceBasis: 'sourced',
+        sourceRefs: ['s0'],
+      }],
+    },
+  }, null, 2));
+
+  const researchPacket = {
+    researchMode: 'sourced',
+    sources: [{ id: 's1', title: 'Positioning Source', url: 'https://example.com/positioning' }],
+    practitionerLexicon: [{
+      term: 'positioning',
+      evidenceBasis: 'sourced',
+      sourceRefs: ['s1'],
+    }],
+    intertextualMap: {
+      evidenceBasis: 'sourced',
+      sourceRefs: ['s1'],
+      conceptLineages: [{
+        concept: 'positioning',
+        evidenceBasis: 'sourced',
+        sourceRefs: ['s1'],
+      }],
+    },
+  };
+
+  const result = await runAgentContract({
+    cwd,
+    projectName: 'strategy-design',
+    agentName: 'ontology',
+    runId: 'ontology-refresh-provenance',
+    mode: 'real',
+    model: 'fake-agent-model',
+    refresh: true,
+    researchPacket,
+    modelClient: async () => JSON.stringify({
+      skillGoal: 'Help agents design product strategy.',
+      targetUsers: ['agents'],
+      targetTasks: ['design product strategy'],
+      invocationBoundaries: {
+        shouldTriggerWhen: ['strategy task'],
+        shouldNotTriggerWhen: ['unrelated task'],
+      },
+      inputSurface: ['user request'],
+      outputArtifacts: ['recommendation'],
+      requiredKnowledge: ['Agent Skills'],
+      failureModes: ['over-triggering', 'jargon stuffing', 'weak validation'],
+      qualityAxes: ['strategic precision'],
+      evalPromptTaxonomy: ['direct request'],
+      candidateStrategySpace: ['lean procedural'],
+      practitionerLexicon: [
+        { term: 'segmentation', evidenceBasis: 'sourced', sourceRefs: ['s0'] },
+        { term: 'positioning', evidenceBasis: 'sourced', sourceRefs: ['s1'] },
+        { term: 'narrative moat', evidenceBasis: 'sourced', sourceRefs: ['s1'] },
+      ],
+      intertextualMap: {
+        evidenceBasis: 'sourced',
+        sourceRefs: ['s1'],
+        conceptLineages: [
+          { concept: 'positioning', evidenceBasis: 'sourced', sourceRefs: ['s1'] },
+          { concept: 'narrative moat', evidenceBasis: 'sourced', sourceRefs: ['s1'] },
+        ],
+      },
+    }),
+  });
+
+  const lexiconByTerm = new Map(result.artifact.practitionerLexicon.map(entry => [entry.term, entry]));
+  assert.equal(lexiconByTerm.get('segmentation').evidenceBasis, 'sourced');
+  assert.equal(lexiconByTerm.get('positioning').evidenceBasis, 'sourced');
+  assert.equal(lexiconByTerm.get('narrative moat').evidenceBasis, 'inferred');
+  const lineageByConcept = new Map(result.artifact.intertextualMap.conceptLineages.map(entry => [entry.concept, entry]));
+  assert.equal(lineageByConcept.get('positioning').evidenceBasis, 'sourced');
+  assert.equal(lineageByConcept.get('narrative moat').evidenceBasis, 'inferred');
+});
+
 test('ontology prompt includes research packet and source-labeling instructions', async () => {
   const cwd = await fs.mkdtemp(path.join(os.tmpdir(), 'skill-rsi-ontology-research-prompt-'));
   await initProject({ cwd, projectName: 'UX Design', goal: 'Help agents design better UX.' });
@@ -103,6 +387,9 @@ test('ontology prompt includes research packet and source-labeling instructions'
 
   assert.match(result.prompt, /Research packet:/);
   assert.match(result.prompt, /sourced, inferred, or speculative/);
+  assert.match(result.prompt, /practitionerLexicon/);
+  assert.match(result.prompt, /terminologyDiscriminators/);
+  assert.match(result.prompt, /intertextualMap/);
   assert.match(result.prompt, /Previous quality report:/);
 });
 
@@ -141,6 +428,8 @@ Load [heuristics](references/heuristics.md).
   assert.match(result.prompt, /artifactEvidence/);
   assert.match(result.prompt, /couplingNotes/);
   assert.match(result.prompt, /Treat ontology as the stable domain map/);
+  assert.match(result.prompt, /practitionerLexicon/);
+  assert.match(result.prompt, /wrong concept lineage/);
   assert.match(result.prompt, /Every proposed parameter must be grounded in champion\/package evidence/);
 });
 

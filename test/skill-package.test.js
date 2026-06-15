@@ -63,6 +63,39 @@ Read references/missing.md.
   assert.match(skillPackage.validation.errors.join('\n'), /references\/missing\.md/);
 });
 
+test('reports backticked missing references as validation errors', async () => {
+  const cwd = await fs.mkdtemp(path.join(os.tmpdir(), 'skill-rsi-invalid-backtick-'));
+  await fs.writeFile(path.join(cwd, 'SKILL.md'), `---
+name: broken-backtick
+description: Broken backticked reference skill.
+---
+
+Load \`references/STRUCTURE-GLOSSARY.md\` before deep analysis.
+`);
+
+  const skillPackage = await loadSkillPackage(cwd);
+
+  assert.equal(skillPackage.validation.valid, false);
+  assert.match(skillPackage.validation.errors.join('\n'), /references\/STRUCTURE-GLOSSARY\.md/);
+});
+
+test('validates backticked references when files are present', async () => {
+  const cwd = await fs.mkdtemp(path.join(os.tmpdir(), 'skill-rsi-valid-backtick-'));
+  await fs.mkdir(path.join(cwd, 'references'), { recursive: true });
+  await fs.writeFile(path.join(cwd, 'SKILL.md'), `---
+name: valid-backtick
+description: Valid backticked reference skill.
+---
+
+Load \`references/STRUCTURE-GLOSSARY.md\` before deep analysis.
+`);
+  await fs.writeFile(path.join(cwd, 'references', 'STRUCTURE-GLOSSARY.md'), '# Glossary\n');
+
+  const skillPackage = await loadSkillPackage(cwd);
+
+  assert.equal(skillPackage.validation.valid, true);
+});
+
 test('loads a stored zip skill package', async () => {
   const cwd = await fs.mkdtemp(path.join(os.tmpdir(), 'skill-rsi-zip-'));
   const zipPath = path.join(cwd, 'skill.zip');

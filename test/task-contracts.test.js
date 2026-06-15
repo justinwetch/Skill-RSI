@@ -72,3 +72,35 @@ test('task contract prompt validation distinguishes standalone and context-bound
     text: 'Rewrite the attached document into a memo.',
   }, { id: 'text_source_grounded' }), false);
 });
+
+test('text standalone prompts reject dangling source-material references', () => {
+  assert.equal(isPromptContractValid({
+    text: 'Please read the short screenplay outline below and label the major story beats in order. The outline is about a young paramedic who discovers a conspiracy.',
+  }, { id: 'text_standalone' }), false);
+
+  assert.equal(isPromptContractValid({
+    text: 'I am pasting a screenplay outline below and need you to identify the key story beats in order. The story is a legal drama about a public defender.',
+  }, { id: 'text_standalone' }), false);
+
+  assert.equal(isPromptContractValid({
+    text: 'I’d like a structural breakdown of this screenplay treatment at three levels: scene, sequence, and act. The story follows a burned-out hotel concierge in an inheritance scam.',
+  }, { id: 'text_standalone' }), false);
+
+  assert.equal(isPromptContractValid({
+    text: 'Please reshape this coming-of-age mystery and focus on the actual beats that are present in the draft. The story centers on a chess prodigy investigating a classmate.',
+  }, { id: 'text_standalone' }), false);
+
+  assert.equal(isPromptContractValid({
+    text: 'Analyze this premise and produce a provisional beat map: a young paramedic discovers a conspiracy during a routine night shift.',
+  }, { id: 'text_standalone' }), true);
+
+  assert.equal(isPromptContractValid({
+    text: `Please label the beats in the following outline:
+
+Outline:
+- Opening: A paramedic starts a routine night shift while trying to keep his younger brother out of trouble.
+- Inciting pressure: A patient whispers about a city contract before vanishing from the hospital.
+- Midpoint: The paramedic learns his supervisor is hiding evidence.
+- Climax: He must choose between exposing the conspiracy and saving his brother from retaliation.`,
+  }, { id: 'text_standalone' }), true);
+});

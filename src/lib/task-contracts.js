@@ -22,6 +22,7 @@ const DEFINITIONS = {
     invalidPromptRules: [
       'Must not require hidden source material.',
       'Must not ask for revision of a document that is not included.',
+      'Must not refer to an outline, script, treatment, draft, excerpt, or other source as below, attached, pasted, or provided unless that material is included in the prompt.',
     ],
   },
   text_source_grounded: {
@@ -170,11 +171,32 @@ export function isPromptContractValid(prompt, taskContract) {
       && (/```[\s\S]*?```/.test(text) || text.length > 500);
   }
 
-  return !/\b(source material|attached document|provided draft|below excerpt)\b/i.test(text) || /```[\s\S]*?```/.test(text);
+  if (hasDanglingTextSourceReference(text) && !hasEmbeddedTextSourceMaterial(text)) return false;
+  return true;
 }
 
 export function getPromptText(prompt) {
   return typeof prompt === 'string' ? prompt : String(prompt?.text || '');
+}
+
+function hasDanglingTextSourceReference(text) {
+  return /\b(?:attached|provided|pasted|included|following|below)\s+(?:source material|document|draft|excerpt|outline|treatment|screenplay|script|scene list|notes|transcript|brief|material|text)\b/i.test(text)
+    || /\b(?:source material|document|draft|excerpt|outline|treatment|screenplay|script|scene list|notes|transcript|brief|material|text)\s+(?:attached|provided|pasted|included|below|following)\b/i.test(text)
+    || /\b(?:read|analy[sz]e|review|revise|rewrite|diagnose|compare|break\s*down|label|identify)\s+(?:the\s+)?(?:attached|provided|pasted|following|below)\b/i.test(text)
+    || /\b(?:read|analy[sz]e|review|revise|rewrite|diagnose|compare|break\s*down|label|identify)\b[\s\S]{0,80}\b(?:this|the|my|our)\s+(?:screenplay|script|outline|treatment|draft|scene list|excerpt|document)\b/i.test(text)
+    || /\b(?:this|the|my|our)\s+(?:screenplay|script|outline|treatment|draft|scene list|excerpt|document)(?:'s)?\s+(?:structure|beats?|scenes?|pages?|source|material|turning points?|reversals?|draft)\b/i.test(text)
+    || /\b(?:actual beats?|what is actually on the page|on the page|present in the draft)\b/i.test(text);
+}
+
+function hasEmbeddedTextSourceMaterial(text) {
+  if (/```[\s\S]*?```/.test(text)) return true;
+  const marker = /(?:^|\n)\s*(?:source material|document|draft|excerpt|outline|treatment|screenplay|script|scene list|notes|transcript|brief|material|text)\s*:\s*/i.exec(text);
+  if (!marker) return false;
+  const after = text.slice(marker.index + marker[0].length).trim();
+  if (after.length < 80) return false;
+  return /\n\s*(?:[-*]|\d+[.)])\s+\S/.test(after)
+    || /\b(?:act|scene|opening|setup|midpoint|climax|ending|resolution|beat|sequence)\b/i.test(after)
+    || after.split(/[.!?]\s+/).filter(Boolean).length >= 3;
 }
 
 export function taskContractSummary(taskContract) {

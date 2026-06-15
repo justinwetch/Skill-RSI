@@ -18,7 +18,7 @@ Recursive self-improvement is the phrase AI researchers reach for when they desc
 
 Give Skill RSI a goal and it writes an Agent Skill to chase it. Hand it a skill you already have and it makes that one better instead. Then the loop starts: study the skill, form a theory about what would help, build a variant, test it, keep the winner. Again and again, on its own, until you stop it.
 
-Before it writes a single line, it studies the domain. It researches the field into sourced claims, then compiles them into an ontology: a working model of who the skill serves, what excellent output looks like, the failure modes worth catching, and the authorities whose strong opinions sharpen what "good" means here. That ontology becomes the shared map every later loop builds on and the guardrail that keeps the work from drifting.
+Before it writes a single line, it studies the domain. It researches the field into sourced claims, practitioner vocabulary, and intertextual context, then compiles them into an ontology: a working model of who the skill serves, what excellent output looks like, the failure modes worth catching, the expert distinctions novices flatten, and the authorities whose strong opinions sharpen what "good" means here. That ontology becomes the shared map every later loop builds on and the guardrail that keeps the work from drifting.
 
 Once there's a champion to beat, Skill RSI deconstructs it into more than a dozen testable surfaces, every one carrying a hypothesis, a regression risk, and a way to measure whether the change actually worked. Each loop the current champion is the control and the next variant is the treatment, both run against the same prompts under the same criteria. One variable moves at a time, so when a challenger wins, you know exactly what won.
 
@@ -83,6 +83,14 @@ The next loop plan carries forward what the latest evidence says to try, preserv
 ## How It Works
 
 For the canonical explanation of the loop and agent roles, see [docs/HOW_IT_WORKS.md](docs/HOW_IT_WORKS.md).
+
+## Research Depth
+
+When model-native research is available, Skill RSI now aims for controlled depth rather than a tiny citation packet. A sourced run defaults to roughly `12-15` strong sources, `6-10` evidence claims, `4-8` authority entries, and `20-50` practitioner lexicon entries.
+
+The practitioner lexicon is meant to capture top-percentile vocabulary: field terms, methods, artifacts, metrics, failure modes, schools, debates, boundary terms, and near-synonym distinctions. Each entry should say what an expert means, how a novice might misuse it, why it matters for the skill, how evals could test it, and what evidence supports it.
+
+The intertextual map records relationships rather than bibliography alone: canonical texts, standards and institutions, schools of thought, recurring debates, concept lineages, adjacent-domain borrowings, and common misreadings. Thin lexicon or intertextual coverage creates inspectable quality warnings, but those warnings do not force a revise loop by themselves.
 
 First scratch run:
 

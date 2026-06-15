@@ -48,11 +48,19 @@ Ontology is the broad domain map. It answers questions like:
 - What failure modes should eval prompts catch?
 - Which authorities, institutions, or strong opinions should shape the skill's priors?
 
-Before the ontology is generated, Skill RSI builds a research packet when model-native research is available. The research packet captures sources, authority claims, open questions, and gaps. Claims are labeled as sourced, inferred, or speculative so later agents do not treat model memory as evidence.
+Before the ontology is generated, Skill RSI builds a research packet when model-native research is available. The research packet captures sources, evidence claims, authority claims, practitioner vocabulary, intertextual context, open questions, and gaps. Claims are labeled as sourced, inferred, or speculative so later agents do not treat model memory as evidence.
+
+Sourced research is intentionally controlled-depth, not exhaustive. The default target is roughly `12-15` strong sources, `6-10` evidence claims, `4-8` authority entries, and `20-50` practitioner lexicon entries. Normalization caps stored packets at `15` sources, `50` lexicon entries, `10` evidence claims, `8` authority entries, and `8` search-trace entries. Stored or reused research packets are normalized again before use, including canonicalizing source IDs and source refs, so old artifacts do not launder stale citation shapes into new runs.
+
+The practitioner lexicon is the expert-register layer. It should include terms, methods, artifacts, metrics, failure modes, schools, debates, boundary terms, and near-synonym distinctions that a strong practitioner would notice and a novice would flatten. A useful lexicon entry explains the expert meaning, novice misuse, relevance to the skill, eval implication, evidence basis, and source refs when sourced.
+
+The intertextual map captures relationships in the field. It should name canonical texts, standards and institutions, schools of thought, recurring debates, concept lineages, adjacent-domain borrowings, and common misreadings. It is not just a bibliography: it should explain what draws from what, what concepts contrast, where ideas were borrowed, and what those relationships imply for skill behavior.
 
 The authority map is not a celebrity quote machine. It is a way to sharpen the domain prior. For a product skill, Steve Jobs or Dieter Rams might matter because their opinions imply concrete pressure on simplicity, taste, restraint, or user experience. For an accessibility-heavy frontend skill, W3C and WCAG matter because they define enforceable expectations. Authority informs the skill, but authority is not proof by itself.
 
-The ontology is most important at the beginning. It gives the first creators a shared map of the domain and gives the evaluator a vocabulary for judging output. Later, it becomes a guardrail. It should constrain drift and fill missing categories, but it should not overwrite what the system has learned from the actual champion.
+The ontology is most important at the beginning. It gives the first creators a shared map of the domain and gives the evaluator a vocabulary for judging output. It carries forward practitioner lexicon entries, terminology discriminators, and intertextual relationships so later agents can catch shallow jargon, missing expert distinctions, wrong concept lineage, ignored debates, and weak terminology discrimination. Later, it becomes a guardrail. It should constrain drift and fill missing categories, but it should not overwrite what the system has learned from the actual champion.
+
+Thin expert-register coverage is advisory. Missing or generic practitioner vocabulary and weak or missing intertextual relationships create quality warnings that remain inspectable in run artifacts, but those warnings do not force the revise loop by themselves. Unsupported sourced claims are different: if an ontology claims sourced expert-register evidence without refs or labels, the quality gate treats that as a revision issue.
 
 ## Deconstruction
 
@@ -126,6 +134,8 @@ The reviewer can request one bounded revision. If the package is still structura
 Evaluation is a headless SkillEval-style comparison. Both sides run against the same prompts and are judged against the same criteria.
 
 The prompt bank has memory. Stable prompts protect against regression. Exploration prompts probe the parameter being tested in the current round. Prompt evidence can be promoted, retired, or kept provisional depending on how useful it was.
+
+Ontology signals can shape eval design. Stable and exploration prompts may test correct expert vocabulary use, near-synonym distinctions, and intertext-aware judgment when the research packet or ontology provides usable evidence. This is meant to make evaluation sharper, not to overfit the system to its own internal jargon; sourced claims need real source refs, while inferred loop artifacts stay labeled as internal evidence.
 
 The output contract keeps eval honest:
 

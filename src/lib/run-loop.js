@@ -20,6 +20,7 @@ import {
   buildResearchPacket,
   createDeconstructionQualityReport,
   createOntologyQualityReport,
+  normalizeStoredResearchPacket,
 } from './research.js';
 import {
   applyManagerGuidanceToPlan,
@@ -55,6 +56,10 @@ async function reuseJson(filePath, validate) {
   const existing = await readJson(filePath, null);
   if (!existing) return null;
   try { return validate ? validate(existing) : existing; } catch { return null; }
+}
+
+function validateStoredResearchPacket(packet, context = {}) {
+  return validateResearchPacket(normalizeStoredResearchPacket(packet, context));
 }
 
 function normalizeRunTrigger(value) {
@@ -235,7 +240,7 @@ async function prepareResearchPacket({
   retryPolicy = null,
 }) {
   const existing = await readJson(runPaths.researchPacketJson, null);
-  if (existing) return validateResearchPacket(existing);
+  if (existing) return validateStoredResearchPacket(existing, { runId: `${runId}-research`, goal });
   const packet = await buildResearchPacket({
     runId: `${runId}-research`,
     goal,
@@ -264,7 +269,7 @@ async function persistResearchPacket({
   updateCurrent = false,
   eventName = 'research_packet.written',
 }) {
-  const validated = validateResearchPacket(packet);
+  const validated = validateStoredResearchPacket(packet, { runId: packet?.runId || `${runId}-research` });
   await writeJson(runPaths.researchPacketJson, validated);
   if (updateCurrent) await writeJson(paths.researchCurrent, validated);
   await writeJson(runPaths.researchRawJson, {
@@ -442,8 +447,24 @@ async function createFallbackResearchFromOntology({ runId, goal, ontology }) {
       evidenceBasis: 'inferred',
       sourceRefs: [],
     }],
+    practitionerLexicon: [],
+    intertextualMap: {
+      canonicalTexts: [],
+      standardsAndInstitutions: [],
+      schoolsOfThought: [],
+      recurringDebates: [],
+      conceptLineages: [],
+      adjacentDomainBorrowings: [],
+      commonMisreadings: [],
+      evidenceBasis: 'inferred',
+      sourceRefs: [],
+      gaps: ['No sourced expert-register or intertextual research was available for this reused ontology.'],
+    },
     openQuestions: ontology?.openQuestions || [],
-    gaps: ontology?.researchGaps || ['No current-run research packet was created.'],
+    gaps: ontology?.researchGaps || [
+      'No current-run research packet was created.',
+      'No sourced expert-register or intertextual research was available for this reused ontology.',
+    ],
   });
 }
 
@@ -899,10 +920,11 @@ async function runAgenticLoop({
   const agentClient = modelClient || undefined;
   const agentSkillsStandard = await readAgentSkillsStandard(path.dirname(paths.rootDir));
   const ontologyRefreshStatePath = path.join(path.dirname(paths.ontologyCurrent), 'refresh-state.json');
-  let ontology = await readJson(paths.ontologyCurrent, null);
+  const currentOntology = await readJson(paths.ontologyCurrent, null);
+  let ontology = currentOntology ? validateOntology(currentOntology) : null;
   const championHash = state.currentChampion?.skillHash || null;
   const ontologyRefreshState = await readJson(ontologyRefreshStatePath, null);
-  let researchPacket = await reuseJson(paths.researchCurrent, validateResearchPacket);
+  let researchPacket = await reuseJson(paths.researchCurrent, packet => validateStoredResearchPacket(packet, { goal }));
 
   if (!ontology && !state.currentChampion) {
     // First run: build the initial domain map from scratch.
@@ -1158,6 +1180,7 @@ async function runAgenticLoop({
       agentClient,
       outputType: evalOutputType,
       taskContract,
+      researchPacket,
     });
     creatorAArtifact = candidateAResult.artifact;
     candidateA = candidateAResult.candidate;
@@ -1280,6 +1303,7 @@ async function runAgenticLoop({
       coreCriteria,
       outputType: evalOutputType,
       taskContract,
+      researchPacket,
     });
     // SkillEval-style: have the model write realistic eval prompts. Real eval treats
     // invalid prompt authoring as a run failure; mock/dev modes can keep templates.

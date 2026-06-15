@@ -15,6 +15,21 @@ The plugin lives at `plugins/skill-rsi` and provides:
 
 The local app remains the full evidence console and the default Codex desktop UI surface. The CLI remains the automation and scripting surface. MCP tools are the Codex-native control plane.
 
+## Current Update Notes
+
+This release includes the practitioner lexicon and intertextual ontology update:
+
+- sourced research now targets controlled depth: roughly `12-15` sources, `20-50` practitioner lexicon entries, `6-10` evidence claims, and `4-8` authority entries
+- research packets carry `practitionerLexicon` and `intertextualMap` fields through ontology, deconstruction, and eval design
+- ontology quality gates expose thin or generic lexicon/intertext coverage as warnings, not revision-triggering issues
+- sourced expert-register claims without refs are treated as citation-integrity issues
+- reused and stored research packets are normalized before use, including canonical source IDs and source refs
+- eval prompt generation is hardened against dangling hidden-source prompts, including references to attached scripts, outlines, drafts, excerpts, or treatments
+- generated skill packages validate referenced files, including backticked references in `SKILL.md`
+- the UI stores requested target iterations for manual runs
+
+Recommended GUI smoke for this update: run a fresh local server after the patch is loaded and inspect at least one GUI-triggered one-loop run. Confirm that the run completes, prompt bodies are self-contained, research source refs are canonical after normalization, and the champion package validates.
+
 ## Preflight
 
 From the repository root:
@@ -99,6 +114,9 @@ Acceptable references should be historical, explicitly future-scoped, or absent.
 - Codex desktop defaults to the local web app rather than MCP-UI
 - hooks queue context only
 - model-backed runs are explicit and bounded
+- sourced research uses controlled depth, not unbounded web crawling
+- practitioner lexicon and intertextual quality gaps are inspectable warnings unless they become citation-integrity failures
+- eval prompts must include any source material they ask the candidate to analyze, revise, or label
 
 ## Asset Checks
 

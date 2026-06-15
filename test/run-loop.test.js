@@ -64,6 +64,55 @@ test('mock mode completes a first run through headless evaluator artifacts', asy
   assert.ok(['skillA', 'skillB', 'tie'].includes(duel.stats.winner));
 });
 
+test('runProject validates reused current ontology before eval design', async () => {
+  const cwd = await fs.mkdtemp(path.join(os.tmpdir(), 'skill-rsi-reused-ontology-guard-'));
+  const projectName = 'Reused Ontology Guard';
+  await initProject({
+    cwd,
+    projectName,
+    goal: 'Help agents design product strategy.',
+  });
+  const paths = getProjectPaths(cwd, projectName);
+  await fs.mkdir(path.dirname(paths.ontologyCurrent), { recursive: true });
+  await fs.writeFile(paths.ontologyCurrent, JSON.stringify({
+    runId: 'bad-current-ontology',
+    skillGoal: 'Help agents design product strategy.',
+    targetUsers: ['agents'],
+    targetTasks: ['design strategy'],
+    invocationBoundaries: {
+      shouldTriggerWhen: ['strategy task'],
+      shouldNotTriggerWhen: ['unrelated task'],
+    },
+    inputSurface: ['user request'],
+    outputArtifacts: ['recommendation'],
+    requiredKnowledge: ['strategy'],
+    failureModes: ['category confusion', 'positioning collapse', 'metric theater'],
+    qualityAxes: ['strategic precision'],
+    evalPromptTaxonomy: ['direct request'],
+    candidateStrategySpace: ['lean procedural'],
+    practitionerLexicon: Array.from({ length: 51 }, (_, index) => ({
+      term: `term-${index + 1}`,
+      evidenceBasis: 'inferred',
+      sourceRefs: [],
+    })),
+  }, null, 2));
+
+  await assert.rejects(
+    runProject({
+      cwd,
+      projectName,
+      goal: 'Help agents design product strategy.',
+      loops: 1,
+      mode: 'agentic',
+      evalMode: 'mock',
+      modelClient: async () => {
+        throw new Error('model client should not be called before reused ontology validation');
+      },
+    }),
+    /practitionerLexicon must contain at most 50 entries/,
+  );
+});
+
 test('run loop persists configured eval retry and promotion reliability policy', async () => {
   const cwd = await fs.mkdtemp(path.join(os.tmpdir(), 'skill-rsi-eval-policy-'));
   const projectName = 'UX Design Eval Policy';
@@ -874,6 +923,93 @@ test('agentic first run persists research packet and quality-gated ontology arti
   assert.equal(ontologyCalls, 2);
   assert.ok(ontologyQuality.revisedFrom);
   assert.equal(deconstructionQuality.status, 'pass');
+});
+
+test('run loop normalizes reused current research before persisting a run packet', async () => {
+  const cwd = await fs.mkdtemp(path.join(os.tmpdir(), 'skill-rsi-reused-research-normalize-'));
+  const projectName = 'Reused Research Normalize';
+  await initProject({
+    cwd,
+    projectName,
+    goal: 'Help agents analyze screenplay structure.',
+  });
+  const paths = getProjectPaths(cwd, projectName);
+  await fs.mkdir(path.dirname(paths.researchCurrent), { recursive: true });
+  await fs.writeFile(paths.researchCurrent, JSON.stringify({
+    runId: 'legacy-current-research',
+    skillGoal: 'Help agents analyze screenplay structure.',
+    researchMode: 'sourced',
+    provider: 'openai',
+    sources: [
+      { id: 'api-26', title: 'Source A', url: 'https://example.com/source-a' },
+      { id: 'api-26', title: 'Source B', url: 'https://example.com/source-b' },
+    ],
+    searchTrace: [],
+    evidenceClaims: [{
+      claim: 'Legacy stored packets may contain ordinal source refs.',
+      evidenceBasis: 'sourced',
+      sourceRefs: ['S1', 'https://example.com/source-b'],
+      implicationsForSkill: ['Canonicalize refs before reuse.'],
+    }],
+    authorityMap: [],
+    practitionerLexicon: [{
+      term: 'inciting incident',
+      evidenceBasis: 'sourced',
+      sourceRefs: ['S2'],
+    }],
+    intertextualMap: {
+      evidenceBasis: 'sourced',
+      sourceRefs: ['S2'],
+      conceptLineages: [{
+        concept: 'three-act structure',
+        evidenceBasis: 'sourced',
+        sourceRefs: ['S1'],
+      }],
+    },
+    openQuestions: [],
+    gaps: [],
+  }, null, 2));
+  await fs.mkdir(path.dirname(paths.ontologyCurrent), { recursive: true });
+  await fs.writeFile(paths.ontologyCurrent, JSON.stringify(fakeRichOntology(), null, 2));
+
+  const result = await runProject({
+    cwd,
+    projectName,
+    goal: 'Help agents analyze screenplay structure.',
+    loops: 1,
+    mode: 'agentic',
+    evalMode: 'mock',
+    generationModel: 'fake-gen-model',
+    judgeModel: 'fake-judge-model',
+    agentModel: 'fake-agent-model',
+    modelClient: async request => {
+      const prompt = request.messages[0].content;
+      assert.ok(!request.tools?.some(tool => tool.type === 'web_search'));
+      if (prompt.includes('Parameterization Agent')) return JSON.stringify(fakeRichParameterization());
+      if (prompt.includes('Experiment Planner')) return JSON.stringify(fakeExperimentPlan());
+      if (prompt.includes('Assigned experiment arm: candidateB')) return JSON.stringify(fakeCreator('candidate-b', 'candidateB', 'Embedded boundary policy'));
+      if (prompt.includes('Assigned experiment arm: candidateA')) return JSON.stringify(fakeCreator('candidate-a', 'candidateA', 'Description-only tightening'));
+      if (prompt.includes('adversarial reviewer')) return JSON.stringify({ blockingIssues: [], recommendedEdits: [], nonIssues: ['stub review'], overfittingRisk: 'low' });
+      if (prompt.includes('Interpret this Skill RSI run')) return JSON.stringify({
+        runId: 'analyst',
+        decision: 'promote',
+        recommendedChampionCandidateId: 'candidate-a',
+        confidence: 'medium',
+        reasoning: 'Candidate A performed better.',
+        observations: ['Candidate A won.'],
+        nextRoundGuidance: { vary: 'next parameter', preserve: 'candidate-a', investigate: 'durability' },
+      });
+      throw new Error(`Unexpected prompt: ${prompt.slice(0, 120)}`);
+    },
+  });
+
+  const runId = result.completedRuns[0].runId;
+  const research = JSON.parse(await fs.readFile(path.join(result.paths.runsDir, runId, 'research', 'research-packet.json'), 'utf8'));
+  assert.deepEqual(research.sources.map(source => source.id), ['s1', 's2']);
+  assert.deepEqual(research.evidenceClaims[0].sourceRefs, ['s1', 's2']);
+  assert.deepEqual(research.practitionerLexicon[0].sourceRefs, ['s2']);
+  assert.deepEqual(research.intertextualMap.sourceRefs, ['s2']);
+  assert.deepEqual(research.intertextualMap.conceptLineages[0].sourceRefs, ['s1']);
 });
 
 test('agentic baseline projects skip ontology and start from deconstruction', async () => {

@@ -350,7 +350,8 @@ ${candidate.rationale}
 `;
 }
 
-const ONTOLOGY_FIELDS = 'runId, skillGoal, targetUsers, targetTasks, invocationBoundaries {shouldTriggerWhen, shouldNotTriggerWhen}, inputSurface, outputArtifacts, requiredKnowledge, referencePoints, adjacentDomainsToBorrowFrom, optionalResources {references, scripts, assets}, platformAssumptions {portableAgentSkills, clientSpecificFeatures}, failureModes, qualityAxes, evalPromptTaxonomy, candidateStrategySpace, openQuestions.';
+const ONTOLOGY_LEXICON_LIMIT = 50;
+const ONTOLOGY_FIELDS = 'runId, skillGoal, targetUsers, targetTasks, invocationBoundaries {shouldTriggerWhen, shouldNotTriggerWhen}, inputSurface, outputArtifacts, requiredKnowledge, referencePoints, adjacentDomainsToBorrowFrom, optionalResources {references, scripts, assets}, platformAssumptions {portableAgentSkills, clientSpecificFeatures}, failureModes, qualityAxes, evalPromptTaxonomy, candidateStrategySpace, practitionerLexicon [{term, category, expertMeaning, noviceMisuse, whyItMattersForThisSkill, evalImplication, evidenceBasis, sourceRefs}], terminologyDiscriminators [{term, distinguishFrom, difference, skillRule, evidenceBasis, sourceRefs}], intertextualMap {canonicalTexts, standardsAndInstitutions, schoolsOfThought, recurringDebates, conceptLineages [{concept, drawsFrom, contrastsWith, borrowedByAdjacentDomains, implicationsForSkill, evidenceBasis, sourceRefs}], adjacentDomainBorrowings, commonMisreadings, evidenceBasis, sourceRefs, gaps}, openQuestions.';
 
 function buildOntologyPrompt(context) {
   const outputContract = getAgentOutputContract(context.outputType, context.taskContract);
@@ -379,7 +380,8 @@ ${context.championSkill || 'No current champion skill exists yet.'}
 Experiment history summary:
 ${formatContextBlock(compactHistory(context.history))}
 
-Update the ontology conservatively. Keep the existing structure and stable categories; only fill in genuinely missing categories or correct assumptions that the current champion, research packet, or history now contradicts (e.g. new task classes, failure modes, or quality axes the champion revealed). Do NOT rewrite it wholesale or rename stable entries.
+Update the ontology conservatively. Keep the existing structure and stable categories; only fill in genuinely missing categories or correct assumptions that the current champion, research packet, or history now contradicts (e.g. new task classes, failure modes, quality axes, practitioner vocabulary, terminology discriminators, or intertextual relationships the champion revealed). Do NOT rewrite it wholesale or rename stable entries.
+Preserve practitionerLexicon and intertextualMap as evidence-labeled expert-register guardrails. Add terminologyDiscriminators when the champion or history exposes shallow jargon, confused near-synonyms, wrong concept lineage, ignored debates, or weak intertextual relationships. Champion/package/history evidence is internal loop evidence: label it inferred or speculative, never sourced, unless the research packet provides explicit external sourceRefs for the same claim.
 ${qualityFeedbackBlock(context)}
 ${ontologyStandardBlock(context)}
 Return the COMPLETE SkillOntology JSON with these fields:
@@ -400,7 +402,9 @@ Task contract:
 ${formatContextBlock(taskContractSummary(context.taskContract))}
 
 Map the domain and Agent Skill design space.
-Build an evidence-backed ontology. Include authorityMap, evidenceClaims, sourceRefs, inferenceLabels, unsupportedClaims, researchGaps, and Task Contract Robustness as companion fields. Classify major claims as sourced, inferred, or speculative. Translate authority opinions into concrete implications for this skill and include misuse risks. Treat required input context, sufficient vs underspecified task boundaries, expected artifact shape, clarification policy, and observable/judgeable outputs as first-class ontology concerns.
+Build an evidence-backed ontology. Include authorityMap, evidenceClaims, sourceRefs, inferenceLabels, unsupportedClaims, researchGaps, practitionerLexicon, terminologyDiscriminators, intertextualMap, and Task Contract Robustness as companion fields. Classify major claims as sourced, inferred, or speculative. Translate authority opinions into concrete implications for this skill and include misuse risks. Treat required input context, sufficient vs underspecified task boundaries, expected artifact shape, clarification policy, and observable/judgeable outputs as first-class ontology concerns.
+
+The practitionerLexicon should carry forward top-percentile practitioner vocabulary from the research packet: terms, methods, artifacts, metrics, failure modes, schools, debates, boundary terms, and expert distinctions. Do not use jargon decoratively; each entry should explain the expert meaning, novice misuse, skill implication, eval implication, evidence basis, and source refs where available. terminologyDiscriminators should name near-synonyms or adjacent concepts the skill must distinguish. intertextualMap should preserve relationships among canonical texts, standards/institutions, schools, debates, concept lineages, adjacent-domain borrowings, and common misreadings.
 ${qualityFeedbackBlock(context)}
 ${ontologyStandardBlock(context)}
 Return JSON matching SkillOntology with these fields:
@@ -452,9 +456,9 @@ ${formatContextBlock(taskContractSummary(context.taskContract))}
 Agent Skills standard:
 ${formatContextBlock(context.agentSkillsStandard)}
 
-Using the ontology's domain map, define the INITIAL parameter taxonomy for this skill: the surfaces a strong first version must get right — activation/triggering, workflow sequence, decision heuristics, context vs. reference split, task contract robustness, output contract, validation, failure handling, examples, and packaging. Return JSON matching SkillParameterization:
+Using the ontology's domain map, define the INITIAL parameter taxonomy for this skill: the surfaces a strong first version must get right — activation/triggering, workflow sequence, decision heuristics, context vs. reference split, task contract robustness, output contract, validation, failure handling, examples, packaging, practitioner vocabulary, terminology discrimination, and intertextual grounding. Return JSON matching SkillParameterization:
 runId, championSkillHash (use "none"), summary, parameters, crossParameterInteractions, highestLeverageHypotheses, doNotTouchYet, suggestedExperimentFamilies.
-Provide at least 12 parameters. Include task-contract surfaces when relevant: missing-context behavior, artifact completeness, source fidelity, patch/file mapping, standalone fallback quality, and what is observable/judgeable. For each, currentImplementation should describe the intended baseline (since none exists yet). Each parameter must include id, surface, currentImplementation, improvementHypothesis, expectedBenefit, regressionRisk, artifactEvidence, evidenceFromHistory, possibleMutations, measurementPlan, couplingNotes, priority, confidence, and granularity.
+Provide at least 12 parameters. Include task-contract surfaces when relevant: missing-context behavior, artifact completeness, source fidelity, patch/file mapping, standalone fallback quality, and what is observable/judgeable. Include expert-register surfaces when relevant: missing top-percentile vocabulary, shallow jargon, confused near-synonyms, wrong concept lineage, ignored debates, and weak intertextual relationships. For each, currentImplementation should describe the intended baseline (since none exists yet). Each parameter must include id, surface, currentImplementation, improvementHypothesis, expectedBenefit, regressionRisk, artifactEvidence, evidenceFromHistory, possibleMutations, measurementPlan, couplingNotes, priority, confidence, and granularity.
 ${qualityFeedbackBlock(context)}`;
   }
 
@@ -468,6 +472,7 @@ ${formatContextBlock(context.ontology)}
 
 Ontology use discipline:
 - Treat ontology as the stable domain map: quality axes, task classes, authorities, failure modes, and drift checks.
+- Treat practitionerLexicon, terminologyDiscriminators, and intertextualMap as expert-register guardrails: use them to detect missing distinctions, shallow jargon, wrong concept lineage, ignored debates, and weak intertextual relationships.
 - Do not let ontology override the current champion artifact. Every proposed parameter must be grounded in champion/package evidence or explicit history evidence.
 - Use ontology to identify missing or underdeveloped surfaces, not to invent a wholesale replacement direction.
 
@@ -492,7 +497,7 @@ ${formatContextBlock(context.championPackage)}
 Agent Skills standard:
 ${formatContextBlock(context.agentSkillsStandard)}
 
-Deconstruct the current champion into at least 12 granular improvement parameters. Include task-contract surfaces when relevant: required input context, sufficient vs underspecified task boundaries, missing-context behavior, artifact completeness, source fidelity, patch/file mapping, standalone fallback quality, and what is observable/judgeable. Return JSON matching SkillParameterization:
+Deconstruct the current champion into at least 12 granular improvement parameters. Include task-contract surfaces when relevant: required input context, sufficient vs underspecified task boundaries, missing-context behavior, artifact completeness, source fidelity, patch/file mapping, standalone fallback quality, and what is observable/judgeable. Include expert-register surfaces when relevant: missing top-percentile vocabulary, shallow jargon, confused near-synonyms, wrong concept lineage, ignored debates, and weak intertextual relationships. Return JSON matching SkillParameterization:
 runId, championSkillHash, summary, parameters, crossParameterInteractions, highestLeverageHypotheses, doNotTouchYet, suggestedExperimentFamilies.
 Each parameter must include id, surface, currentImplementation, improvementHypothesis, expectedBenefit, regressionRisk, artifactEvidence, evidenceFromHistory, possibleMutations, measurementPlan, couplingNotes, priority, confidence, and granularity.
 ${qualityFeedbackBlock(context)}`;
@@ -784,6 +789,7 @@ function normalizeContractRecommendation(artifact, context = {}) {
 
 function normalizeOntology(artifact, context = {}) {
   if (!artifact || typeof artifact !== 'object') return artifact;
+  const expertEvidencePolicy = createExpertEvidencePolicy(context);
   return {
     ...artifact,
     runId: normalizeString(artifact.runId, context.runId),
@@ -821,6 +827,12 @@ function normalizeOntology(artifact, context = {}) {
     inferenceLabels: normalizeArray(artifact.inferenceLabels),
     unsupportedClaims: normalizeArray(artifact.unsupportedClaims),
     researchGaps: normalizeArray(artifact.researchGaps || context.researchPacket?.gaps),
+    practitionerLexicon: normalizePractitionerLexicon(
+      mergePractitionerLexicon(artifact.practitionerLexicon, context.researchPacket?.practitionerLexicon),
+      expertEvidencePolicy,
+    ),
+    terminologyDiscriminators: normalizeTerminologyDiscriminators(artifact.terminologyDiscriminators, expertEvidencePolicy),
+    intertextualMap: normalizeIntertextualMap(artifact.intertextualMap || context.researchPacket?.intertextualMap, expertEvidencePolicy),
   };
 }
 
@@ -1072,6 +1084,249 @@ function normalizeArray(value, fallback = []) {
   if (Array.isArray(value)) return value;
   if (typeof value === 'string' && value.trim()) return [value];
   return fallback;
+}
+
+function uniqueStrings(values = []) {
+  return [...new Set(normalizeArray(values)
+    .map(value => String(value || '').trim())
+    .filter(Boolean))];
+}
+
+function createExpertEvidencePolicy(context = {}) {
+  const sourcedLexiconTerms = new Set([
+    ...collectSourcedLexiconTerms(context.researchPacket?.practitionerLexicon),
+    ...collectSourcedLexiconTerms(context.ontology?.practitionerLexicon),
+  ]);
+  const sourcedLineageConcepts = new Set([
+    ...collectSourcedLineageConcepts(context.researchPacket?.intertextualMap),
+    ...collectSourcedLineageConcepts(context.ontology?.intertextualMap),
+  ]);
+  const allowSourcedIntertextualMap = hasSourcedRefs(context.researchPacket?.intertextualMap)
+    || hasSourcedRefs(context.ontology?.intertextualMap);
+
+  return {
+    canSourceLexiconTerm(term) {
+      return sourcedLexiconTerms.has(normalizeEvidenceKey(term));
+    },
+    canSourceLineageConcept(concept) {
+      return sourcedLineageConcepts.has(normalizeEvidenceKey(concept));
+    },
+    canSourceIntertextualMap() {
+      return allowSourcedIntertextualMap;
+    },
+  };
+}
+
+function collectSourcedLexiconTerms(lexicon) {
+  if (!Array.isArray(lexicon)) return [];
+  return lexicon
+    .filter(entry => hasSourcedRefs(entry))
+    .map(entry => normalizeEvidenceKey(entry?.term || entry?.name || entry?.label))
+    .filter(Boolean);
+}
+
+function collectSourcedLineageConcepts(map) {
+  if (!map || typeof map !== 'object' || !Array.isArray(map.conceptLineages)) return [];
+  return map.conceptLineages
+    .filter(lineage => hasSourcedRefs(lineage))
+    .map(lineage => normalizeEvidenceKey(lineage?.concept || lineage?.name))
+    .filter(Boolean);
+}
+
+function hasSourcedRefs(value) {
+  return value && typeof value === 'object'
+    && value.evidenceBasis === 'sourced'
+    && Array.isArray(value.sourceRefs)
+    && value.sourceRefs.length > 0;
+}
+
+function normalizeEvidenceKey(value) {
+  return String(value || '').trim().toLowerCase();
+}
+
+function normalizePractitionerLexicon(value, evidencePolicy = createExpertEvidencePolicy()) {
+  return normalizeArray(value).slice(0, ONTOLOGY_LEXICON_LIMIT).map(entry => {
+    const object = entry && typeof entry === 'object' && !Array.isArray(entry) ? entry : { term: String(entry || '') };
+    const sourceRefs = normalizeArray(object.sourceRefs);
+    const term = object.term || object.name || object.label || 'Unspecified practitioner term';
+    const evidenceBasis = normalizeEvidenceBasisForRefs(object.evidenceBasis, sourceRefs);
+    return {
+      ...object,
+      term,
+      category: object.category || 'unspecified',
+      expertMeaning: object.expertMeaning || object.meaning || object.definition || '',
+      noviceMisuse: object.noviceMisuse || object.misuse || '',
+      nearSynonymsToDisambiguate: normalizeArray(object.nearSynonymsToDisambiguate || object.nearSynonyms),
+      whyItMattersForThisSkill: object.whyItMattersForThisSkill || object.implicationsForSkill || '',
+      evalImplication: object.evalImplication || object.measurementImplication || '',
+      evidenceBasis: evidenceBasis === 'sourced' && !evidencePolicy.canSourceLexiconTerm(term) ? 'inferred' : evidenceBasis,
+      sourceRefs,
+    };
+  });
+}
+
+function mergePractitionerLexicon(primary, fallback) {
+  const merged = [];
+  const seen = new Set();
+  for (const entry of [...normalizeArray(primary), ...normalizeArray(fallback)]) {
+    const key = normalizeEvidenceKey(
+      entry && typeof entry === 'object' && !Array.isArray(entry)
+        ? entry.term || entry.name || entry.label
+        : entry,
+    );
+    const dedupeKey = key || `entry-${merged.length}`;
+    if (seen.has(dedupeKey)) continue;
+    seen.add(dedupeKey);
+    merged.push(entry);
+    if (merged.length >= ONTOLOGY_LEXICON_LIMIT) break;
+  }
+  return merged;
+}
+
+function normalizeTerminologyDiscriminators(value, evidencePolicy = createExpertEvidencePolicy()) {
+  return normalizeArray(value).map(discriminator => {
+    if (!discriminator || typeof discriminator !== 'object' || Array.isArray(discriminator)) {
+      return {
+        term: String(discriminator || ''),
+        evidenceBasis: 'inferred',
+        sourceRefs: [],
+      };
+    }
+    const sourceRefs = normalizeArray(discriminator.sourceRefs);
+    const termParts = getDiscriminatorTermParts(discriminator);
+    const term = normalizeString(
+      discriminator.term || discriminator.name || discriminator.label || formatDiscriminatorTerm(termParts),
+      'Unspecified terminology distinction',
+    );
+    const evidenceBasis = normalizeEvidenceBasisForRefs(discriminator.evidenceBasis, sourceRefs);
+    const hasSourcedTermEvidence = canSourceDiscriminatorTerms(termParts, term, evidencePolicy);
+    return {
+      ...discriminator,
+      term,
+      evidenceBasis: evidenceBasis === 'sourced' && !hasSourcedTermEvidence ? 'inferred' : evidenceBasis,
+      sourceRefs,
+    };
+  });
+}
+
+function normalizeIntertextualMap(value, evidencePolicy = createExpertEvidencePolicy()) {
+  if (Array.isArray(value)) return normalizeIntertextualMapEntries(value, evidencePolicy);
+  const map = value && typeof value === 'object' && !Array.isArray(value) ? value : {};
+  const sourceRefs = normalizeArray(map.sourceRefs);
+  const evidenceBasis = normalizeEvidenceBasisForRefs(map.evidenceBasis, sourceRefs);
+  return {
+    canonicalTexts: normalizeArray(map.canonicalTexts || map.canonicalWorks || map.keyTexts),
+    standardsAndInstitutions: normalizeArray(map.standardsAndInstitutions || map.institutions || map.standards),
+    schoolsOfThought: normalizeArray(map.schoolsOfThought || map.schools || map.traditions),
+    recurringDebates: normalizeArray(map.recurringDebates || map.debates),
+    conceptLineages: normalizeArray(map.conceptLineages || map.lineages).map(lineage => (
+      lineage && typeof lineage === 'object'
+        ? normalizeIntertextualLineage(lineage, evidencePolicy)
+        : {
+          concept: String(lineage),
+          drawsFrom: [],
+          contrastsWith: [],
+          borrowedByAdjacentDomains: [],
+          implicationsForSkill: '',
+          evidenceBasis: 'inferred',
+          sourceRefs: [],
+        }
+    )),
+    adjacentDomainBorrowings: normalizeArray(map.adjacentDomainBorrowings || map.adjacentDomains || map.borrowings),
+    commonMisreadings: normalizeArray(map.commonMisreadings || map.misreadings || map.misuses),
+    evidenceBasis: evidenceBasis === 'sourced' && !evidencePolicy.canSourceIntertextualMap() ? 'inferred' : evidenceBasis,
+    sourceRefs,
+    gaps: normalizeArray(map.gaps),
+  };
+}
+
+function getDiscriminatorTermParts(discriminator) {
+  const directTerms = normalizeArray(discriminator.terms || discriminator.termPair || discriminator.pair)
+    .map(value => String(value || '').trim())
+    .filter(Boolean);
+  const termA = discriminator.termA || discriminator.term1 || discriminator.sourceTerm || discriminator.left || discriminator.conceptA;
+  const termB = discriminator.termB || discriminator.term2 || discriminator.targetTerm || discriminator.right || discriminator.conceptB || discriminator.distinguishFrom;
+  return [
+    ...directTerms,
+    String(termA || '').trim(),
+    String(termB || '').trim(),
+  ].filter(Boolean);
+}
+
+function formatDiscriminatorTerm(parts) {
+  if (parts.length >= 2) return `${parts[0]} vs ${parts[1]}`;
+  return parts[0] || '';
+}
+
+function canSourceDiscriminatorTerms(parts, term, evidencePolicy) {
+  const candidates = parts.length ? parts : [term];
+  if (parts.length >= 2) {
+    return candidates.every(candidate => evidencePolicy.canSourceLexiconTerm(candidate));
+  }
+  return candidates.some(candidate => evidencePolicy.canSourceLexiconTerm(candidate));
+}
+
+function normalizeIntertextualMapEntries(entries, evidencePolicy = createExpertEvidencePolicy()) {
+  const objects = entries.filter(entry => entry && typeof entry === 'object' && !Array.isArray(entry));
+  const sourceRefs = uniqueStrings(objects.flatMap(entry => normalizeArray(entry.sourceRefs)));
+  const evidenceBasis = normalizeEvidenceBasisForRefs(
+    objects.some(entry => entry.evidenceBasis === 'sourced') ? 'sourced' : 'inferred',
+    sourceRefs,
+  );
+  const lineages = objects.map(entry => normalizeIntertextualLineage({
+    concept: entry.concept || entry.node || entry.name || entry.title,
+    drawsFrom: entry.drawsFrom || entry.connections || entry.relatedTexts,
+    contrastsWith: entry.contrastsWith || entry.contrasts,
+    borrowedByAdjacentDomains: entry.borrowedByAdjacentDomains || entry.adjacentDomainBorrowings || entry.borrowedBy,
+    implicationsForSkill: entry.implicationsForSkill || entry.relevance || entry.skillImplication,
+    evidenceBasis: entry.evidenceBasis,
+    sourceRefs: entry.sourceRefs,
+  }, evidencePolicy));
+
+  return {
+    canonicalTexts: uniqueStrings(objects
+      .filter(entry => /text|guide|paper|article|survey|book|rfc|standard/i.test(`${entry.type || ''} ${entry.node || entry.name || entry.title || ''}`))
+      .map(entry => entry.node || entry.name || entry.title || entry.concept)),
+    standardsAndInstitutions: uniqueStrings(objects
+      .filter(entry => /standard|institution|w3c|ietf|nist|schema\.org|governance|vocabulary/i.test(`${entry.type || ''} ${entry.node || entry.name || entry.title || ''}`))
+      .map(entry => entry.node || entry.name || entry.title || entry.concept)),
+    schoolsOfThought: uniqueStrings(objects.flatMap(entry => normalizeArray(entry.schoolsOfThought || entry.schools || entry.traditions))),
+    recurringDebates: uniqueStrings(objects.flatMap(entry => normalizeArray(entry.recurringDebates || entry.debates))),
+    conceptLineages: lineages,
+    adjacentDomainBorrowings: uniqueStrings(objects.flatMap(entry => normalizeArray(entry.adjacentDomainBorrowings || entry.adjacentDomains || entry.borrowings))),
+    commonMisreadings: uniqueStrings(objects.flatMap(entry => (
+      normalizeArray(entry.commonMisreadings || entry.misreadings || entry.misuses)
+        .map(misreading => `${entry.node || entry.name || entry.title || entry.concept || 'intertext'}: ${misreading}`)
+    ))),
+    evidenceBasis: evidenceBasis === 'sourced' && !evidencePolicy.canSourceIntertextualMap() ? 'inferred' : evidenceBasis,
+    sourceRefs,
+    gaps: [],
+  };
+}
+
+function normalizeIntertextualLineage(lineage, evidencePolicy = createExpertEvidencePolicy()) {
+  const sourceRefs = normalizeArray(lineage.sourceRefs);
+  const concept = lineage.concept || lineage.name || 'Unspecified concept';
+  const evidenceBasis = normalizeEvidenceBasisForRefs(lineage.evidenceBasis, sourceRefs);
+  return {
+    ...lineage,
+    concept,
+    drawsFrom: normalizeArray(lineage.drawsFrom),
+    contrastsWith: normalizeArray(lineage.contrastsWith),
+    borrowedByAdjacentDomains: normalizeArray(lineage.borrowedByAdjacentDomains || lineage.borrowedBy),
+    implicationsForSkill: lineage.implicationsForSkill || '',
+    evidenceBasis: evidenceBasis === 'sourced' && !evidencePolicy.canSourceLineageConcept(concept) ? 'inferred' : evidenceBasis,
+    sourceRefs,
+  };
+}
+
+function normalizeEvidenceBasis(value) {
+  return ['sourced', 'inferred', 'speculative'].includes(value) ? value : 'inferred';
+}
+
+function normalizeEvidenceBasisForRefs(value, sourceRefs) {
+  const evidenceBasis = normalizeEvidenceBasis(value);
+  return evidenceBasis === 'sourced' && !sourceRefs?.length ? 'inferred' : evidenceBasis;
 }
 
 function normalizeString(value, fallback) {

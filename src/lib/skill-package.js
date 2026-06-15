@@ -280,7 +280,7 @@ function parseFrontmatter(content) {
 
 function findReferencedPackagePaths(content) {
   const paths = new Set();
-  const pattern = /(?:\]\(|(?:^|\s))(references\/[^)\s]+|scripts\/[^)\s]+|assets\/[^)\s]+)/gm;
+  const pattern = /(?:\]\(|[`'"]|(?:^|\s))(references\/[^)`'"\s]+|scripts\/[^)`'"\s]+|assets\/[^)`'"\s]+)/gm;
   let match;
   while ((match = pattern.exec(content)) !== null) {
     paths.add(normalizePath(match[1].replace(/[.,;:]$/, '')));

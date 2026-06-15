@@ -58,6 +58,7 @@ function buildPromptGenInstruction(goal, slots, outputType = 'text', taskContrac
     `Invalid prompt rules: ${contract.invalidPromptRules.join(' ')}`,
     visualArtifactRule,
     'Rules: each prompt must read naturally with no meta-commentary; never use phrases like "skill surface under test", "quality axis", or "validate it for". Vary tone, length, domain specifics, and difficulty across the set. Exercise the noted aspect implicitly, never by naming it. The user request must make the expected answer contract unavoidable.',
+    'Self-containment rule: do not claim an outline, script, treatment, draft, excerpt, document, source, file, repo, image, or other material is attached, pasted, provided, included, or below unless you include that material directly in the prompt. If the task depends on source-like material, embed compact structured facts, excerpt text, bullets, or snippets inside the prompt; a premise sentence alone is not enough for exact beat labeling, revision of a draft, source-grounded analysis, or claims about what is on the page.',
     'Slots (write one prompt per slot, in order):',
     ...lines,
     `Respond ONLY with JSON of the form {"prompts": ["...", "..."]} containing exactly ${slots.length} strings in slot order.`,
@@ -507,6 +508,7 @@ export function designEvalBatch({
   coreCriteria = null,
   outputType = 'text',
   taskContract = null,
+  researchPacket = null,
 }) {
   const contract = normalizeTaskContract(taskContract, outputType);
   const outputContract = getOutputContract(outputType, contract);
@@ -518,6 +520,7 @@ export function designEvalBatch({
   const targetTasks = Array.isArray(ontology?.targetTasks) && ontology.targetTasks.length
     ? ontology.targetTasks
     : ['create a useful skill output', 'handle ambiguous requests', 'validate output quality'];
+  const expertSignals = extractExpertResearchSignals(ontology, createExpertSignalEvidencePolicy(researchPacket));
   const parameterLookup = new Map((parameterization?.parameters || []).map(parameter => [parameter.id, parameter]));
 
   const reusedStable = Array.isArray(promptBank?.stablePrompts)
@@ -544,6 +547,7 @@ export function designEvalBatch({
         outputType: contract.outputType,
         taskContract: contract,
         history,
+        expertSignal: pickExpertSignal(expertSignals, index),
       });
     }),
   ];
@@ -579,6 +583,7 @@ export function designEvalBatch({
       taskContract: contract,
       history,
       exploratory: true,
+      expertSignal: pickExpertSignal(expertSignals, index),
     });
   });
   const criteria = createCriteria({ qualityAxes, focusIds, parameterLookup, previousBank: promptBank, runId, coreCriteria, outputType: contract.outputType, taskContract: contract });
@@ -684,6 +689,124 @@ function isPromptBankCompatible(previousBank, outputType, taskContract = null) {
   return bankOutputType === contract.outputType && bankTaskContractId === contract.id;
 }
 
+function extractExpertResearchSignals(ontology, evidencePolicy = null) {
+  const signals = [];
+  const lexicon = Array.isArray(ontology?.practitionerLexicon) ? ontology.practitionerLexicon : [];
+  for (const entry of lexicon.slice(0, 8)) {
+    const term = typeof entry === 'string' ? entry : entry?.term;
+    if (!term) continue;
+    if (!hasUsableEvidence(entry) || !isAllowedSourcedLexicon(entry, term, evidencePolicy)) continue;
+    const evalImplication = typeof entry === 'object' ? entry.evalImplication : '';
+    signals.push({
+      kind: 'practitioner_lexicon',
+      text: `Use or distinguish "${term}" with practitioner-level precision${evalImplication ? `; evaluator signal: ${evalImplication}` : ''}.`,
+    });
+  }
+
+  const discriminators = Array.isArray(ontology?.terminologyDiscriminators) ? ontology.terminologyDiscriminators : [];
+  for (const discriminator of discriminators.slice(0, 4)) {
+    const term = typeof discriminator === 'string' ? discriminator : discriminator?.term;
+    if (typeof discriminator === 'string' && evidencePolicy && !evidencePolicy.lexiconTerms.has(normalizeEvidenceKey(term))) continue;
+    if (!hasUsableEvidence(discriminator) || !isAllowedSourcedDiscriminator(discriminator, term, evidencePolicy)) continue;
+    const text = typeof discriminator === 'string'
+      ? discriminator
+      : [
+        term,
+        discriminator?.distinguishFrom || discriminator?.nearSynonym,
+        discriminator?.distinction,
+      ].filter(Boolean).join(' vs. ');
+    if (text) signals.push({ kind: 'terminology_discriminator', text: `Distinguish adjacent terminology: ${text}.` });
+  }
+
+  const intertextualMap = ontology?.intertextualMap && typeof ontology.intertextualMap === 'object'
+    ? ontology.intertextualMap
+    : {};
+  const lineages = Array.isArray(intertextualMap.conceptLineages) ? intertextualMap.conceptLineages : [];
+  for (const lineage of lineages.slice(0, 4)) {
+    if (!lineage || typeof lineage !== 'object' || !lineage.concept) continue;
+    if (!hasUsableEvidence(lineage) || !isAllowedSourcedLineage(lineage, lineage.concept, evidencePolicy)) continue;
+    const drawsFrom = Array.isArray(lineage.drawsFrom) ? lineage.drawsFrom.slice(0, 2).join(', ') : '';
+    const contrastsWith = Array.isArray(lineage.contrastsWith) ? lineage.contrastsWith.slice(0, 2).join(', ') : '';
+    const relation = [
+      drawsFrom ? `draws from ${drawsFrom}` : '',
+      contrastsWith ? `contrasts with ${contrastsWith}` : '',
+    ].filter(Boolean).join('; ');
+    signals.push({
+      kind: 'intertextual_lineage',
+      text: `Account for the lineage of "${lineage.concept}"${relation ? ` (${relation})` : ''}.`,
+    });
+  }
+
+  const debates = hasUsableEvidence(intertextualMap) && isAllowedSourcedIntertextualMap(intertextualMap, evidencePolicy) && Array.isArray(intertextualMap.recurringDebates) ? intertextualMap.recurringDebates : [];
+  for (const debate of debates.slice(0, 4)) {
+    const text = typeof debate === 'string' ? debate : debate?.debate || debate?.name || debate?.topic;
+    if (text) signals.push({ kind: 'intertextual_debate', text: `Handle the field debate: ${text}.` });
+  }
+
+  return signals;
+}
+
+function createExpertSignalEvidencePolicy(researchPacket) {
+  if (!researchPacket) return null;
+  return {
+    lexiconTerms: new Set(collectSourcedLexiconTerms(researchPacket.practitionerLexicon)),
+    lineageConcepts: new Set(collectSourcedLineageConcepts(researchPacket.intertextualMap)),
+    intertextualMapSourced: hasSourcedRefs(researchPacket.intertextualMap),
+  };
+}
+
+function collectSourcedLexiconTerms(lexicon) {
+  if (!Array.isArray(lexicon)) return [];
+  return lexicon
+    .filter(entry => hasSourcedRefs(entry))
+    .map(entry => normalizeEvidenceKey(entry?.term || entry?.name || entry?.label))
+    .filter(Boolean);
+}
+
+function collectSourcedLineageConcepts(map) {
+  if (!map || typeof map !== 'object' || !Array.isArray(map.conceptLineages)) return [];
+  return map.conceptLineages
+    .filter(lineage => hasSourcedRefs(lineage))
+    .map(lineage => normalizeEvidenceKey(lineage?.concept || lineage?.name))
+    .filter(Boolean);
+}
+
+function hasSourcedRefs(value) {
+  return value && typeof value === 'object'
+    && value.evidenceBasis === 'sourced'
+    && Array.isArray(value.sourceRefs)
+    && value.sourceRefs.length > 0;
+}
+
+function normalizeEvidenceKey(value) {
+  return String(value || '').trim().toLowerCase();
+}
+
+function hasUsableEvidence(value) {
+  if (!value || typeof value !== 'object') return true;
+  return value.evidenceBasis !== 'sourced' || (Array.isArray(value.sourceRefs) && value.sourceRefs.length > 0);
+}
+
+function isAllowedSourcedLexicon(entry, term, evidencePolicy) {
+  return !evidencePolicy || entry?.evidenceBasis !== 'sourced' || evidencePolicy.lexiconTerms.has(normalizeEvidenceKey(term));
+}
+
+function isAllowedSourcedDiscriminator(discriminator, term, evidencePolicy) {
+  return !evidencePolicy || discriminator?.evidenceBasis !== 'sourced' || evidencePolicy.lexiconTerms.has(normalizeEvidenceKey(term));
+}
+
+function isAllowedSourcedLineage(lineage, concept, evidencePolicy) {
+  return !evidencePolicy || lineage?.evidenceBasis !== 'sourced' || evidencePolicy.lineageConcepts.has(normalizeEvidenceKey(concept));
+}
+
+function isAllowedSourcedIntertextualMap(map, evidencePolicy) {
+  return !evidencePolicy || map?.evidenceBasis !== 'sourced' || evidencePolicy.intertextualMapSourced;
+}
+
+function pickExpertSignal(signals, index) {
+  return Array.isArray(signals) && signals.length ? signals[index % signals.length] : null;
+}
+
 function createPrompt({
   runId,
   index,
@@ -697,13 +820,14 @@ function createPrompt({
   outputType,
   taskContract = null,
   exploratory = false,
+  expertSignal = null,
 }) {
   const contract = normalizeTaskContract(taskContract, outputType);
   const surface = parameter?.surface || parameterId;
   const mutationHint = parameter?.possibleMutations?.[0] || 'a focused improvement';
   const scenario = exploratory
-    ? createExplorationScenario({ goal, surface, mutationHint, qualityAxis, outputType: contract.outputType, taskContract: contract })
-    : createStableScenario({ goal, surface, targetTask, qualityAxis, outputType: contract.outputType, taskContract: contract });
+    ? createExplorationScenario({ goal, surface, mutationHint, qualityAxis, outputType: contract.outputType, taskContract: contract, expertSignal })
+    : createStableScenario({ goal, surface, targetTask, qualityAxis, outputType: contract.outputType, taskContract: contract, expertSignal });
 
   return {
     id: `${runId}-${bucket}-${String(index + 1).padStart(2, '0')}`,
@@ -717,11 +841,12 @@ function createPrompt({
     status: bucket,
     origin: bucket === 'stable' ? 'ontology_seed' : 'experiment_probe',
     createdAtRunId: runId,
-    taxonomy: [targetTask, qualityAxis, surface].filter(Boolean),
+    taxonomy: [targetTask, qualityAxis, surface, expertSignal?.kind].filter(Boolean),
     expectedSignals: [
       `Observes ${surface}`,
       `Should reveal differences in ${qualityAxis}`,
-    ],
+      expertSignal ? `Checks ${expertSignal.kind}` : null,
+    ].filter(Boolean),
     promptAuthoring: {
       source: 'deterministic_template',
       attemptedModel: false,
@@ -731,17 +856,17 @@ function createPrompt({
   };
 }
 
-function createStableScenario({ goal, surface, targetTask, qualityAxis, outputType, taskContract = null }) {
+function createStableScenario({ goal, surface, targetTask, qualityAxis, outputType, taskContract = null, expertSignal = null }) {
   const contract = normalizeTaskContract(taskContract, outputType);
-  return createContractScenario({ contract, goal, surface, targetTask, qualityAxis, exploratory: false });
+  return createContractScenario({ contract, goal, surface, targetTask, qualityAxis, exploratory: false, expertSignal });
 }
 
-function createExplorationScenario({ goal, surface, mutationHint, qualityAxis, outputType, taskContract = null }) {
+function createExplorationScenario({ goal, surface, mutationHint, qualityAxis, outputType, taskContract = null, expertSignal = null }) {
   const contract = normalizeTaskContract(taskContract, outputType);
-  return createContractScenario({ contract, goal, surface, targetTask: mutationHint, qualityAxis, exploratory: true });
+  return createContractScenario({ contract, goal, surface, targetTask: mutationHint, qualityAxis, exploratory: true, expertSignal });
 }
 
-function createContractScenario({ contract, goal, surface, targetTask, qualityAxis, exploratory }) {
+function createContractScenario({ contract, goal, surface, targetTask, qualityAxis, exploratory, expertSignal = null }) {
   const outputContract = getOutputContract(contract.outputType, contract);
   const intro = exploratory
     ? `A user gives an incomplete but plausible request related to: ${goal}`
@@ -749,6 +874,7 @@ function createContractScenario({ contract, goal, surface, targetTask, qualityAx
   const taskLine = exploratory
     ? `They need an immediately useful response, with realistic ambiguity around ${surface}.`
     : `Task: ${targetTask}.`;
+  const expertLine = formatExpertSignalLine(expertSignal);
 
   if (contract.id === 'code_standalone') {
     return [
@@ -757,7 +883,8 @@ function createContractScenario({ contract, goal, surface, targetTask, qualityAx
       'There is no existing repository context; make reasonable assumptions and do not ask me to provide files.',
       `The result should support the broader skill goal: ${goal}`,
       `Emphasize ${surface} and include a compact validation check for ${qualityAxis}.`,
-    ].join('\n');
+      expertLine,
+    ].filter(Boolean).join('\n');
   }
 
   if (contract.id === 'code_visual_standalone') {
@@ -766,7 +893,8 @@ function createContractScenario({ contract, goal, surface, targetTask, qualityAx
       'Return one complete HTML document with inline CSS and JavaScript; it must render visible UI without existing repository files or build steps.',
       `The interface should support the broader skill goal: ${goal}`,
       `Emphasize ${surface}, make the visual hierarchy intentional, and include a compact in-page validation note for ${qualityAxis}.`,
-    ].join('\n');
+      expertLine,
+    ].filter(Boolean).join('\n');
   }
 
   if (contract.id === 'codebase_edit') {
@@ -795,10 +923,12 @@ function createContractScenario({ contract, goal, surface, targetTask, qualityAx
       '```',
       '',
       `Make the implementation more production-ready for ${goal}. Keep changes tied to the provided files, emphasize ${surface}, and include a compact validation check for ${qualityAxis}.`,
-    ].join('\n');
+      expertLine,
+    ].filter(Boolean).join('\n');
   }
 
   if (contract.id === 'text_source_grounded') {
+    const sourceGroundedExpertLine = formatExpertSignalLine(expertSignal, { sourceGrounded: true });
     return [
       intro,
       taskLine,
@@ -812,7 +942,8 @@ function createContractScenario({ contract, goal, surface, targetTask, qualityAx
       '```',
       '',
       `Use only the source material above to produce the requested artifact. Emphasize ${surface} and briefly validate it for ${qualityAxis}.`,
-    ].join('\n');
+      sourceGroundedExpertLine,
+    ].filter(Boolean).join('\n');
   }
 
   return [
@@ -821,7 +952,14 @@ function createContractScenario({ contract, goal, surface, targetTask, qualityAx
     `Output requirement: ${outputContract.userPromptRequirement}`,
     `Please produce the appropriate artifact for a realistic production use case, then briefly validate it for ${qualityAxis}.`,
     `Pay attention to: ${surface}.`,
-  ].join('\n');
+    expertLine,
+  ].filter(Boolean).join('\n');
+}
+
+function formatExpertSignalLine(expertSignal, { sourceGrounded = false } = {}) {
+  if (!expertSignal?.text) return '';
+  if (sourceGrounded) return `Expert-register check, only when supported by the source material: ${expertSignal.text}`;
+  return `Expert-register check: ${expertSignal.text}`;
 }
 
 function createCriteria({ qualityAxes, focusIds, parameterLookup, previousBank = null, runId, coreCriteria = null, outputType = 'text', taskContract = null }) {

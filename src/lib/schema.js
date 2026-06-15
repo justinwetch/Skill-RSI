@@ -26,6 +26,7 @@ function requireStringArray(label, object, key) {
 }
 
 export const COMPETITION_MODES = ['cold_start_duel', 'champion_challenge', 'high_divergence_reset'];
+const ONTOLOGY_LEXICON_LIMIT = 50;
 
 export function validateProjectConfig(config) {
   const label = 'Project config';
@@ -101,6 +102,56 @@ export function validateResearchPacket(packet) {
     requireArray(label, authority, 'misuseRisks');
   }
 
+  if (packet.practitionerLexicon !== undefined) {
+    requireArray(label, packet, 'practitionerLexicon');
+    for (const entry of packet.practitionerLexicon) {
+      if (!isObject(entry)) fail(label, 'each practitionerLexicon entry must be an object');
+      requireString(label, entry, 'term');
+      requireString(label, entry, 'evidenceBasis');
+      if (!['sourced', 'inferred', 'speculative'].includes(entry.evidenceBasis)) {
+        fail(label, 'practitionerLexicon[].evidenceBasis must be sourced, inferred, or speculative');
+      }
+      requireArray(label, entry, 'sourceRefs');
+      if (entry.evidenceBasis === 'sourced' && !entry.sourceRefs.length) {
+        fail(label, 'sourced practitionerLexicon entries must include sourceRefs');
+      }
+    }
+  }
+
+  if (packet.intertextualMap !== undefined) {
+    if (!isObject(packet.intertextualMap)) fail(label, 'intertextualMap must be an object');
+    requireString(label, packet.intertextualMap, 'evidenceBasis');
+    if (!['sourced', 'inferred', 'speculative'].includes(packet.intertextualMap.evidenceBasis)) {
+      fail(label, 'intertextualMap.evidenceBasis must be sourced, inferred, or speculative');
+    }
+    if (packet.intertextualMap.sourceRefs !== undefined) requireArray(label, packet.intertextualMap, 'sourceRefs');
+    if (packet.intertextualMap.evidenceBasis === 'sourced' && !packet.intertextualMap.sourceRefs?.length) {
+      fail(label, 'sourced intertextualMap must include sourceRefs');
+    }
+    for (const field of [
+      'canonicalTexts',
+      'standardsAndInstitutions',
+      'schoolsOfThought',
+      'recurringDebates',
+      'conceptLineages',
+      'adjacentDomainBorrowings',
+      'commonMisreadings',
+    ]) {
+      if (packet.intertextualMap[field] !== undefined) requireArray(label, packet.intertextualMap, field);
+    }
+    for (const lineage of packet.intertextualMap.conceptLineages || []) {
+      if (!isObject(lineage)) fail(label, 'each intertextualMap.conceptLineages entry must be an object');
+      requireString(label, lineage, 'evidenceBasis');
+      if (!['sourced', 'inferred', 'speculative'].includes(lineage.evidenceBasis)) {
+        fail(label, 'intertextualMap.conceptLineages[].evidenceBasis must be sourced, inferred, or speculative');
+      }
+      requireArray(label, lineage, 'sourceRefs');
+      if (lineage.evidenceBasis === 'sourced' && !lineage.sourceRefs.length) {
+        fail(label, 'sourced intertextualMap.conceptLineages entries must include sourceRefs');
+      }
+    }
+  }
+
   return packet;
 }
 
@@ -124,12 +175,62 @@ export function validateOntology(ontology) {
   if (ontology.inferenceLabels !== undefined) requireArray(label, ontology, 'inferenceLabels');
   if (ontology.unsupportedClaims !== undefined) requireArray(label, ontology, 'unsupportedClaims');
   if (ontology.researchGaps !== undefined) requireArray(label, ontology, 'researchGaps');
+  if (ontology.practitionerLexicon !== undefined) {
+    requireArray(label, ontology, 'practitionerLexicon');
+    if (ontology.practitionerLexicon.length > ONTOLOGY_LEXICON_LIMIT) {
+      fail(label, `practitionerLexicon must contain at most ${ONTOLOGY_LEXICON_LIMIT} entries`);
+    }
+    for (const entry of ontology.practitionerLexicon) {
+      if (!isObject(entry)) fail(label, 'each practitionerLexicon entry must be an object');
+      requireString(label, entry, 'term');
+      requireExpertEvidence(label, entry, 'practitionerLexicon[]');
+    }
+  }
+  if (ontology.terminologyDiscriminators !== undefined) {
+    requireArray(label, ontology, 'terminologyDiscriminators');
+    for (const discriminator of ontology.terminologyDiscriminators) {
+      if (!isObject(discriminator)) fail(label, 'each terminologyDiscriminators entry must be an object');
+      requireString(label, discriminator, 'term');
+      requireExpertEvidence(label, discriminator, 'terminologyDiscriminators[]');
+    }
+  }
+  if (ontology.intertextualMap !== undefined) {
+    if (!isObject(ontology.intertextualMap)) fail(label, 'intertextualMap must be an object');
+    requireExpertEvidence(label, ontology.intertextualMap, 'intertextualMap');
+    for (const field of [
+      'canonicalTexts',
+      'standardsAndInstitutions',
+      'schoolsOfThought',
+      'recurringDebates',
+      'conceptLineages',
+      'adjacentDomainBorrowings',
+      'commonMisreadings',
+    ]) {
+      if (ontology.intertextualMap[field] !== undefined) requireArray(label, ontology.intertextualMap, field);
+    }
+    for (const lineage of ontology.intertextualMap.conceptLineages || []) {
+      if (!isObject(lineage)) fail(label, 'each intertextualMap.conceptLineages entry must be an object');
+      requireString(label, lineage, 'concept');
+      requireExpertEvidence(label, lineage, 'intertextualMap.conceptLineages[]');
+    }
+  }
   if (!isObject(ontology.invocationBoundaries)) {
     fail(label, 'invocationBoundaries must be an object');
   }
   requireArray(label, ontology.invocationBoundaries, 'shouldTriggerWhen');
   requireArray(label, ontology.invocationBoundaries, 'shouldNotTriggerWhen');
   return ontology;
+}
+
+function requireExpertEvidence(label, entry, path) {
+  requireString(label, entry, 'evidenceBasis');
+  if (!['sourced', 'inferred', 'speculative'].includes(entry.evidenceBasis)) {
+    fail(label, `${path}.evidenceBasis must be sourced, inferred, or speculative`);
+  }
+  requireArray(label, entry, 'sourceRefs');
+  if (entry.evidenceBasis === 'sourced' && !entry.sourceRefs.length) {
+    fail(label, `sourced ${path} entries must include sourceRefs`);
+  }
 }
 
 export function validateQualityReport(report) {

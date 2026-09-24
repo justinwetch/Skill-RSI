@@ -78,7 +78,7 @@ test('support prompt distinguishes project workspace from repo root', () => {
 
   assert.match(prompt, /From the project\/workspace directory \(\/tmp\/release-project\)/);
   assert.match(prompt, /Skill RSI repo root: \/repo\/Skill RSI/);
-  assert.match(prompt, /node "\/repo\/Skill RSI\/src\/cli\.js" diagnose "Resume Writer"/);
+  assert.ok(prompt.includes(`node "${path.join('/repo/Skill RSI', 'src', 'cli.js')}" diagnose "Resume Writer"`));
 });
 
 test('support diagnostics sanitizer redacts common key shapes', () => {

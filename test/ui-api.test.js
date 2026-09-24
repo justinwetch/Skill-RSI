@@ -111,7 +111,7 @@ test('ui api exposes stable project and run detail surfaces', async () => {
   assert.equal(summary.promptBank.stablePromptCount, 6);
   assert.ok(Number.isInteger(summary.promptBank.provisionalPromptCount));
   assert.ok(summary.promptBank.evidenceRecordCount >= 10);
-  assert.ok(summary.artifacts.historyIndex.endsWith('history/index.json'));
+  assert.ok(summary.artifacts.historyIndex.endsWith(path.join('history', 'index.json')));
 
   const summaries = await readProjectSummaries({ cwd });
   assert.equal(summaries.length, 1);
@@ -124,9 +124,9 @@ test('ui api exposes stable project and run detail surfaces', async () => {
   assert.ok(detail.parameterization.parameters.length >= 12);
   assert.equal(detail.manager.runId, runId);
   assert.ok(detail.manager.finalAction);
-  assert.ok(detail.artifacts.managerJson.endsWith('manager/manager.json'));
+  assert.ok(detail.artifacts.managerJson.endsWith(path.join('manager', 'manager.json')));
   assert.ok(detail.experimentPlan.focusParameterIds.length >= 1);
-  assert.ok(detail.candidates.candidateA.skillPath.endsWith('candidate-a/skill'));
+  assert.ok(detail.candidates.candidateA.skillPath.endsWith(path.join('candidate-a', 'skill')));
   assert.equal(detail.evals.candidateDuel.stats.totalEvals, 10);
   assert.equal(detail.timeline.at(0).event, 'run.started');
 });

@@ -153,7 +153,7 @@ test('skill_rsi_prepare_project returns a setup draft URL without creating a pro
     projectName: 'Frontend Design',
     goal: 'Improve this skill.',
     outputType: 'code_visual',
-    model: 'gpt-5.5',
+    model: 'gpt-6-sol',
     baselinePath: '/tmp/SKILL.md',
   });
   assert.equal(prepared.action, 'project_setup_prepared');
@@ -211,21 +211,21 @@ test('MCP handlers create, inspect, run, queue context, and export projects', as
     projectName: 'MCP Project',
     goal: 'Improve a baseline skill through MCP.',
     outputType: 'code',
-    model: 'gpt-5.5',
+    model: 'gpt-6-sol',
     targetIterations: 4,
     baselinePath: baseline,
   });
   assert.equal(created.action, 'project_created');
   assert.equal(created.project.projectId, 'mcp-project');
   assert.equal(created.project.config.eval.outputType, 'code');
-  assert.equal(created.project.config.models.agent, 'gpt-5.5');
+  assert.equal(created.project.config.models.agent, 'gpt-6-sol');
   assert.equal(created.project.state.currentChampion.candidateId, 'baseline');
 
   const collisionCreated = await handlers.skill_rsi_create_project({
     projectName: 'MCP Project',
     goal: 'Improve the same baseline as a fresh run.',
     outputType: 'code',
-    model: 'gpt-5.5',
+    model: 'gpt-6-sol',
     targetIterations: 1,
     baselinePath: baseline,
   });
@@ -451,7 +451,7 @@ function stubServices({
       stopReason: null,
     }),
     uiApi: {
-      UI_OPENAI_MODELS: ['gpt-5.5', 'gpt-5.4-mini'],
+      UI_OPENAI_MODELS: ['gpt-6-sol', 'gpt-5.4-mini'],
       readProjectSummaries: async () => projects,
       createProjectDraftForUi: async () => ({ id: '11111111-1111-4111-8111-111111111111' }),
       createProjectFromLocalInput: async () => ({ projectId: 'stub' }),

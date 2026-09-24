@@ -122,9 +122,12 @@ const ACCENTS = [
 ];
 const OPENAI_KEY_STORAGE_KEY = 'skill-rsi-openai-api-key';
 const OPENAI_MODELS = [
-  { id: 'gpt-5.6-sol', label: 'gpt-5.6-sol', note: 'Default frontier model for complex skill work.' },
-  { id: 'gpt-5.6-terra', label: 'gpt-5.6-terra', note: 'Balanced intelligence and cost.' },
-  { id: 'gpt-5.6-luna', label: 'gpt-5.6-luna', note: 'Lower-cost, high-volume iteration.' },
+  { id: 'gpt-6-astra', label: 'gpt-6-astra', note: 'Highest capability for demanding skill work.' },
+  { id: 'gpt-6-sol', label: 'gpt-6-sol', note: 'Default balance of capability and cost.' },
+  { id: 'gpt-6-luna', label: 'gpt-6-luna', note: 'Lower-cost, high-volume iteration.' },
+  { id: 'gpt-5.6-sol', label: 'gpt-5.6-sol', note: 'Previous generation; available for existing projects.' },
+  { id: 'gpt-5.6-terra', label: 'gpt-5.6-terra', note: 'Previous balanced option; available for existing projects.' },
+  { id: 'gpt-5.6-luna', label: 'gpt-5.6-luna', note: 'Previous lower-cost option; available for existing projects.' },
   { id: 'gpt-5.5', label: 'gpt-5.5', note: 'Previous generation; available for existing projects.' },
   { id: 'gpt-5.4-mini', label: 'gpt-5.4-mini', note: 'Previous lower-cost option; available for existing projects.' },
 ];
@@ -154,7 +157,7 @@ export default function App() {
   const [draft, setDraft] = useState({
     mode: 'scratch',
     outputType: 'text',
-    model: 'gpt-5.6-sol',
+    model: 'gpt-6-sol',
     name: '',
     goal: '',
     baselineFiles: [],
@@ -372,7 +375,7 @@ export default function App() {
             triggerMode: 'manual',
             outputType: draft.outputType || 'text',
             taskContract: getDraftTaskContract(draft),
-            model: draft.model || 'gpt-5.6-sol',
+            model: draft.model || 'gpt-6-sol',
             targetIterations: Math.max(1, Number.parseInt(draft.targetIterations, 10) || 3),
             draftId: fromServerDraft ? draft.serverDraftId : null,
             baselineFiles,
@@ -386,7 +389,7 @@ export default function App() {
       setDraft({
         mode: 'scratch',
         outputType: 'text',
-        model: 'gpt-5.6-sol',
+        model: 'gpt-6-sol',
         name: '',
         goal: '',
         baselineFiles: [],
@@ -1043,14 +1046,14 @@ function CreateView({
 
       <div className="field">
         <span>Model</span>
-        <select value={draft.model || 'gpt-5.6-sol'}
+        <select value={draft.model || 'gpt-6-sol'}
           onChange={e => setDraft({ ...draft, model: e.target.value })}>
           {OPENAI_MODELS.map(model => (
             <option key={model.id} value={model.id}>{model.label}</option>
           ))}
         </select>
         <p className="field-hint">
-          {(OPENAI_MODELS.find(model => model.id === (draft.model || 'gpt-5.6-sol')) || OPENAI_MODELS[0]).note}
+          {(OPENAI_MODELS.find(model => model.id === (draft.model || 'gpt-6-sol')) || OPENAI_MODELS[0]).note}
           {' '}You can change it later before a future run.
         </p>
       </div>
@@ -1384,7 +1387,7 @@ function RunBar({ summary, loops, setLoops, busy, settingsBusy, onStart, onModel
   const maxRuns = budget.maxRuns;
   const automation = summary.automation || null;
   const taskContractLabel = formatTaskContract(summary.config?.eval?.taskContract);
-  const modelLabel = summary.config?.models?.agent || 'gpt-5.6-sol';
+  const modelLabel = summary.config?.models?.agent || 'gpt-6-sol';
   const automationState = describeAutomation(automation);
   const StatusIcon = automationState.icon;
   const runDisabled = busy || settingsBusy || automation?.locked;

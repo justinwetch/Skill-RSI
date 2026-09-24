@@ -12,8 +12,8 @@ import { normalizeTaskContract, taskContractOutputType } from './task-contracts.
 
 const MAX_BASELINE_ZIP_BYTES = 25 * 1024 * 1024;
 const UI_OUTPUT_TYPES = ['text', 'code', 'code_visual'];
-export const DEFAULT_UI_MODEL = 'gpt-5.6-sol';
-export const UI_OPENAI_MODELS = ['gpt-5.6-sol', 'gpt-5.6-terra', 'gpt-5.6-luna', 'gpt-5.5', 'gpt-5.4-mini'];
+export const DEFAULT_UI_MODEL = 'gpt-6-sol';
+export const UI_OPENAI_MODELS = ['gpt-6-astra', 'gpt-6-sol', 'gpt-6-luna', 'gpt-5.6-sol', 'gpt-5.6-terra', 'gpt-5.6-luna', 'gpt-5.5', 'gpt-5.4-mini'];
 
 export async function createProjectForUi({
   cwd,

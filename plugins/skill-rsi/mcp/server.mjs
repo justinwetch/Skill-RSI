@@ -7,9 +7,9 @@ import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { renderCockpitHtml } from './ui/cockpit.html.js';
 
-const DEFAULT_MODEL = 'gpt-5.6-sol';
+const DEFAULT_MODEL = 'gpt-6-sol';
 const SUPPORTED_OUTPUT_TYPES = ['text', 'code', 'code_visual'];
-const SUPPORTED_MODELS = ['gpt-5.6-sol', 'gpt-5.6-terra', 'gpt-5.6-luna', 'gpt-5.5', 'gpt-5.4-mini'];
+const SUPPORTED_MODELS = ['gpt-6-astra', 'gpt-6-sol', 'gpt-6-luna', 'gpt-5.6-sol', 'gpt-5.6-terra', 'gpt-5.6-luna', 'gpt-5.5', 'gpt-5.4-mini'];
 const COCKPIT_RESOURCE_URI = 'ui://skill-rsi/cockpit.html';
 const MCP_APP_MIME_TYPE = 'text/html;profile=mcp-app';
 const DEFAULT_APP_URL = 'http://127.0.0.1:8765/';

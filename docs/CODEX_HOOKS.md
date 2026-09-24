@@ -83,7 +83,7 @@ node scripts/skill-rsi-cron-runner.mjs ux-design \
   --real-eval \
   --max-runs 20 \
   --max-new-runs 1 \
-  --agent-model gpt-5.6-sol
+  --agent-model gpt-6-sol
 ```
 
 The runner forwards to:

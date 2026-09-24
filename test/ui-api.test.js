@@ -376,9 +376,9 @@ test('ui api creates new projects and rejects duplicates', async () => {
   assert.equal(created.state.runPolicy.targetIterations, 3);
   assert.equal(created.config.trigger.targetIterations, 3);
   assert.equal(created.config.budget.estimatedTokensPerLoop, 50000);
-  assert.equal(created.config.models.agent, 'gpt-5.6-sol');
-  assert.equal(created.config.models.generation, 'gpt-5.6-sol');
-  assert.equal(created.config.models.judge, 'gpt-5.6-sol');
+  assert.equal(created.config.models.agent, 'gpt-6-sol');
+  assert.equal(created.config.models.generation, 'gpt-6-sol');
+  assert.equal(created.config.models.judge, 'gpt-6-sol');
 
   const summaries = await readProjectSummaries({ cwd });
   assert.equal(summaries.length, 1);
@@ -486,12 +486,12 @@ test('ui api stores the selected project model across all model roles', async ()
     cwd,
     projectName: 'Model Project',
     goal: 'Store model choice from setup.',
-    model: 'gpt-5.6-sol',
+    model: 'gpt-6-sol',
   });
 
-  assert.equal(created.config.models.agent, 'gpt-5.6-sol');
-  assert.equal(created.config.models.generation, 'gpt-5.6-sol');
-  assert.equal(created.config.models.judge, 'gpt-5.6-sol');
+  assert.equal(created.config.models.agent, 'gpt-6-sol');
+  assert.equal(created.config.models.generation, 'gpt-6-sol');
+  assert.equal(created.config.models.judge, 'gpt-6-sol');
 
   const fallback = await createProjectForUi({
     cwd,
@@ -500,9 +500,9 @@ test('ui api stores the selected project model across all model roles', async ()
     model: 'gpt-5.4-large',
   });
 
-  assert.equal(fallback.config.models.agent, 'gpt-5.6-sol');
+  assert.equal(fallback.config.models.agent, 'gpt-6-sol');
 
-  for (const model of ['gpt-5.6-terra', 'gpt-5.6-luna', 'gpt-5.5']) {
+  for (const model of ['gpt-6-astra', 'gpt-6-luna', 'gpt-5.6-sol', 'gpt-5.6-terra', 'gpt-5.6-luna', 'gpt-5.5']) {
     const project = await createProjectForUi({
       cwd,
       projectName: `Model ${model}`,
@@ -523,8 +523,8 @@ test('ui api updates project model for future runs', async () => {
     projectName: 'Model Update Project',
     goal: 'Change model before running.',
   });
-  assert.match(created.automation.commands.cron, /--agent-model gpt-5\.6-sol/);
-  assert.match(created.automation.commands.powershell.cron, /--agent-model 'gpt-5\.6-sol'/);
+  assert.match(created.automation.commands.cron, /--agent-model gpt-6-sol/);
+  assert.match(created.automation.commands.powershell.cron, /--agent-model 'gpt-6-sol'/);
 
   const updated = await updateProjectModelForUi({
     cwd,
@@ -554,13 +554,13 @@ test('ui api updates project model for future runs', async () => {
   const updatedAfterRun = await updateProjectModelForUi({
     cwd,
     projectName: 'Model Update Project',
-    model: 'gpt-5.6-sol',
+    model: 'gpt-6-sol',
   });
   assert.equal(updatedAfterRun.state.runCount, 1);
-  assert.equal(updatedAfterRun.config.models.agent, 'gpt-5.6-sol');
-  assert.equal(updatedAfterRun.config.models.generation, 'gpt-5.6-sol');
-  assert.equal(updatedAfterRun.config.models.judge, 'gpt-5.6-sol');
-  assert.match(updatedAfterRun.automation.commands.cron, /--agent-model gpt-5\.6-sol/);
+  assert.equal(updatedAfterRun.config.models.agent, 'gpt-6-sol');
+  assert.equal(updatedAfterRun.config.models.generation, 'gpt-6-sol');
+  assert.equal(updatedAfterRun.config.models.judge, 'gpt-6-sol');
+  assert.match(updatedAfterRun.automation.commands.cron, /--agent-model gpt-6-sol/);
 
   const secondRun = await runProject({
     cwd,
@@ -574,7 +574,7 @@ test('ui api updates project model for future runs', async () => {
     projectName: 'Model Update Project',
     runId: secondRun.completedRuns[0].runId,
   });
-  assert.equal(secondRunDetail.run.models.agent, 'gpt-5.6-sol');
+  assert.equal(secondRunDetail.run.models.agent, 'gpt-6-sol');
 });
 
 test('ui api prepares setup drafts and creates baseline projects only after confirmation', async () => {
@@ -593,7 +593,7 @@ description: Use when improving browser-rendered frontend implementation skills.
     projectName: '',
     goal: '',
     outputType: 'code_visual',
-    model: 'gpt-5.6-sol',
+    model: 'gpt-6-sol',
     baselinePath,
   });
 
@@ -602,7 +602,7 @@ description: Use when improving browser-rendered frontend implementation skills.
   assert.equal(draft.goal, 'Use when improving browser-rendered frontend implementation skills.');
   assert.equal(draft.outputType, 'code_visual');
   assert.equal(draft.outputTypeSource, 'explicit');
-  assert.equal(draft.model, 'gpt-5.6-sol');
+  assert.equal(draft.model, 'gpt-6-sol');
   assert.equal(draft.baseline.skillName, 'frontend-design');
   assert.equal(draft.baseline.sourcePath, undefined);
   assert.equal((await readProjectSummaries({ cwd })).length, 0);
@@ -616,11 +616,11 @@ description: Use when improving browser-rendered frontend implementation skills.
     projectName: 'Frontend Visual Skill',
     goal: 'Improve visual frontend implementation.',
     outputType: 'code_visual',
-    model: 'gpt-5.6-sol',
+    model: 'gpt-6-sol',
   });
   assert.equal(created.projectId, 'frontend-visual-skill');
   assert.equal(created.config.eval.outputType, 'code_visual');
-  assert.equal(created.config.models.agent, 'gpt-5.6-sol');
+  assert.equal(created.config.models.agent, 'gpt-6-sol');
   assert.equal(created.state.currentChampion.candidateId, 'baseline');
   await assert.rejects(
     () => readProjectDraftForUi({ cwd, draftId: draft.id }),

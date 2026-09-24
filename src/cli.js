@@ -37,7 +37,7 @@ import {
 import fs from 'node:fs/promises';
 import path from 'node:path';
 
-const DEFAULT_TEST_MODEL = 'gpt-5.5';
+const DEFAULT_TEST_MODEL = 'gpt-5.6-sol';
 
 function parseArgs(argv) {
   const [command, maybeProjectName, ...tail] = argv;

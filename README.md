@@ -161,7 +161,7 @@ Stub mode runs without API calls:
 node src/cli.js init my-skill \
   --goal "Help agents write clear technical documentation." \
   --output text \
-  --model gpt-5.5 \
+  --model gpt-5.6-sol \
   --target-iterations 3
 node src/cli.js run my-skill --stub --loops 3
 ```
@@ -223,12 +223,14 @@ The UI supports:
 
 - creating projects from scratch or from an uploaded skill folder, single `SKILL.md`, or zip
 - output artifact selection: Text, Code, or Code + visuals
-- OpenAI model selection: `gpt-5.5` by default, or `gpt-5.4-mini` for lower-cost iteration
+- OpenAI model selection: `gpt-5.6-sol` by default, `gpt-5.6-terra` for balanced cost and capability, or `gpt-5.6-luna` for lower-cost iteration. Existing projects can still select `gpt-5.5` and `gpt-5.4-mini`.
 - browser-local OpenAI API key entry, with `.env` as server fallback
 - live loop progress, next-loop plan, detailed eval data, champion/challenger skill viewing, and visual screenshots when available
 - automation status for manual runs, cron/LaunchAgent setup commands, and queued Codex hook context
 
 Model choice can be changed between runs; each run records the models it used. API keys are not stored in project config; the UI stores pasted keys locally in the browser.
+
+The current curated OpenAI choices use the [GPT-5.6 API model IDs](https://platform.openai.com/docs/models). The CLI also accepts a model ID directly for advanced use. Model availability can vary by API account; no model-backed run starts merely by changing the selection.
 
 ## Codex Plugin
 
@@ -281,7 +283,7 @@ node src/cli.js run ux-design --agentic --real-eval --loops 1
 Scheduled or continuous:
 
 ```bash
-node scripts/skill-rsi-cron-runner.mjs ux-design --agentic --real-eval --max-runs 20 --max-new-runs 1 --agent-model gpt-5.5
+node scripts/skill-rsi-cron-runner.mjs ux-design --agentic --real-eval --max-runs 20 --max-new-runs 1 --agent-model gpt-5.6-sol
 ```
 
 Queue hook context:
@@ -339,7 +341,7 @@ After a promotion, `champion/skill/` is updated and `history/current-summary.md`
 ```bash
 # Project management
 node src/cli.js doctor
-node src/cli.js init <name> --goal "..." --output text|code|code_visual --model gpt-5.5 --target-iterations 3
+node src/cli.js init <name> --goal "..." --output text|code|code_visual --model gpt-5.6-sol --target-iterations 3
 node src/cli.js init <name> --goal "..." --baseline ./path/to/skill-or.zip
 node src/cli.js projects
 node src/cli.js status <project>
@@ -350,7 +352,7 @@ node src/cli.js support-prompt [project]
 # Running loops
 node src/cli.js run <project> --stub --loops 3
 node src/cli.js run <project> --agentic --real-eval --loops 1
-node src/cli.js run <project> --agentic --real-eval --loops 1 --model gpt-5.5
+node src/cli.js run <project> --agentic --real-eval --loops 1 --model gpt-5.6-sol
 node src/cli.js step <project>
 node src/cli.js continuous <project> --agentic --real-eval --max-runs 20 --max-new-runs 1
 node src/cli.js continuous <project> --agentic --real-eval --max-runs 20 --max-new-runs 1 --consume-hooks
@@ -373,7 +375,7 @@ node src/cli.js evaluate <project> \
   --a ./skill-a --b ./skill-b \
   --prompts prompts.json --criteria criteria.json \
   --output text \
-  --gen-model gpt-5.5 --judge-model gpt-5.5 \
+  --gen-model gpt-5.6-sol --judge-model gpt-5.6-sol \
   --out result.json
 
 node src/cli.js evaluate <project> \
@@ -381,7 +383,7 @@ node src/cli.js evaluate <project> \
   --prompts prompts.json --criteria criteria.json \
   --output code_visual \
   --visual-artifacts-dir ./visual-artifacts \
-  --gen-model gpt-5.5 --judge-model gpt-5.5 \
+  --gen-model gpt-5.6-sol --judge-model gpt-5.6-sol \
   --out result.json
 
 # Annotation, not required promotion
@@ -419,9 +421,9 @@ Current UI-created model config:
 ```json
 {
   "models": {
-    "agent": "gpt-5.5",
-    "generation": "gpt-5.5",
-    "judge": "gpt-5.5"
+    "agent": "gpt-5.6-sol",
+    "generation": "gpt-5.6-sol",
+    "judge": "gpt-5.6-sol"
   }
 }
 ```

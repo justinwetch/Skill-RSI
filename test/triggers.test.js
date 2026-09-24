@@ -68,7 +68,7 @@ test('init command supports UI-equivalent project configuration', async () => {
     '--output',
     'code',
     '--model',
-    'gpt-5.5',
+    'gpt-5.6-sol',
     '--target-iterations',
     '5',
     '--json',
@@ -78,9 +78,9 @@ test('init command supports UI-equivalent project configuration', async () => {
   assert.equal(created.projectId, 'code-project');
   assert.equal(created.config.eval.outputType, 'code');
   assert.equal(created.config.eval.taskContract.id, 'code_standalone');
-  assert.equal(created.config.models.agent, 'gpt-5.5');
-  assert.equal(created.config.models.generation, 'gpt-5.5');
-  assert.equal(created.config.models.judge, 'gpt-5.5');
+  assert.equal(created.config.models.agent, 'gpt-5.6-sol');
+  assert.equal(created.config.models.generation, 'gpt-5.6-sol');
+  assert.equal(created.config.models.judge, 'gpt-5.6-sol');
   assert.equal(created.state.runPolicy.targetIterations, 5);
 });
 
